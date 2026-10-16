@@ -68,3 +68,89 @@ export const PAINTED_OUTLINE: LngLat[] = [
 
 export const toLatLng = (p: LngLat) => L.latLng(p[1], p[0])
 export const fromLatLng = (ll: L.LatLng): LngLat => [+ll.lng.toFixed(6), +ll.lat.toFixed(6)]
+
+// ---------- 拖动 / 缩放范围（移植自 skdmap 的 geo.ts） ----------
+
+/** 屏幕坐标（y 向下）里，点 p 是否在顺时针的凸多边形 outline 内 */
+export const inOutline = (p: L.Point, outline: L.Point[]) =>
+  outline.every((a, i) => {
+    const e = outline[(i + 1) % outline.length]
+    return (e.x - a.x) * (p.y - a.y) - (e.y - a.y) * (p.x - a.x) >= 0
+  })
+
+/**
+ * 离 c 最近的地图中心（世界像素），使没被侧栏/面板挡住的那块视野（半宽 hw、半高 hh，中心偏离地图中心 d）
+ * 只看到 outline 里面的画：四边不出界，四角最多伸进斜边外 40% 的较短半边（落在画的淡出边缘里）。
+ * 视野比 outline 还宽/高时就居中。
+ */
+export function clampToOutline(c: L.Point, outline: L.Point[], hw: number, hh: number, d = L.point(0, 0)): L.Point {
+  const xs = outline.map((q) => q.x)
+  const ys = outline.map((q) => q.y)
+  const lo = L.point(Math.min(...xs) + hw - d.x, Math.min(...ys) + hh - d.y)
+  const hi = L.point(Math.max(...xs) - hw - d.x, Math.max(...ys) - hh - d.y)
+  const inRange = (v: number, a: number, b: number) => (a > b ? (a + b) / 2 : Math.min(b, Math.max(a, v)))
+  let x = inRange(c.x, lo.x, hi.x)
+  let y = inRange(c.y, lo.y, hi.y)
+  if (lo.x > hi.x || lo.y > hi.y) return L.point(x, y)
+  const inset = 0.4 * Math.min(hw, hh)
+  for (let round = 0; round < 6; round++) {
+    // 把（内缩后的）视野角推回每条斜边内侧，交替投影几轮
+    let moved = false
+    outline.forEach((a, i) => {
+      const e = outline[(i + 1) % outline.length]
+      const len = Math.hypot(e.x - a.x, e.y - a.y)
+      const nx = (e.y - a.y) / len
+      const ny = (a.x - e.x) / len
+      if (Math.abs(nx) < 1e-6 || Math.abs(ny) < 1e-6) return
+      const over = nx * (x + d.x) + ny * (y + d.y) + Math.abs(nx) * (hw - inset) + Math.abs(ny) * (hh - inset) - (nx * a.x + ny * a.y)
+      if (over <= 0.5) return
+      x = inRange(x - nx * over, lo.x, hi.x)
+      y = inRange(y - ny * over, lo.y, hi.y)
+      moved = true
+    })
+    if (!moved) break
+  }
+  return L.point(x, y)
+}
+
+/**
+ * 让地图停在 clamp 允许的位置。Leaflet 的 maxBounds 只能是经纬度矩形，而手绘图是八边形、面板占的是像素，
+ * 所以保留 Leaflet 自己的检查（每次移动/缩放结束、拖动惯性、键盘）但改问 clamp（Leaflet 1.9 的三个私有钩子），
+ * 拖到边上直接停住而不是弹回。返回「立刻挪回范围内」，面板高度等 clamp 依赖的东西变了时调用。
+ */
+export function limitPan(map: L.Map, clamp: (c: L.Point, zoom: number) => L.Point) {
+  type LimitCenter = (center: L.LatLng, zoom: number, bounds?: L.LatLngBounds) => L.LatLng
+  type LimitOffset = (offset: L.Point, bounds?: L.LatLngBounds) => L.Point
+  const m = map as unknown as { _limitCenter: LimitCenter; _limitOffset: LimitOffset }
+  m._limitCenter = (center, zoom, bounds) => {
+    if (!bounds) return center
+    const p = map.project(center, zoom)
+    const q = clamp(p, zoom)
+    return p.distanceTo(q) < 1 ? center : map.unproject(q, zoom)
+  }
+  m._limitOffset = (offset, bounds) => {
+    if (!bounds) return offset
+    const p = map.project(map.getCenter(), map.getZoom())
+    return clamp(p.add(offset), map.getZoom()).subtract(p).round()
+  }
+  const drag = (map.dragging as unknown as { _draggable: L.Draggable & { _newPos: L.Point } })._draggable
+  drag.on('predrag', () => {
+    const mid = map.getPixelOrigin().add(map.getSize().divideBy(2))
+    drag._newPos = mid.subtract(clamp(mid.subtract(drag._newPos), map.getZoom()))
+  })
+  let moving = false
+  map.on('movestart', () => (moving = true))
+  map.on('moveend', () => (moving = false))
+  map.setMaxBounds(L.latLngBounds(PAINTED_OUTLINE.map(toLatLng))) // 打开 Leaflet 的检查；真正的范围是 clamp
+  return () => {
+    if (!moving) map.panInsideBounds(map.options.maxBounds!)
+  }
+}
+
+/** box 差不多铺满 size 像素视野的最小缩放级别：只用整数级，宁可超出 ~15% 也不要缩得比视野小很多 */
+export function fillZoom(map: L.Map, box: L.LatLngBounds, size: L.Point, min = 15, max = 18) {
+  const nw = map.project(box.getNorthWest(), 17)
+  const se = map.project(box.getSouthEast(), 17)
+  const z = 17 + Math.log2(Math.min(size.x / (se.x - nw.x), size.y / (se.y - nw.y)))
+  return Math.min(max, Math.max(min, Math.floor(z + 0.2)))
+}
