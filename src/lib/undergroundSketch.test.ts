@@ -13,7 +13,7 @@ describe('地下手绘导入', () => {
     expect(first).not.toHaveProperty('roads')
     expect(first.edges.every((edge) => Object.keys(edge).sort().join() === 'a,b,id')).toBe(true)
   })
-  it('保留图纸、图片点及离路连接点', () => {
+  it('保留图纸、街景点及离路连接点', () => {
     const map: UndergroundMap = { ...base, connectors: [{ id: 'off', kind: 'stairs', floorFrom: 0, floorTo: -1, pos: [121.603, 31.186], note: '独立楼梯' }] }
     expect(mergeUndergroundSketch(map, paths).connectors).toEqual(map.connectors)
     expect(mergeUndergroundSketch(base, [[]])).toEqual({ ...base, points: [] })

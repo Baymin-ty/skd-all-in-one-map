@@ -48,16 +48,18 @@ describe('地下图层数据校验', () => {
     for (const b of ['missing', 'n-a']) expect(validateUndergroundMap({ ...valid, edges: [{ id: 'bad', a: 'n-a', b }] }, campus).some((e) => e.includes('端点'))).toBe(true)
   })
 
-  it('校验路网上图片点的端点、权重和图片 ID', () => {
+  it('校验街景点的端点、权重和 GUID 图片 ID', () => {
     const map: UndergroundMap = {
       ...valid,
       nodes: [{ id: 'n-a', pos: [121.6, 31.185] }, { id: 'n-b', pos: [121.601, 31.185] }],
-      points: [{ id: 'p-1', endpointId1: 'n-a', endpointWeight1: 0.25, endpointId2: 'n-b', endpointWeight2: 0.75, imageId: 'photo-1' }],
+      points: [{ id: 'p-1', endpointId1: 'n-a', endpointWeight1: 0.25, endpointId2: 'n-b', endpointWeight2: 0.75, imageId: '550e8400-e29b-41d4-a716-446655440000' }],
     }
     expect(validateUndergroundMap(map, campus)).toEqual([])
     const errors = validateUndergroundMap({ ...map, points: [{ ...map.points![0], endpointId2: 'missing', endpointWeight1: 0.2, imageId: '' }] }, campus)
     expect(errors.some((e) => e.includes('p-1') && e.includes('端点'))).toBe(true)
     expect(errors.some((e) => e.includes('p-1') && e.includes('权重'))).toBe(true)
     expect(errors.some((e) => e.includes('p-1') && e.includes('图片'))).toBe(true)
+    const nonGuid = validateUndergroundMap({ ...map, points: [{ ...map.points![0], imageId: 'photo-1' }] }, campus)
+    expect(nonGuid.some((e) => e.includes('p-1') && e.includes('GUID'))).toBe(true)
   })
 })

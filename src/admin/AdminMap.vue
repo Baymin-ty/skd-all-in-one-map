@@ -200,7 +200,7 @@ function finish() {
   admin.mode = admin.mode === 'polygon' ? 'vertices' : ''
 }
 onMounted(() => {
-  map = createCampusMap(el.value!, admin.campus!)
+  map = createCampusMap(el.value!, admin.campus!, { maxZoom: Infinity })
   limitZoomOut()
   keepInside = limitPan(map, (center, z) => {
     const size = map.getSize()

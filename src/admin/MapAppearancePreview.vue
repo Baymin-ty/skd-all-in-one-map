@@ -32,7 +32,7 @@ function home() {
   map.fitBounds(L.latLngBounds(admin.campus!.boundary.map(toLatLng)), { padding: [35, 35], maxZoom: 17 })
 }
 onMounted(() => {
-  map = createCampusMap(el.value!, admin.campus!)
+  map = createCampusMap(el.value!, admin.campus!, { maxZoom: Infinity })
   map.setMaxBounds(L.latLngBounds(admin.campus!.bounds.map(toLatLng)).pad(0.4))
   const initial = admin.places.buildings.find((b) => b.id === selected.value)
   if (initial) map.setView(toLatLng(initial.center), 18)

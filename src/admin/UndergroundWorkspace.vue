@@ -8,14 +8,15 @@ import { fromLatLng, toLatLng } from '../lib/geo'
 import type { IconName } from '../lib/icons'
 import { meters } from '../lib/measure'
 import type { LngLat, UndergroundConnectorKind } from '../lib/types'
-import { degree, edgeMeters, graphIssues, projectOnEdge, roadPointPosition, type UgEdge, type UgEntrance } from '../lib/undergroundGraph'
+import { degree, edgeMeters, graphIssues, projectOnEdge, streetViewPointPosition, type UgEdge, type UgEntrance, type UgStreetViewPoint } from '../lib/undergroundGraph'
 import {
-  admin, addUndergroundEntrance, addUndergroundRoadPoint, bindUndergroundEntrances, deleteUnderground, deleteUndergroundSelection, drawUndergroundAt,
+  admin, addUndergroundEntrance, addUndergroundStreetViewPoint, bindUndergroundEntrances, deleteUnderground, deleteUndergroundSelection, drawUndergroundAt,
   drawUndergroundOnEdge, drawUndergroundToEntrance, drawUndergroundToNode, finishUndergroundRoad, insertUndergroundNode,
-  moveUndergroundEntrance, moveUndergroundNode, redoUnderground, saveUnderground, selectUnderground, setUndergroundTool,
-  undergroundCanRedo, undergroundCanUndo, undergroundDirty, undoUnderground, updateUndergroundEntrance, updateUndergroundRoadPoint,
-  type UndergroundSnap, type UndergroundTool,
+  interpolateUndergroundStreetViewPoints, moveUndergroundEntrance, moveUndergroundNode, redoUnderground, saveUnderground, selectUnderground, setUndergroundTool,
+  undergroundCanRedo, undergroundCanUndo, undergroundDirty, undoUnderground, updateUndergroundEntrance, uploadUndergroundStreetViewImage,
+  type UndergroundSnap, type UndergroundTool, notify,
 } from './store'
+import { STREETVIEW_DIR, streetViewUrl } from '../lib/streetview'
 
 const PURPLE = '#9b4fd1', PURPLE_DARK = '#5b21b6', RED = '#e5262d'
 /** 拖动时离节点、路段或出入口这么近（屏幕像素）就吸附过去，松手即接上 / 绑定 */
@@ -28,7 +29,8 @@ const tools: { id: UndergroundTool; label: string; icon: IconName; key: string }
   { id: 'select', label: '选择', icon: 'pointer', key: 'V' },
   { id: 'road', label: '道路', icon: 'road', key: 'R' },
   { id: 'entrance', label: '出入口', icon: 'entrance', key: 'E' },
-  { id: 'point', label: '图片点', icon: 'image', key: 'P' },
+  { id: 'point', label: '街景点', icon: 'image', key: 'P' },
+  { id: 'interpolate', label: '插值', icon: 'sparkles', key: 'I' },
   { id: 'erase', label: '删除', icon: 'trash', key: 'X' },
 ]
 const kindLabel: Record<UndergroundConnectorKind, string> = { ramp: '车辆出入口', stairs: '楼梯口', elevator: '电梯口', unknown: '其他出入口' }
@@ -73,14 +75,68 @@ const selectedPoint = computed(() => {
   const s = admin.undergroundSelected
   return s?.kind === 'point' ? graph.value?.points.find((point) => point.id === s.id) ?? null : null
 })
+const uploadInput = ref<HTMLInputElement>()
+const uploading = ref(false)
+const previewVersion = ref(0)
+const previewBroken = ref(false)
+const previewUrl = computed(() => selectedPoint.value ? `${streetViewUrl(selectedPoint.value.imageId)}?v=${previewVersion.value}` : '')
+watch(() => selectedPoint.value?.id, () => { previewBroken.value = false; previewVersion.value++ })
+/** 街景点插值：先选同一路段上的两个街景点，再按数量插入。 */
+const interpolatePick = ref<string[]>([])
+const interpolateCount = ref(1)
+const pickedStreetViewPoints = computed(() => interpolatePick.value
+  .map((id) => graph.value?.points.find((point) => point.id === id))
+  .filter((point): point is UgStreetViewPoint => !!point))
+const interpolateError = computed(() => {
+  const [a, b] = pickedStreetViewPoints.value
+  if (!a || !b) return ''
+  const sameEdge = (a.endpointId1 === b.endpointId1 && a.endpointId2 === b.endpointId2)
+    || (a.endpointId1 === b.endpointId2 && a.endpointId2 === b.endpointId1)
+  if (!sameEdge) return '两个街景点不在同一条路段上'
+  const t1 = a.endpointWeight2
+  const t2 = b.endpointId1 === a.endpointId1 ? b.endpointWeight2 : b.endpointWeight1
+  return Math.abs(t1 - t2) < 1e-6 ? '两个街景点位置太近，无法插值' : ''
+})
+const interpolateReady = computed(() => pickedStreetViewPoints.value.length === 2 && !interpolateError.value
+  && Number.isInteger(Number(interpolateCount.value)) && Number(interpolateCount.value) >= 1 && Number(interpolateCount.value) <= 50)
+watch(tool, () => { interpolatePick.value = [] })
+watch(() => graph.value?.points.map((point) => point.id).join('|'), () => {
+  const ids = new Set(graph.value?.points.map((point) => point.id))
+  if (interpolatePick.value.some((id) => !ids.has(id))) interpolatePick.value = interpolatePick.value.filter((id) => ids.has(id))
+})
+function applyInterpolation() {
+  const picked = pickedStreetViewPoints.value
+  if (picked.length !== 2) { notify('请先选择两个街景点', 'error'); return }
+  const result = interpolateUndergroundStreetViewPoints(picked[0].id, picked[1].id, Number(interpolateCount.value))
+  if (result.error) { notify(result.error, 'error'); return }
+  notify(`已添加 ${result.points.length} 个街景点`)
+  interpolatePick.value = []
+}
+async function uploadStreetView(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  const point = selectedPoint.value
+  if (!file || !point || uploading.value) return
+  uploading.value = true
+  try {
+    if (await uploadUndergroundStreetViewImage(point.imageId, file)) {
+      previewBroken.value = false
+      previewVersion.value++
+    }
+  } finally { uploading.value = false }
+}
 const hint = computed(() => {
   if (tool.value === 'road') return admin.undergroundActive
     ? '继续点击添加下一个点，点到已有的点、路段或出入口会自动接上 · 双击、Enter 或右键结束这条路'
     : '点击地图开始画路；从已有的点、路段或出入口上开始，就是接出一条岔路'
   if (tool.value === 'entrance') return '先选类型再点击放置；点在道路或节点上会直接绑定到路网'
-  if (tool.value === 'point') return '点击路网线段创建图片点；点在线段外不会创建'
+  if (tool.value === 'point') return '点击路网线段创建街景点，自动生成 GUID 图片 ID；点在线段外不会创建'
+  if (tool.value === 'interpolate') return interpolateError.value || (pickedStreetViewPoints.value.length === 2
+    ? '两个街景点在同一路段上，输入数量后生成插值点'
+    : `依次点击同一路段上的两个街景点（已选 ${pickedStreetViewPoints.value.length}/2）`)
   if (tool.value === 'erase') return '点击要删的点、路段或出入口；删路中间的点，两侧会自动接上'
-  return '拖动紫点改线，拖到别的点或路段上自动接成路口 · 出入口拖到路上会绑定 · 图片点记录端点权重 · 右键删除'
+  return '拖动紫点改线，拖到别的点或路段上自动接成路口 · 出入口拖到路上会绑定 · 街景点保存端点权重和 GUID · 右键删除'
 })
 
 function nearestRoadMeters(pos: LngLat) {
@@ -156,14 +212,15 @@ function draw() {
     marker.on('dragend', () => { const target = takeSnap(); moveUndergroundEntrance(c.id, fromLatLng(marker.getLatLng()), target, detach) })
   }
   for (const point of g.points) {
-    const pos = roadPointPosition(g, point)
+    const pos = streetViewPointPosition(g, point)
     if (!pos) continue
     const selected = sel?.kind === 'point' && sel.id === point.id
+    const picked = tool.value === 'interpolate' && interpolatePick.value.includes(point.id)
     const marker = L.marker(toLatLng(pos), {
-      keyboard: false, zIndexOffset: selected ? 1200 : 1100, title: `图片点 · ${point.imageId}`,
-      icon: L.divIcon({ className: 'ug-point-host', html: `<span class="ug-point${selected ? ' selected' : ''}"><span class="ug-point-dot"></span></span>`, iconSize: [24, 24], iconAnchor: [12, 12] }),
+      keyboard: false, zIndexOffset: selected ? 1200 : 1100, title: `街景点 · ${point.imageId}`,
+      icon: L.divIcon({ className: 'ug-point-host', html: `<span class="ug-point${selected ? ' selected' : ''}${picked ? ' picked' : ''}"><span class="ug-point-dot"></span></span>`, iconSize: [24, 24], iconAnchor: [12, 12] }),
     }).addTo(pointLayer)
-    marker.on('click', (event) => { stop(event); selectUnderground({ kind: 'point', id: point.id }) })
+    marker.on('click', (event) => pointClick(point, event))
     marker.on('contextmenu', (event) => { stop(event); deleteUnderground({ kind: 'point', id: point.id }) })
   }
   drawRubber()
@@ -180,13 +237,13 @@ function drawRubber() {
  * 屏幕上 SNAP_PX 以内最近的吸附目标：节点优先，其次没绑定的出入口，最后是路段上的投影点。
  * except 是正在拖的节点，它自己和相连的路段不算。
  */
-function findSnap(latlng: L.LatLng, opts: { except?: string; edges?: boolean; entrances?: boolean }): UndergroundSnap | null {
+function findSnap(latlng: L.LatLng, opts: { except?: string; nodes?: boolean; edges?: boolean; entrances?: boolean }): UndergroundSnap | null {
   const g = graph.value, m = map
   if (!m || !g) return null
   const p = m.latLngToContainerPoint(latlng)
   const px = (pos: LngLat) => m.latLngToContainerPoint(toLatLng(pos))
   let best: UndergroundSnap | null = null, bestPx = SNAP_PX
-  for (const n of g.nodes) {
+  if (opts.nodes !== false) for (const n of g.nodes) {
     const d = n.id === opts.except ? Infinity : p.distanceTo(px(n.pos))
     if (d <= bestPx) best = { node: n.id }, bestPx = d
   }
@@ -239,12 +296,25 @@ function nodeClick(id: string, event: L.LeafletMouseEvent) {
   else if (tool.value === 'erase') deleteUnderground({ kind: 'node', id })
   else selectUnderground({ kind: 'node', id })
 }
+function pointClick(point: UgStreetViewPoint, event: L.LeafletMouseEvent) {
+  stop(event)
+  if (tool.value === 'interpolate') {
+    const picks = interpolatePick.value
+    interpolatePick.value = picks.includes(point.id)
+      ? picks.filter((id) => id !== point.id)
+      : picks.length < 2 ? [...picks, point.id] : [picks[1], point.id]
+  }
+  selectUnderground({ kind: 'point', id: point.id })
+}
+function addPointOnEdge(edgeId: string, pos: LngLat) {
+  addUndergroundStreetViewPoint(edgeId, pos)
+}
 function edgeClick(e: UgEdge, event: L.LeafletMouseEvent) {
   stop(event)
   const pos = fromLatLng(event.latlng)
   if (tool.value === 'road') event.originalEvent.altKey ? drawUndergroundAt(pos) : drawUndergroundOnEdge(e.id, pos)
   else if (tool.value === 'entrance') addUndergroundEntrance(pos, { edge: e.id, pos })
-  else if (tool.value === 'point') addUndergroundRoadPoint(e.id, pos)
+  else if (tool.value === 'point') addPointOnEdge(e.id, pos)
   else if (tool.value === 'erase') deleteUnderground({ kind: 'edge', id: e.id })
   else selectUnderground({ kind: 'edge', id: e.id })
 }
@@ -259,7 +329,12 @@ function mapClick(event: L.LeafletMouseEvent) {
   const pos = fromLatLng(event.latlng)
   if (tool.value === 'road') drawUndergroundAt(pos)
   else if (tool.value === 'entrance') addUndergroundEntrance(pos)
-  else if (tool.value === 'point') return
+  else if (tool.value === 'point') {
+    // 稍微点偏一点也吸附到最近的路段；点在线段外则明确拒绝，保证街景点始终落在路网上。
+    const target = findSnap(event.latlng, { nodes: false, edges: true })
+    if (target && 'edge' in target) addPointOnEdge(target.edge, target.pos)
+    else notify('街景点必须建在路网上，请点击紫色道路线段', 'error')
+  }
   else if (tool.value === 'select') selectUnderground(null)
 }
 function mapMove(event: L.LeafletMouseEvent) {
@@ -273,7 +348,7 @@ function fitAll() {
   const marked = [
     ...(graph.value?.nodes.map((n) => n.pos) ?? []),
     ...(graph.value?.entrances.map((e) => e.pos) ?? []),
-    ...(graph.value?.points.map((point) => roadPointPosition(graph.value!, point)).filter((pos): pos is LngLat => !!pos) ?? []),
+    ...(graph.value?.points.map((point) => streetViewPointPosition(graph.value!, point)).filter((pos): pos is LngLat => !!pos) ?? []),
   ]
   const points = marked.length > 1 ? marked : admin.campus.boundary
   map.fitBounds(L.latLngBounds(points.map(toLatLng)), { padding: [40, 40], maxZoom: 18 })
@@ -283,8 +358,8 @@ function focus(points: LngLat[], select?: Parameters<typeof selectUnderground>[0
   map.fitBounds(L.latLngBounds(points.map(toLatLng)), { padding: [80, 80], maxZoom: 19 })
   if (select) selectUnderground(select)
 }
-function focusPoint(point: Parameters<typeof roadPointPosition>[1]) {
-  const pos = graph.value && roadPointPosition(graph.value, point)
+function focusPoint(point: Parameters<typeof streetViewPointPosition>[1]) {
+  const pos = graph.value && streetViewPointPosition(graph.value, point)
   if (pos) focus([pos], { kind: 'point', id: point.id })
 }
 const cycle = { islands: 0, looseEnds: 0, unboundEntrances: 0 }
@@ -327,7 +402,7 @@ function continueFrom() { setUndergroundTool('road') }
 
 onMounted(() => {
   if (!el.value || !admin.campus) return
-  map = createCampusMap(el.value, admin.campus)
+  map = createCampusMap(el.value, admin.campus, { maxZoom: Infinity })
   map.doubleClickZoom.disable()
   edgeLayer.addTo(map); nodeLayer.addTo(map); entranceLayer.addTo(map); pointLayer.addTo(map)
   map.on('click', mapClick).on('mousemove', mapMove).on('dblclick', endRoad).on('contextmenu', endRoad)
@@ -360,6 +435,12 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', keydown); map?.rem
             <button v-for="k in (['ramp', 'stairs', 'elevator'] as const)" :key="k" type="button" role="radio" :aria-checked="admin.undergroundEntranceKind === k" :class="{ on: admin.undergroundEntranceKind === k }" :style="{ '--c': kindColor[k] }" @click="admin.undergroundEntranceKind = k"><i class="ug-mark" :class="markClass(k)" />{{ kindLabel[k] }}</button>
           </span>
         </template>
+        <template v-if="tool === 'interpolate'">
+          <label class="ug-interp-count">数量
+            <input v-model.number="interpolateCount" type="number" min="1" max="50" step="1" :disabled="admin.undergroundSaving" />
+          </label>
+          <button type="button" class="ug-hint-action" :disabled="!interpolateReady || admin.undergroundSaving" @click="applyInterpolation">生成</button>
+        </template>
         <button v-if="tool === 'road' && admin.undergroundActive" type="button" class="ug-hint-action" @click="finishUndergroundRoad">结束这条路</button>
       </div>
 
@@ -386,7 +467,7 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', keydown); map?.rem
         <div><b>{{ totalKm.toFixed(2) }}</b><span>公里道路</span></div>
         <div><b>{{ graph?.nodes.length ?? 0 }}</b><span>个节点</span></div>
         <div><b>{{ graph?.entrances.length ?? 0 }}</b><span>个出入口</span></div>
-        <div><b>{{ graph?.points.length ?? 0 }}</b><span>个图片点</span></div>
+        <div><b>{{ graph?.points.length ?? 0 }}</b><span>个街景点</span></div>
       </div>
 
       <div class="ug-scroll">
@@ -415,14 +496,23 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', keydown); map?.rem
         </section>
 
         <section v-else-if="selectedPoint" class="ug-card">
-          <div class="ug-card-head"><Ico name="image" />图片点<button class="icon-button danger" title="删除图片点（Delete）" @click="deleteUndergroundSelection"><Ico name="trash" /></button></div>
-          <label>图片 ID<input :value="selectedPoint.imageId" placeholder="例如：garage-sign-01" @change="updateUndergroundRoadPoint(selectedPoint!.id, ($event.target as HTMLInputElement).value)"></label>
+          <div class="ug-card-head"><Ico name="image" />街景点<button class="icon-button danger" title="删除街景点（Delete）" @click="deleteUndergroundSelection"><Ico name="trash" /></button></div>
           <div class="ug-point-binding">
+            <b>点位 ID</b>
+            <span>{{ selectedPoint.id }}</span>
+            <b>图片 ID（GUID）</b>
+            <span>{{ selectedPoint.imageId }}</span>
             <b>位置绑定</b>
             <span>{{ selectedPoint.endpointId1 }} × {{ selectedPoint.endpointWeight1.toFixed(6) }}</span>
             <span>{{ selectedPoint.endpointId2 }} × {{ selectedPoint.endpointWeight2.toFixed(6) }}</span>
           </div>
-          <p class="ug-help">点的位置由两个路网端点和权重计算，移动端点后会自动更新。</p>
+          <img v-if="!previewBroken" class="ug-street-preview" :src="previewUrl" alt="街景图预览" loading="lazy" @error="previewBroken = true" />
+          <div class="ug-street-actions">
+            <button type="button" class="button secondary full" :disabled="uploading" @click="uploadInput?.click()"><Ico name="image" />{{ uploading ? '上传中…' : '上传 / 替换街景图片' }}</button>
+            <input ref="uploadInput" type="file" accept="image/jpeg,image/png,image/webp" hidden @change="uploadStreetView" />
+            <a class="button secondary full" :href="streetViewUrl(selectedPoint.imageId)" target="_blank" rel="noreferrer"><Ico name="image" />打开街景图</a>
+          </div>
+          <p class="ug-help">上传后会自动按 GUID 改名，保存为 .jpg / .png / .webp 并放到 <code>{{ STREETVIEW_DIR }}</code>；移动端点后位置自动更新。</p>
         </section>
 
         <section v-else class="ug-card ug-guide">
@@ -430,7 +520,8 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', keydown); map?.rem
           <ul>
             <li><kbd>R</kbd> 画道路：逐点点击，双击或 <kbd>Enter</kbd> 结束；点到已有的点/路段自动接成路口，按住 <kbd>⌥</kbd> 点击不吸附</li>
             <li><kbd>E</kbd> 放出入口：点在道路或节点上会直接绑定，之后跟着道路一起移动</li>
-            <li><kbd>P</kbd> 图片点：点击路网线段创建，自动保存两端点 ID、插值权重和图片 ID</li>
+            <li><kbd>P</kbd> 街景点：点击路网线段创建，自动生成随机 GUID；图片放到 data/streetview，文件名用这个 GUID</li>
+            <li><kbd>I</kbd> 插值：依次点击同一路段上的两个街景点，输入数量后均匀生成新的街景点</li>
             <li><kbd>V</kbd> 拖动紫点改线，拖到别的点或路段上就接成路口；出入口拖到道路上会绑定，按住 <kbd>⌥</kbd> 拖动可拆开</li>
             <li>右键任何对象直接删除，或选中后按 <kbd>Delete</kbd>；<kbd>⌘Z</kbd> 撤销</li>
           </ul>
@@ -463,14 +554,14 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', keydown); map?.rem
         </section>
 
         <section class="ug-section">
-          <h3>图片点 <small>{{ graph?.points.length ?? 0 }}</small></h3>
-          <p v-if="!graph?.points.length" class="ug-help">还没有图片点，按 <kbd>P</kbd> 后点击路网线段添加。</p>
+          <h3>街景点 <small>{{ graph?.points.length ?? 0 }}</small></h3>
+          <p v-if="!graph?.points.length" class="ug-help">还没有街景点，按 <kbd>P</kbd> 后点击路网线段添加。</p>
           <button
             v-for="point in graph?.points" :key="point.id" class="ug-row" :class="{ selected: admin.undergroundSelected?.id === point.id }"
             @click="focusPoint(point)"
           >
             <span class="ug-row-mark"><i class="ug-point-list-mark" /></span>
-            <span class="grow"><b>{{ point.imageId }}</b><small>{{ point.endpointId1 }} × {{ point.endpointWeight1.toFixed(4) }} · {{ point.endpointId2 }} × {{ point.endpointWeight2.toFixed(4) }}</small></span>
+            <span class="grow"><b>{{ point.imageId }}</b><small>{{ point.id }}</small><small>{{ point.endpointId1 }} × {{ point.endpointWeight1.toFixed(4) }} · {{ point.endpointId2 }} × {{ point.endpointWeight2.toFixed(4) }}</small></span>
           </button>
         </section>
       </div>
@@ -507,6 +598,13 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', keydown); map?.rem
 .ug-kinds { display: inline-flex; gap: 2px; padding: 2px; border-radius: 8px; background: #f3eef7; }
 .ug-kinds button { display: inline-flex; align-items: center; gap: 6px; padding: 4px 9px; border-radius: 6px; background: transparent; color: #6a5d7c; font-size: 12px; }
 .ug-kinds button.on { background: #fff; color: #2e2540; font-weight: 600; box-shadow: 0 0 0 1.5px var(--c), 0 1px 3px #2e254026; }
+.ug-interp-count { display: inline-flex; align-items: center; gap: 6px; color: #6a5d7c; font-size: 12px; white-space: nowrap; }
+.ug-interp-count input { width: 64px; padding: 4px 7px; border: 1px solid #ddd5e6; border-radius: 6px; background: #fff; color: #2e2540; font-size: 12px; }
+.ug-hint-action:disabled { opacity: .45; cursor: not-allowed; }
+.ug-point-binding span { overflow-wrap: anywhere; }
+.ug-street-preview { width: 100%; max-height: 190px; object-fit: cover; border-radius: 8px; background: #f3eff8; }
+.ug-street-actions { display: grid; gap: 6px; }
+.ug-card a.button { text-decoration: none; }
 
 .ug-legend { position: absolute; z-index: 800; left: 16px; bottom: 18px; display: flex; flex-wrap: wrap; gap: 6px 14px; max-width: calc(100% - 90px); padding: 7px 12px; border: 1px solid #e3dcea; border-radius: 9px; background: #fffffff2; color: #5d5470; font-size: 12px; }
 .ug-legend span { display: inline-flex; align-items: center; gap: 6px; }
@@ -568,7 +666,7 @@ kbd { display: inline-block; min-width: 18px; padding: 0 5px; border: 1px solid 
 .ug-row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 9px; border-radius: 9px; background: transparent; text-align: left; }
 .ug-row:hover, .ug-row.selected { background: #f6f0fa; }
 .ug-row b { display: block; overflow: hidden; color: #2e2540; font-size: 13px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
-.ug-row small { color: #8a8197; font-size: 11px; }
+.ug-row small { display: block; overflow: hidden; color: #8a8197; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .ug-row .grow { flex: 1; min-width: 0; }
 .ug-row-mark { display: grid; flex: none; place-items: center; width: 26px; height: 26px; }
 .ug-point-list-mark { width: 13px; height: 13px; border: 2px solid #8a4cba; border-radius: 50%; background: #fff; box-shadow: 0 0 0 3px #e8d9f2; }
@@ -609,6 +707,8 @@ kbd { display: inline-block; min-width: 18px; padding: 0 5px; border: 1px solid 
 .ug-point-dot { width: 7px; height: 7px; border-radius: 50%; background: #8a4cba; }
 .ug-point-host:hover .ug-point { transform: scale(1.2); }
 .ug-point.selected { background: #eadcf2; box-shadow: 0 0 0 3px #8a4cba66, 0 1px 5px #0005; }
+.ug-point.picked { background: #5b21b6; border-color: #fff; box-shadow: 0 0 0 3px #9b4fd1, 0 0 0 6px #9b4fd133; }
+.ug-point.picked .ug-point-dot { background: #fff; }
 .tool-road .leaflet-container, .tool-road .leaflet-container.leaflet-interactive, .tool-entrance .leaflet-container, .tool-point .leaflet-container, .tool-point .leaflet-container.leaflet-interactive { cursor: crosshair; }
 .tool-road .ug-node-host { cursor: copy; }
 .tool-erase .ug-node-host, .tool-erase .ug-entrance-host, .tool-erase .ug-access-host { cursor: pointer; }

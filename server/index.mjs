@@ -1,7 +1,7 @@
 // 地图管理使用管理口令；社区使用独立的匿名会话与内容所有权。
 import express from 'express'
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { openDatabases } from './databases.mjs'
 import { fileURLToPath } from 'node:url'
@@ -150,11 +150,12 @@ function cleanUnderground(p) {
   }) : []
   const points = Array.isArray(p.points) ? p.points.map((point) => {
     const pointId = id(point?.id, 'ug-point')
-    if (!nodeIds.has(point?.endpointId1) || !nodeIds.has(point?.endpointId2) || point.endpointId1 === point.endpointId2) throw new BadRequest('地下图片点端点不正确')
+    if (!nodeIds.has(point?.endpointId1) || !nodeIds.has(point?.endpointId2) || point.endpointId1 === point.endpointId2) throw new BadRequest('地下街景点端点不正确')
     const weights = [point.endpointWeight1, point.endpointWeight2]
-    if (!weights.every((weight) => typeof weight === 'number' && Number.isFinite(weight) && weight >= 0 && weight <= 1) || Math.abs(weights[0] + weights[1] - 1) > 1e-6) throw new BadRequest('地下图片点权重不正确')
+    if (!weights.every((weight) => typeof weight === 'number' && Number.isFinite(weight) && weight >= 0 && weight <= 1) || Math.abs(weights[0] + weights[1] - 1) > 1e-6) throw new BadRequest('地下街景点权重不正确')
     const imageId = text(point.imageId, 200)
-    if (!imageId) throw new BadRequest('地下图片点必须绑定图片 ID')
+    if (!imageId) throw new BadRequest('地下街景点必须绑定图片 ID')
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(imageId)) throw new BadRequest('地下街景点图片 ID 必须是 GUID')
     return { id: pointId, endpointId1: point.endpointId1, endpointWeight1: +weights[0].toFixed(6), endpointId2: point.endpointId2, endpointWeight2: +weights[1].toFixed(6), imageId }
   }) : []
   return { version: 2, floor, bounds, sources, nodes, edges, connectors, points }
@@ -232,7 +233,42 @@ for (const table of ['pois', 'buildings']) {
     res.status(204).end()
   })
 }
+// 街景图片单独放在 data/streetview，文件名是街景点的 GUID + 图片后缀。
+const streetViewDir = join(root, 'data/streetview')
+const streetViewExts = ['.jpg', '.jpeg', '.png', '.webp', '.avif']
+const streetViewMime = { 'image/jpeg': '.jpg', 'image/jpg': '.jpg', 'image/png': '.png', 'image/webp': '.webp' }
+const streetViewMagic = (ext, bytes) => ext === '.jpg'
+  ? bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff
+  : ext === '.png'
+    ? bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
+    : bytes.subarray(0, 4).toString() === 'RIFF' && bytes.subarray(8, 12).toString() === 'WEBP'
+// 上传街景图：文件名直接用街景点的 GUID，放在 data/streetview，不把二进制写进数据库。
+app.post('/api/underground/streetview/:id', requireAdmin, express.raw({ type: Object.keys(streetViewMime), limit: '20mb' }), (req, res) => {
+  const id = req.params.id
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) return res.status(400).json({ error: '街景 ID 格式不正确' })
+  const ext = streetViewMime[req.get('content-type')?.split(';')[0].trim().toLowerCase()]
+  if (!ext) return res.status(415).json({ error: '只支持 JPG、PNG 或 WebP 图片' })
+  const bytes = req.body
+  if (!Buffer.isBuffer(bytes) || bytes.length < 12) return res.status(400).json({ error: '图片内容为空' })
+  if (!streetViewMagic(ext, bytes)) return res.status(400).json({ error: '图片内容与文件类型不匹配' })
+  mkdirSync(streetViewDir, { recursive: true })
+  for (const oldExt of streetViewExts) {
+    if (oldExt === ext) continue
+    const old = join(streetViewDir, id + oldExt)
+    if (existsSync(old)) unlinkSync(old)
+  }
+  writeFileSync(join(streetViewDir, id + ext), bytes)
+  res.status(201).json({ id, ext, bytes: bytes.length, url: `/streetview/${id}` })
+})
 app.use('/api', (_req, res) => res.status(404).json({ error: '没有这个接口' }))
+app.get('/streetview/:id', (req, res) => {
+  const id = req.params.id
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) return res.status(400).json({ error: '街景 ID 格式不正确' })
+  const file = streetViewExts.map((ext) => join(streetViewDir, id + ext)).find(existsSync)
+  if (!file) return res.status(404).json({ error: '没有这张街景图' })
+  res.setHeader('Cache-Control', 'no-cache')
+  res.sendFile(file)
+})
 app.get('/admin', (_req, res) => res.redirect(302, '/admin/'))
 const dist = join(root, 'dist')
 if (existsSync(dist)) app.use(express.static(dist))

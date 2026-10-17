@@ -5,8 +5,7 @@ vi.stubGlobal('location', { hash: '' })
 const store = await import('./store')
 const { admin, edit, create, discard, draftDirty, draftIssue, setPosition, mapPick, changeGeometry, undoGeometry, redoGeometry, canRedo, deleteVertex, save, login, closeLogin,
   setUndergroundTool, drawUndergroundAt, drawUndergroundToNode, drawUndergroundOnEdge, finishUndergroundRoad, addUndergroundEntrance, moveUndergroundNode,
-  addUndergroundRoadPoint, deleteUnderground, undoUnderground, saveUnderground, undergroundDirty, drawUndergroundToEntrance, moveUndergroundEntrance, bindUndergroundEntrances,
-  updateUndergroundRoadPoint } = store
+  addUndergroundStreetViewPoint, deleteUnderground, undoUnderground, saveUnderground, undergroundDirty, drawUndergroundToEntrance, moveUndergroundEntrance, bindUndergroundEntrances } = store
 const building = (): Building => ({
   id: 'building-1', name: { zh: '测试楼', en: 'Test' }, short: { zh: '测试楼', en: '' }, cat: 'academic',
   aliases: [], orgs: [], rooms: [], center: [121.6, 31.18],
@@ -328,18 +327,18 @@ describe('地下标注工作台', () => {
     expect(admin.undergroundGraph!.entrances[0]).toMatchObject({ node: nodeAt(121.6, 31.18), pos: [121.6, 31.18] })
   })
 
-  it('点击路段创建图片点并可修改图片 ID，保存时带上端点权重', async () => {
+  it('点击路段创建街景点并生成随机 GUID 图片 ID，保存时带上端点权重', async () => {
     setUndergroundTool('road')
     drawUndergroundAt([121.6, 31.18]); drawUndergroundAt([121.602, 31.18]); finishUndergroundRoad()
     const edge = admin.undergroundGraph!.edges[0]
-    const point = addUndergroundRoadPoint(edge.id, [121.6015, 31.18])!
+    const point = addUndergroundStreetViewPoint(edge.id, [121.6015, 31.18])!
     expect(point).toMatchObject({ endpointId1: nodeAt(121.6, 31.18), endpointId2: nodeAt(121.602, 31.18), endpointWeight1: 0.25, endpointWeight2: 0.75 })
-    updateUndergroundRoadPoint(point.id, 'image-road-sign-1')
-    expect(admin.undergroundGraph!.points).toEqual([expect.objectContaining({ id: point.id, imageId: 'image-road-sign-1' })])
+    expect(point.imageId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)
+    expect(admin.undergroundGraph!.points).toEqual([expect.objectContaining({ id: point.id, imageId: point.imageId })])
     vi.mocked(fetch).mockImplementationOnce(async (_url, init) => new Response(init!.body as string))
     await saveUnderground()
     const body = JSON.parse(vi.mocked(fetch).mock.calls.at(-1)![1]!.body as string)
-    expect(body.points).toEqual([expect.objectContaining({ id: point.id, endpointWeight1: 0.25, endpointWeight2: 0.75, imageId: 'image-road-sign-1' })])
+    expect(body.points).toEqual([expect.objectContaining({ id: point.id, endpointWeight1: 0.25, endpointWeight2: 0.75, imageId: point.imageId })])
   })
 
   it('草稿几何去重，保存成功只消费已保存线段，保留同时新画的草稿和未完成线段', async () => {

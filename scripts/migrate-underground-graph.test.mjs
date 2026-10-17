@@ -24,7 +24,7 @@ function legacy() {
 }
 
 describe('地下图一次性迁移', () => {
-  it('拆折点、跨道路共用坐标、去重无向边与自环，保留旧节点 ID 和图片点引用', () => {
+  it('拆折点、跨道路共用坐标、去重无向边与自环，保留旧节点 ID 和街景点引用', () => {
     const input = legacy(), before = structuredClone(input), map = migrateUndergroundGraph(input)
     expect(map.version).toBe(2)
     expect(map.nodes).toHaveLength(4)
@@ -84,7 +84,7 @@ describe('地下图一次性迁移', () => {
       const bad = legacy(); bad.points[0].endpointId1 = 'missing'
       check.prepare('update underground_maps set data = ?').run(JSON.stringify(bad)); check.close()
       const failedBackup = join(dir, 'failed.json')
-      expect(() => runMigration(['--db', path, '--write', '--backup', failedBackup])).toThrow('图片点引用无效')
+      expect(() => runMigration(['--db', path, '--write', '--backup', failedBackup])).toThrow('街景点引用无效')
       expect(existsSync(failedBackup)).toBe(false)
       check = new DatabaseSync(path)
       expect(JSON.parse(check.prepare('select data from underground_maps').get().data)).toEqual(bad)

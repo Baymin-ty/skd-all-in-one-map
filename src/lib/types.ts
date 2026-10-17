@@ -98,8 +98,8 @@ export interface UndergroundConnector {
   note?: string
 }
 
-/** 在线段上标注的图片点：位置由两个路网端点和插值权重唯一确定。 */
-export interface UndergroundRoadPoint {
+/** 在线段上标注的街景点：位置由两个路网端点和插值权重唯一确定。 */
+export interface UndergroundStreetViewPoint {
   id: string
   endpointId1: string
   endpointWeight1: number
@@ -108,7 +108,7 @@ export interface UndergroundRoadPoint {
   imageId: string
 }
 
-/** 后台编辑器保存的路网节点 ID，保证图片点在重新载入后仍能找到端点。 */
+/** 后台编辑器保存的路网节点 ID，保证街景点在重新载入后仍能找到端点。 */
 export interface UndergroundNode {
   id: string
   pos: LngLat
@@ -122,5 +122,5 @@ export interface UndergroundMap {
   nodes: UndergroundNode[]
   edges: UndergroundEdge[]
   connectors: UndergroundConnector[]
-  points?: UndergroundRoadPoint[]
+  points?: UndergroundStreetViewPoint[]
 }

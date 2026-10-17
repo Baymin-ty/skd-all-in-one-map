@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { once } from 'node:events'
 import { DatabaseSync } from 'node:sqlite'
-import { addNode, connect, createRoadPoint, graphFromMap, graphToMap } from '../src/lib/undergroundGraph.ts'
+import { addNode, connect, createStreetViewPoint, graphFromMap, graphToMap } from '../src/lib/undergroundGraph.ts'
 
 const directory = mkdtempSync(join(tmpdir(), 'campus-admin-test-'))
 const dbPath = join(directory, 'map.db')
@@ -48,6 +48,25 @@ describe('campus management API', () => {
     expect(await response.json()).toEqual({ error: '请上传课表图片' })
   })
 
+  test('街景图按 GUID 在 data/streetview 中查找', async () => {
+    expect((await fetch(`${base}/streetview/not-a-guid`)).status).toBe(400)
+    expect((await fetch(`${base}/streetview/550e8400-e29b-41d4-a716-446655440000`)).status).toBe(404)
+  })
+  test('街景图上传按 GUID 改名并写入 data/streetview', async () => {
+    const id = '550e8400-e29b-41d4-a716-446655440000'
+    const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Zl1sAAAAASUVORK5CYII=', 'base64')
+    const upload = (headers = { 'Content-Type': 'image/png' }) => fetch(`${base}/api/underground/streetview/${id}`, { method: 'POST', headers, body: png })
+    expect((await upload()).status).toBe(401)
+    const response = await fetch(`${base}/api/underground/streetview/${id}`, { method: 'POST', headers: { 'Content-Type': 'image/png', Authorization: `Bearer ${password}` }, body: png })
+    expect(response.status).toBe(201)
+    expect(await response.json()).toMatchObject({ id, ext: '.png', bytes: png.length })
+    try {
+      const image = await fetch(`${base}/streetview/${id}`)
+      expect(image.status).toBe(200)
+      expect(Buffer.from(await image.arrayBuffer())).toEqual(png)
+    } finally { rmSync(join(resolve('data/streetview'), `${id}.png`), { force: true }) }
+  })
+
   test('地下手绘需要管理员保存，并在重启后保留道路和连接点', async () => {
     const initial = await (await call('/api/underground', 'GET', undefined, false)).json()
     expect(initial.edges).toHaveLength(undergroundSeed.edges.length)
@@ -82,7 +101,7 @@ describe('campus management API', () => {
     const junction = graph.nodes[1].id
     const branch = addNode(graph, [121.5975, 31.1835])
     connect(graph, junction, branch)
-    const point = createRoadPoint(graph, graph.edges[0].id, [121.59635, 31.18345], 'garage-sign-1')
+    const point = createStreetViewPoint(graph, graph.edges[0].id, [121.59635, 31.18345])
     graph.entrances.push({ id: 'ug-entrance-test', floorFrom: 0, floorTo: -1, kind: 'stairs', pos: [121.5975, 31.1835], source: 'admin' })
     const response = await call('/api/underground', 'PUT', graphToMap(graph, undergroundSeed))
     expect(response.status).toBe(200)
@@ -108,6 +127,7 @@ describe('campus management API', () => {
       { connectors: [{ ...initial.connectors[0], node: 'missing' }] },
       ...['path', 'mode', 'direction', 'source', 'note'].map((key) => ({ edges: [{ ...edge, [key]: 'removed' }] })),
       { edges: [{ ...edge, id: node.id }] },
+      { points: [{ id: 'bad-point', endpointId1: edge.a, endpointWeight1: 0.5, endpointId2: edge.b, endpointWeight2: 0.5, imageId: 'not-a-guid' }] },
     ]
     for (const patch of invalid) {
       expect((await call('/api/underground', 'PUT', { ...initial, ...patch })).status).toBe(400)

@@ -1,15 +1,27 @@
 import { meters } from './measure'
-import type { LngLat, UndergroundConnector, UndergroundEdge, UndergroundMap, UndergroundNode, UndergroundRoadPoint } from './types'
+import type { LngLat, UndergroundConnector, UndergroundEdge, UndergroundMap, UndergroundNode, UndergroundStreetViewPoint } from './types'
 
 /** 编辑器直接操作持久化的节点与双向边，连接点可独立放置或显式绑定。 */
 export type UgNode = UndergroundNode
 export type UgEdge = UndergroundEdge
-export type UgRoadPoint = UndergroundRoadPoint
+export type UgStreetViewPoint = UndergroundStreetViewPoint
 export type UgEntrance = UndergroundConnector
-export interface UndergroundGraph { nodes: UgNode[]; edges: UgEdge[]; entrances: UgEntrance[]; points: UgRoadPoint[] }
+export interface UndergroundGraph { nodes: UgNode[]; edges: UgEdge[]; entrances: UgEntrance[]; points: UgStreetViewPoint[] }
 
 let seq = 0
 export function ugId(prefix: string) { return `${prefix}-${Date.now().toString(36)}${(seq++).toString(36)}` }
+/** RFC 4122 v4 GUID，用作街景图片 ID 和文件名。 */
+export function guid(): string {
+  const c = globalThis.crypto
+  if (c && typeof c.randomUUID === 'function') return c.randomUUID()
+  const bytes = new Uint8Array(16)
+  if (c?.getRandomValues) c.getRandomValues(bytes)
+  else for (let i = 0; i < 16; i++) bytes[i] = Math.floor(Math.random() * 256)
+  bytes[6] = (bytes[6] & 0x0f) | 0x40
+  bytes[8] = (bytes[8] & 0x3f) | 0x80
+  const hex = [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('')
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
+}
 export const roundPos = (p: LngLat): LngLat => [+p[0].toFixed(6), +p[1].toFixed(6)]
 
 export function node(g: UndergroundGraph, id: string) { return g.nodes.find((n) => n.id === id) }
@@ -17,7 +29,7 @@ export function edgesOf(g: UndergroundGraph, id: string) { return g.edges.filter
 export function degree(g: UndergroundGraph, id: string) { return edgesOf(g, id).length }
 const other = (e: UgEdge, id: string) => e.a === id ? e.b : e.a
 const findEdge = (g: UndergroundGraph, a: string, b: string) => g.edges.find((e) => (e.a === a && e.b === b) || (e.a === b && e.b === a))
-const roadPoints = (g: UndergroundGraph) => g.points ?? (g.points = [])
+const streetViewPoints = (g: UndergroundGraph) => g.points ?? (g.points = [])
 
 export function addNode(g: UndergroundGraph, pos: LngLat, id = ugId('n')) {
   g.nodes.push({ id, pos: roundPos(pos) }); return id
@@ -76,8 +88,8 @@ export function splitEdge(g: UndergroundGraph, edgeId: string, p: LngLat) {
   return mid
 }
 
-/** 计算图片点在路网上的位置。权重按 endpoint1、endpoint2 相加为 1。 */
-export function roadPointPosition(g: UndergroundGraph, point: UgRoadPoint): LngLat | null {
+/** 计算街景点在路网上的位置。权重按 endpoint1、endpoint2 相加为 1。 */
+export function streetViewPointPosition(g: UndergroundGraph, point: UgStreetViewPoint): LngLat | null {
   const a = node(g, point.endpointId1), b = node(g, point.endpointId2)
   if (!a || !b) return null
   return roundPos([
@@ -86,22 +98,55 @@ export function roadPointPosition(g: UndergroundGraph, point: UgRoadPoint): LngL
   ])
 }
 
-/** 在线段上创建图片点；只保存端点 ID 和插值权重，不把坐标作为事实来源。 */
-export function createRoadPoint(g: UndergroundGraph, edgeId: string, p: LngLat, imageId?: string) {
+/** 在线段上创建街景点；只保存端点 ID、插值权重和随机 GUID 图片 ID，不把坐标作为事实来源。 */
+export function createStreetViewPoint(g: UndergroundGraph, edgeId: string, p: LngLat) {
   const edge = g.edges.find((item) => item.id === edgeId)
   const projected = projectOnEdge(g, edgeId, p)
   if (!edge || !projected) return null
   const id = ugId('ug-point')
-  const point: UgRoadPoint = {
+  const point: UgStreetViewPoint = {
     id,
     endpointId1: edge.a,
     endpointWeight1: +((1 - projected.t).toFixed(6)),
     endpointId2: edge.b,
     endpointWeight2: +(projected.t.toFixed(6)),
-    imageId: imageId?.trim() || `image-${id}`,
+    imageId: guid(),
   }
-  roadPoints(g).push(point)
+  streetViewPoints(g).push(point)
   return point
+}
+
+/** 在两个街景点之间按数量均匀插入新的街景点；两个原点必须在同一条路段上。 */
+export function interpolateStreetViewPoints(g: UndergroundGraph, id1: string, id2: string, count: number): { points: UgStreetViewPoint[]; error?: string } {
+  const first = g.points?.find((point) => point.id === id1)
+  const second = g.points?.find((point) => point.id === id2)
+  if (!first || !second) return { points: [], error: '找不到选中的街景点' }
+  if (first.id === second.id) return { points: [], error: '请选择两个不同的街景点' }
+  const sameEdge = (first.endpointId1 === second.endpointId1 && first.endpointId2 === second.endpointId2)
+    || (first.endpointId1 === second.endpointId2 && first.endpointId2 === second.endpointId1)
+  if (!sameEdge) return { points: [], error: '两个街景点不在同一条路段上' }
+  if (!Number.isInteger(count) || count < 1 || count > 50) return { points: [], error: '插值数量必须是 1–50 的整数' }
+  // 以第一个点的端点顺序为基准；t 是第二个端点的权重。
+  const a = first.endpointId1, b = first.endpointId2
+  const t1 = first.endpointWeight2
+  const t2 = second.endpointId1 === a ? second.endpointWeight2 : second.endpointWeight1
+  const lo = Math.min(t1, t2), hi = Math.max(t1, t2)
+  if (hi - lo < 1e-6) return { points: [], error: '两个街景点位置太近，无法插值' }
+  const created: UgStreetViewPoint[] = []
+  for (let k = 1; k <= count; k++) {
+    const weight2 = +(lo + ((hi - lo) * k) / (count + 1)).toFixed(6)
+    const point: UgStreetViewPoint = {
+      id: ugId('ug-point'),
+      endpointId1: a,
+      endpointWeight1: +(1 - weight2).toFixed(6),
+      endpointId2: b,
+      endpointWeight2: weight2,
+      imageId: guid(),
+    }
+    created.push(point)
+    streetViewPoints(g).push(point)
+  }
+  return { points: created }
 }
 
 /** 把 from 节点并入 into 节点：from 的路段改接到 into，自环和重复路段去掉。 */
@@ -114,7 +159,7 @@ export function mergeNodes(g: UndergroundGraph, from: string, into: string) {
     else e.b = into
   }
   g.nodes.splice(g.nodes.findIndex((n) => n.id === from), 1)
-  g.points = roadPoints(g).filter((point) => {
+  g.points = streetViewPoints(g).filter((point) => {
     if (point.endpointId1 === from) point.endpointId1 = into
     if (point.endpointId2 === from) point.endpointId2 = into
     return point.endpointId1 !== point.endpointId2
@@ -124,7 +169,7 @@ export function mergeNodes(g: UndergroundGraph, from: string, into: string) {
 }
 
 function dropOrphans(g: UndergroundGraph, ids: string[]) {
-  for (const id of ids) if (!degree(g, id) && !roadPoints(g).some((p) => p.endpointId1 === id || p.endpointId2 === id)) {
+  for (const id of ids) if (!degree(g, id) && !streetViewPoints(g).some((p) => p.endpointId1 === id || p.endpointId2 === id)) {
     const index = g.nodes.findIndex((n) => n.id === id)
     if (index >= 0) g.nodes.splice(index, 1)
   }
@@ -136,7 +181,7 @@ export function removeNode(g: UndergroundGraph, id: string) {
   const neighbours = incident.map((e) => other(e, id))
   g.edges = g.edges.filter((e) => !incident.includes(e))
   g.nodes = g.nodes.filter((n) => n.id !== id)
-  g.points = roadPoints(g).filter((point) => point.endpointId1 !== id && point.endpointId2 !== id)
+  g.points = streetViewPoints(g).filter((point) => point.endpointId1 !== id && point.endpointId2 !== id)
   if (incident.length === 2 && neighbours[0] !== neighbours[1]) {
     connect(g, neighbours[0], neighbours[1])
   } else dropOrphans(g, neighbours)
@@ -147,7 +192,7 @@ export function removeNode(g: UndergroundGraph, id: string) {
 export function removeEdge(g: UndergroundGraph, id: string) {
   const e = g.edges.find((item) => item.id === id); if (!e) return
   g.edges.splice(g.edges.indexOf(e), 1)
-  g.points = roadPoints(g).filter((point) => !((point.endpointId1 === e.a && point.endpointId2 === e.b) || (point.endpointId1 === e.b && point.endpointId2 === e.a)))
+  g.points = streetViewPoints(g).filter((point) => !((point.endpointId1 === e.a && point.endpointId2 === e.b) || (point.endpointId1 === e.b && point.endpointId2 === e.a)))
   dropOrphans(g, [e.a, e.b])
   syncEntrances(g)
 }

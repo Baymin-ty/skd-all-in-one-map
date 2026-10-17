@@ -4,15 +4,15 @@ import { PLACE_COLORS, POI_CATS } from '../lib/catalog'
 import type { IconName } from '../lib/icons'
 import { DEFAULT_MAP_SETTINGS, validMapSettings } from '../lib/mapSettings'
 import {
-  addNode, autoBindEntrances, bindEntrance, connect, createRoadPoint, graphFromMap, graphToMap, importSketch, mergeNodes, moveNode, removeEdge, removeNode,
-  roundPos, splitEdge, ugId, unbindEntrance, type UgRoadPoint, type UndergroundGraph,
+  addNode, autoBindEntrances, bindEntrance, connect, createStreetViewPoint, graphFromMap, graphToMap, importSketch, interpolateStreetViewPoints, mergeNodes, moveNode, removeEdge, removeNode,
+  roundPos, splitEdge, ugId, unbindEntrance, type UgStreetViewPoint, type UndergroundGraph,
 } from '../lib/undergroundGraph'
 export type Kind = 'building' | 'poi'
 export type View = 'overview' | 'underground' | 'appearance' | 'data' | 'events'
 export type Asset = { kind: Kind; data: Building | Poi }
 export type UndergroundSelection = { kind: 'node' | 'edge' | 'entrance' | 'point'; id: string }
 /** 选择/拖动、画道路、放出入口、点哪删哪 */
-export type UndergroundTool = 'select' | 'road' | 'entrance' | 'point' | 'erase'
+export type UndergroundTool = 'select' | 'road' | 'entrance' | 'point' | 'interpolate' | 'erase'
 interface UndergroundHistory { graph: UndergroundGraph; active: string | null }
 export const admin = reactive({
   ready: false, loading: false, error: '', offline: false, loggedIn: false, token: '',
@@ -245,20 +245,45 @@ export function drawUndergroundOnEdge(edgeId: string, pos: LngLat) {
 export function insertUndergroundNode(edgeId: string, pos: LngLat) {
   changeUnderground((g) => { const id = splitEdge(g, edgeId, pos); if (id) admin.undergroundSelected = { kind: 'node', id } })
 }
-/** 在线段上创建图片点；位置会被投影回线段，保存时只写端点和插值权重。 */
-export function addUndergroundRoadPoint(edgeId: string, pos: LngLat, imageId?: string) {
-  let point: UgRoadPoint | null = null
+/** 在线段上创建街景点；位置会被投影回线段，保存时只写端点、权重和随机 GUID。 */
+export function addUndergroundStreetViewPoint(edgeId: string, pos: LngLat) {
+  let point: UgStreetViewPoint | null = null
   changeUnderground((g) => {
-    point = createRoadPoint(g, edgeId, pos, imageId)
+    point = createStreetViewPoint(g, edgeId, pos)
     if (point) admin.undergroundSelected = { kind: 'point', id: point.id }
   })
   return point
 }
-export function updateUndergroundRoadPoint(id: string, imageId: string) {
+/** 在同一路段上的两个街景点之间按数量均匀插入新的街景点。 */
+export function interpolateUndergroundStreetViewPoints(id1: string, id2: string, count: number) {
+  let result: ReturnType<typeof interpolateStreetViewPoints> = { points: [], error: '无法插值' }
   changeUnderground((g) => {
-    const point = g.points.find((item) => item.id === id)
-    if (point) point.imageId = imageId.trim()
+    result = interpolateStreetViewPoints(g, id1, id2, count)
+    if (result.points.length) admin.undergroundSelected = { kind: 'point', id: result.points[0].id }
   })
+  return result
+}
+/** 上传街景图：服务端按 imageId（GUID）改名后写入 data/streetview。 */
+export async function uploadUndergroundStreetViewImage(imageId: string, file: File) {
+  if (!authorized()) return false
+  if (!['image/jpeg', 'image/jpg', 'image/png', 'image/webp'].includes(file.type)) { notify('只支持 JPG、PNG 或 WebP 图片', 'error'); return false }
+  if (file.size > 20 * 1024 * 1024) { notify('图片不能超过 20 MB', 'error'); return false }
+  const ctl = new AbortController(), timeout = setTimeout(() => ctl.abort(), 60_000)
+  try {
+    const res = await fetch(`/api/underground/streetview/${encodeURIComponent(imageId)}`, {
+      method: 'POST', headers: { 'Content-Type': file.type, Authorization: `Bearer ${admin.token}` }, body: file, signal: ctl.signal,
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) {
+      if (res.status === 401 && admin.loggedIn) { logout(); admin.loginOpen = true }
+      throw new Error(data.error || `上传失败（${res.status}）`)
+    }
+    notify('街景图片已上传')
+    return true
+  } catch (e) {
+    notify(e instanceof DOMException && e.name === 'AbortError' ? '上传超时，请重试' : `上传失败：${(e as Error).message}`, 'error')
+    return false
+  } finally { clearTimeout(timeout) }
 }
 /** 拖动或放置时吸附到的目标：节点、路段上的一点，或还没绑定的出入口 */
 export type UndergroundSnap = { node: string } | { edge: string; pos: LngLat } | { entrance: string }

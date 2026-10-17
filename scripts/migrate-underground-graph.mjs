@@ -8,7 +8,7 @@ const positionKey = (pos) => {
   return JSON.stringify(pos)
 }
 
-/** 一次性 v1 → v2 转换；已有节点 ID 和图片点引用始终保留。 */
+/** 一次性 v1 → v2 转换；已有节点 ID 和街景点引用始终保留。 */
 export function migrateUndergroundGraph(input) {
   if (input.version === 2) return structuredClone(input)
   if (input.version !== 1 || !Array.isArray(input.roads)) throw new Error('需要 version 1 roads 数据')
@@ -55,7 +55,7 @@ export function migrateUndergroundGraph(input) {
     }
     return result
   })
-  for (const p of input.points ?? []) if (!nodeIds.has(p.endpointId1) || !nodeIds.has(p.endpointId2) || p.endpointId1 === p.endpointId2) throw new Error(`图片点引用无效: ${p.id}`)
+  for (const p of input.points ?? []) if (!nodeIds.has(p.endpointId1) || !nodeIds.has(p.endpointId2) || p.endpointId1 === p.endpointId2) throw new Error(`街景点引用无效: ${p.id}`)
   return {
     version: 2, floor: input.floor, bounds: structuredClone(input.bounds),
     sources: structuredClone(input.sources ?? []), nodes, edges, connectors,

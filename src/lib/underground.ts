@@ -1,6 +1,7 @@
 import type { Campus, LngLat, UndergroundMap } from './types'
+import { isGuid } from './streetview'
 
-export type { UndergroundConnector, UndergroundMap, UndergroundEdge, UndergroundNode, UndergroundRoadPoint, UndergroundSource } from './types'
+export type { UndergroundConnector, UndergroundMap, UndergroundEdge, UndergroundNode, UndergroundStreetViewPoint, UndergroundSource } from './types'
 
 const VALID_KINDS = new Set(['ramp', 'stairs', 'elevator', 'unknown'])
 
@@ -57,10 +58,11 @@ export function validateUndergroundMap(map: UndergroundMap, campus: Campus): str
     if (connector.floorFrom === connector.floorTo) errors.push(`连接点楼层不能相同: ${connector.id}`)
   }
   for (const point of map.points ?? []) {
-    if (!point.imageId?.trim()) errors.push(`图片点缺少图片 ID: ${point.id}`)
-    if (!nodeIds.has(point.endpointId1) || !nodeIds.has(point.endpointId2) || point.endpointId1 === point.endpointId2) errors.push(`图片点端点无效: ${point.id}`)
+    if (!point.imageId?.trim()) errors.push(`街景点缺少图片 ID: ${point.id}`)
+    else if (!isGuid(point.imageId)) errors.push(`街景点图片 ID 必须是 GUID: ${point.id}`)
+    if (!nodeIds.has(point.endpointId1) || !nodeIds.has(point.endpointId2) || point.endpointId1 === point.endpointId2) errors.push(`街景点端点无效: ${point.id}`)
     const weightsValid = [point.endpointWeight1, point.endpointWeight2].every((weight) => Number.isFinite(weight) && weight >= 0 && weight <= 1)
-    if (!weightsValid || Math.abs(point.endpointWeight1 + point.endpointWeight2 - 1) > 1e-6) errors.push(`图片点权重无效: ${point.id}`)
+    if (!weightsValid || Math.abs(point.endpointWeight1 + point.endpointWeight2 - 1) > 1e-6) errors.push(`街景点权重无效: ${point.id}`)
   }
   return errors
 }
