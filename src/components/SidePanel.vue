@@ -1,24 +1,33 @@
 <script setup lang="ts">
+import { nextTick, watch } from 'vue'
 import { state } from '../lib/store'
-import AdminPanel from './AdminPanel.vue'
+import DiningPanel from './DiningPanel.vue'
+import CanteenDetail from './CanteenDetail.vue'
+import EventsPanel from './EventsPanel.vue'
 import CategoryList from './CategoryList.vue'
 import GroupCard from './GroupCard.vue'
 import HomePanel from './HomePanel.vue'
 import PlaceCard from './PlaceCard.vue'
 import RouteCard from './RouteCard.vue'
+import TodayPanel from './TodayPanel.vue'
 
-// 侧栏（桌面）和底部面板（手机）里放同一份内容
+// 前台侧栏与手机底部面板共用浏览内容；功能切换在 NavTabs，管理页面有独立入口。
+watch(() => [state.panel, state.eventId, state.menu.dish, state.canteen.dish, state.canteen.id, state.route.open, state.selected?.id], async () => {
+  await nextTick()
+  document.querySelector('.side-scroll, .sheet-body')?.scrollTo({ top: 0 })
+})
 </script>
 
 <template>
-  <AdminPanel v-if="state.admin" />
-  <template v-else>
-    <RouteCard v-if="state.route.open" />
-    <GroupCard v-if="state.selected?.kind === 'group'" />
-    <PlaceCard v-else-if="state.selected" />
-    <template v-else-if="!state.route.open">
-      <CategoryList v-if="state.chip" />
-      <HomePanel v-else />
-    </template>
+  <RouteCard v-if="state.route.open" />
+  <EventsPanel v-if="state.panel === 'events'" />
+  <DiningPanel v-else-if="state.panel === 'dining'" />
+  <CanteenDetail v-else-if="state.panel === 'canteen'" />
+  <TodayPanel v-else-if="state.panel === 'today' && !state.selected" />
+  <GroupCard v-else-if="state.selected?.kind === 'group'" />
+  <PlaceCard v-else-if="state.selected" />
+  <template v-else-if="!state.route.open">
+    <CategoryList v-if="state.chip" />
+    <HomePanel v-else />
   </template>
 </template>

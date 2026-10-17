@@ -1,11 +1,14 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { buildingById, groupById, PLACE_COLORS, select, state } from '../lib/store'
+import { buildingById, groupById, PLACE_COLORS, select, setChip, state } from '../lib/store'
+import { eventsIn } from '../lib/discoveryData'
 import Ico from './Ico.vue'
 
 const g = computed(() => (state.selected?.kind === 'group' ? groupById(state.selected.id) : undefined))
 const members = computed(() => g.value?.members.map((id) => buildingById(id)!).filter(Boolean) ?? [])
 const orgs = computed(() => [...new Set(members.value.flatMap((b) => b.orgs.map((o) => o.zh)))])
+const upcoming = computed(() => eventsIn('upcoming'))
+const eventCount = (id: string) => upcoming.value.filter((e) => e.place === id).length
 /** 楼号：名字里的数字 */
 const num = (zh: string) => /(\d+)号楼/.exec(zh)?.[1] ?? ''
 /** 名字里楼号后面的部分（比如「科道书院」） */
@@ -14,6 +17,7 @@ const extra = (zh: string) => zh.split('·')[1]?.trim() ?? ''
 
 <template>
   <div v-if="g" class="page">
+    <button type="button" class="text-back" @click="setChip(g.cat)"><Ico name="back" />返回{{ state.categories[g.cat]?.zh }}</button>
     <div class="head">
       <div class="row kick">
         <span class="pill">{{ state.categories[g.cat]?.zh }}</span>
@@ -35,6 +39,7 @@ const extra = (zh: string) => zh.split('·')[1]?.trim() ?? ''
           </small>
         </div>
         <span v-if="b.isNew" class="pill new">新</span>
+        <span v-if="eventCount(b.id)" class="pill group-events">{{ eventCount(b.id) }} 场活动</span>
         <Ico name="chevron" class="chev" />
       </li>
     </ul>
@@ -48,4 +53,5 @@ const extra = (zh: string) => zh.split('·')[1]?.trim() ?? ''
 
 <style scoped>
 .num { flex: none; width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center; color: #fff; font-weight: 700; font-size: 13px; font-variant-numeric: tabular-nums; }
+.group-events { font-size: 10px; color: var(--brand); background: var(--brand-soft); }
 </style>

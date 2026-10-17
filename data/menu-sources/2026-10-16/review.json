@@ -1,0 +1,55 @@
+{
+  "reviewedAt": "2026-10-16",
+  "changes": [
+    {
+      "target": "c3-faculty",
+      "action": "removed-from-dining-catalog",
+      "reason": "用户要求移除菜品中的教工餐厅"
+    },
+    {
+      "target": "familymart",
+      "action": "removed-from-dining-catalog",
+      "reason": "用户要求全家不提供菜单；保留 places.json 中的地图地点"
+    },
+    {
+      "target": "c1-2f-claypot",
+      "action": "merge-alias-stall",
+      "merged": "c1-2f-claystew",
+      "source": "photos/menus/c1-2f-claypot-20261016.png",
+      "items": 3
+    },
+    {
+      "target": "c1-2f-hulatang",
+      "action": "merge-alias-stall",
+      "merged": "c1-2f-heritage",
+      "source": "photos/menus/c1-2f-hulatang-20261016.png",
+      "items": 11,
+      "note": "原图只标大、小；葱油饼和牛肉盒的规格改为大份、小份，不推断整份/半份"
+    },
+    {
+      "target": "nestart-cafe",
+      "action": "photo-verified",
+      "source": "photos/menus/nestart-coffee-20261016.jpg",
+      "items": 24,
+      "note": "价格为原价；校园卡7折；燕麦奶+6、浓缩+10"
+    },
+    {
+      "target": "kfc",
+      "action": "online-menu-import",
+      "items": 93,
+      "source": "https://drivethruindex.com/restaurants/cn/sh/%E4%B8%8A%E6%B5%B7/kfc-BAI001",
+      "officialStoreUrl": "https://order.kfc.com.cn/preorder-taro/menu?label=preorder&storeCode=BAI001&storeCodeCurrent=BAI001",
+      "priceType": "third-party pickup reference",
+      "note": "已与官方点餐页的 BAI001 门店核对；所有价格明确标记参考价，活动/多件装保留说明，营业时段按官方页面记录为 07:00–23:59"
+    },
+    {
+      "target": "c1-1f-drinks",
+      "action": "mini-program-menu-import",
+      "source": "八度余温收钱吧点单小程序，经 iPhone 镜像读取",
+      "items": 50,
+      "complete": true,
+      "evidence": "baduyuwen/",
+      "note": "按商品名中的实际标价录入，忽略下单占位的 0 元；保留原始分类、冷热和大杯信息"
+    }
+  ]
+}

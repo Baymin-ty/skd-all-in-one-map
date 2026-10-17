@@ -1,0 +1,892 @@
+{
+  "version": 1,
+  "merged": [
+    {
+      "id": "1bdc8674",
+      "target": "e2473fa9",
+      "kind": "building",
+      "before": {
+        "id": "1bdc8674",
+        "name": {
+          "zh": "图书馆",
+          "en": "Library"
+        },
+        "cat": "life",
+        "pos": [
+          121.602958,
+          31.181459
+        ],
+        "desc": null
+      }
+    },
+    {
+      "id": "241bf2ad",
+      "target": "562411a5",
+      "kind": "building",
+      "before": {
+        "id": "241bf2ad",
+        "name": {
+          "zh": "KFC",
+          "en": "KFC"
+        },
+        "cat": "dining",
+        "pos": [
+          121.603587,
+          31.183379
+        ],
+        "desc": null
+      }
+    },
+    {
+      "id": "82c19dfc",
+      "target": "49c92421",
+      "kind": "building",
+      "before": {
+        "id": "82c19dfc",
+        "name": {
+          "zh": "丝路餐厅",
+          "en": "Silk Road Canteen"
+        },
+        "cat": "dining",
+        "pos": [
+          121.603744,
+          31.183823
+        ],
+        "desc": null
+      }
+    },
+    {
+      "id": "604e5cc3",
+      "target": "2376c907",
+      "kind": "building",
+      "before": {
+        "id": "604e5cc3",
+        "name": {
+          "zh": "尚科餐厅",
+          "en": "Shang Ke Dining Hall"
+        },
+        "cat": "dining",
+        "pos": [
+          121.603587,
+          31.183414
+        ],
+        "desc": null
+      }
+    },
+    {
+      "id": "9b395957",
+      "target": "2376c907",
+      "kind": "building",
+      "before": {
+        "id": "9b395957",
+        "name": {
+          "zh": "尚科餐厅二楼自选区",
+          "en": "Shang Ke Dining Hall 2F"
+        },
+        "cat": "dining",
+        "pos": [
+          121.603596,
+          31.183205
+        ],
+        "desc": null
+      }
+    },
+    {
+      "id": "fcd6a84e",
+      "target": "2376c907",
+      "kind": "building",
+      "before": {
+        "id": "fcd6a84e",
+        "name": {
+          "zh": "尚科餐厅1楼",
+          "en": "Shang Ke Dining Hall 1F"
+        },
+        "cat": "dining",
+        "pos": [
+          121.603434,
+          31.183027
+        ],
+        "desc": {
+          "zh": "尚科餐厅",
+          "en": ""
+        }
+      }
+    },
+    {
+      "id": "e3ccaf6b",
+      "target": "2376c907",
+      "kind": "building",
+      "before": {
+        "id": "e3ccaf6b",
+        "name": {
+          "zh": "西餐厅",
+          "en": "HMT Cafeteria (Western)"
+        },
+        "cat": "dining",
+        "pos": [
+          121.603856,
+          31.183209
+        ],
+        "desc": null
+      }
+    },
+    {
+      "id": "fe2a1ecf",
+      "target": "d7191508",
+      "kind": "building",
+      "before": {
+        "id": "fe2a1ecf",
+        "name": {
+          "zh": "教工餐厅与点餐区",
+          "en": "Faculty Restaurant"
+        },
+        "cat": "dining",
+        "pos": [
+          121.60303,
+          31.181904
+        ],
+        "desc": null
+      }
+    },
+    {
+      "id": "a7e65a53",
+      "target": "dbe3b0a1",
+      "kind": "building",
+      "before": {
+        "id": "a7e65a53",
+        "name": {
+          "zh": "运动场",
+          "en": "Stadium"
+        },
+        "cat": "sports",
+        "pos": [
+          121.606044,
+          31.182016
+        ],
+        "desc": {
+          "zh": "体育场（2026 年翻新）：抗压测试期间仅体育课使用，正式开放另行通知",
+          "en": "Stadium (renovated 2026): PE classes only during load testing; opening TBA"
+        },
+        "source": "公共服务处 2026-09-18"
+      }
+    },
+    {
+      "id": "ce53c23f",
+      "target": "70bba10b",
+      "kind": "building",
+      "before": {
+        "id": "ce53c23f",
+        "name": {
+          "zh": "校园服务中心",
+          "en": "Campus Service Center"
+        },
+        "cat": "life",
+        "pos": [
+          121.603048,
+          31.183629
+        ],
+        "desc": null
+      }
+    },
+    {
+      "id": "d18cce07",
+      "target": "g-信息学院",
+      "kind": "group",
+      "before": {
+        "id": "d18cce07",
+        "name": {
+          "zh": "信息学院",
+          "en": "SIST"
+        },
+        "cat": "life",
+        "pos": [
+          121.601413,
+          31.183128
+        ],
+        "desc": null
+      }
+    },
+    {
+      "id": "03953523",
+      "kind": "building",
+      "target": "5149e81e",
+      "before": {
+        "id": "03953523",
+        "name": {
+          "zh": "科大咖啡馆",
+          "en": "Campus Café"
+        },
+        "cat": "dining",
+        "pos": [
+          121.604001,
+          31.184449
+        ],
+        "desc": null,
+        "source": "OpenStreetMap"
+      }
+    }
+  ],
+  "featuredPois": [
+    "0946b1b3",
+    "80ebccc2",
+    "dddd4057",
+    "de9406b0",
+    "poi-tower"
+  ],
+  "majorGates": [
+    "c9e29e1b",
+    "6cccd83b"
+  ],
+  "landmarks": [
+    "49c92421",
+    "2376c907",
+    "d7191508",
+    "e2473fa9",
+    "ecdba91f",
+    "df290f76"
+  ],
+  "facilities": [
+    {
+      "id": "076e5a66",
+      "building": "e2473fa9"
+    }
+  ],
+  "promoted": [
+    {
+      "id": "c678e4ab",
+      "before": {
+        "id": "c678e4ab",
+        "name": {
+          "zh": "医务室",
+          "en": "Campus Health Station"
+        },
+        "cat": "life",
+        "pos": [
+          121.603344,
+          31.184406
+        ],
+        "desc": {
+          "zh": "医务室（服务中心最北边）",
+          "en": ""
+        },
+        "hours": {
+          "zh": "门诊 8:30–18:30",
+          "en": "Outpatient 8:30–18:30"
+        },
+        "source": "公共服务处 2026-09-23"
+      },
+      "building": {
+        "id": "c678e4ab",
+        "name": {
+          "zh": "医务室",
+          "en": "Campus Health Station"
+        },
+        "short": {
+          "zh": "医务室",
+          "en": "Campus Health Station"
+        },
+        "cat": "service",
+        "aliases": [
+          "校医院",
+          "卫生所",
+          "医务室"
+        ],
+        "poly": [
+          [
+            121.602934,
+            31.184494
+          ],
+          [
+            121.603415,
+            31.184575
+          ],
+          [
+            121.603442,
+            31.184575
+          ],
+          [
+            121.603446,
+            31.184556
+          ],
+          [
+            121.603437,
+            31.184494
+          ],
+          [
+            121.603365,
+            31.184316
+          ],
+          [
+            121.603356,
+            31.184305
+          ],
+          [
+            121.603338,
+            31.184231
+          ],
+          [
+            121.603249,
+            31.184104
+          ],
+          [
+            121.602961,
+            31.184062
+          ],
+          [
+            121.602957,
+            31.184251
+          ],
+          [
+            121.602939,
+            31.18427
+          ]
+        ],
+        "center": [
+          121.603136,
+          31.184343
+        ],
+        "orgs": [],
+        "rooms": [],
+        "info": {
+          "zh": "医务室（服务中心最北边）",
+          "en": ""
+        },
+        "source": "公共服务处 2026-09-23",
+        "hours": {
+          "zh": "门诊 8:30–18:30",
+          "en": "Outpatient 8:30–18:30"
+        }
+      }
+    },
+    {
+      "id": "poi-history",
+      "before": {
+        "id": "poi-history",
+        "name": {
+          "zh": "校史馆",
+          "en": "University History Museum"
+        },
+        "cat": "life",
+        "pos": [
+          121.600583,
+          31.182518
+        ],
+        "desc": {
+          "zh": "2 层，无障碍通行。位于人文科学研究院与创业与管理学院之间的红顶小楼。",
+          "en": "Two floors, wheelchair accessible. Red-roofed building between the Institute of Humanities and SEM."
+        },
+        "source": "OpenStreetMap（operator=上海科技大学, building:levels=2, wheelchair=yes）"
+      },
+      "building": {
+        "id": "poi-history",
+        "name": {
+          "zh": "校史馆",
+          "en": "University History Museum"
+        },
+        "short": {
+          "zh": "校史馆",
+          "en": "University History Museum"
+        },
+        "cat": "service",
+        "aliases": [
+          "校史馆",
+          "校史展览馆",
+          "University History Museum"
+        ],
+        "poly": [
+          [
+            121.60045,
+            31.182517
+          ],
+          [
+            121.600527,
+            31.18254
+          ],
+          [
+            121.600531,
+            31.182528
+          ],
+          [
+            121.600599,
+            31.182544
+          ],
+          [
+            121.600603,
+            31.182559
+          ],
+          [
+            121.60067,
+            31.182563
+          ],
+          [
+            121.600679,
+            31.182536
+          ],
+          [
+            121.600688,
+            31.182536
+          ],
+          [
+            121.60072,
+            31.182382
+          ],
+          [
+            121.600706,
+            31.182378
+          ],
+          [
+            121.600706,
+            31.182343
+          ],
+          [
+            121.60067,
+            31.182328
+          ],
+          [
+            121.60067,
+            31.182293
+          ],
+          [
+            121.600643,
+            31.182285
+          ],
+          [
+            121.600643,
+            31.182274
+          ],
+          [
+            121.600581,
+            31.18225
+          ],
+          [
+            121.600563,
+            31.182274
+          ],
+          [
+            121.600567,
+            31.182293
+          ],
+          [
+            121.600531,
+            31.182289
+          ],
+          [
+            121.600513,
+            31.182301
+          ],
+          [
+            121.600513,
+            31.182328
+          ],
+          [
+            121.600495,
+            31.182316
+          ],
+          [
+            121.600459,
+            31.182463
+          ]
+        ],
+        "center": [
+          121.600585,
+          31.182409
+        ],
+        "orgs": [],
+        "rooms": [],
+        "info": {
+          "zh": "位于人文科学研究院与创业与管理学院之间，三栋红顶小楼的中间一栋。2 层，无障碍通行。",
+          "en": "Two floors, wheelchair accessible. Red-roofed building between the Institute of Humanities and SEM."
+        },
+        "source": "OpenStreetMap（operator=上海科技大学, building:levels=2, wheelchair=yes）"
+      }
+    },
+    {
+      "id": "e32fb679",
+      "before": {
+        "id": "e32fb679",
+        "name": {
+          "zh": "上海银行",
+          "en": "Bank of Shanghai"
+        },
+        "cat": "life",
+        "pos": [
+          121.605289,
+          31.18431
+        ],
+        "desc": {
+          "zh": "上海银行（学生活动中心1楼） 内部设有ATM",
+          "en": ""
+        }
+      },
+      "building": {
+        "id": "e32fb679",
+        "name": {
+          "zh": "上海银行",
+          "en": "Bank of Shanghai"
+        },
+        "short": {
+          "zh": "上海银行",
+          "en": "Bank of Shanghai"
+        },
+        "cat": "service",
+        "aliases": [
+          "上海银行",
+          "Bank of Shanghai",
+          "银行",
+          "ATM"
+        ],
+        "poly": [
+          [
+            121.604973,
+            31.184316
+          ],
+          [
+            121.604982,
+            31.184309
+          ],
+          [
+            121.605003,
+            31.184218
+          ],
+          [
+            121.605238,
+            31.184201
+          ],
+          [
+            121.60524,
+            31.184158
+          ],
+          [
+            121.605247,
+            31.184158
+          ],
+          [
+            121.605247,
+            31.184193
+          ],
+          [
+            121.605274,
+            31.184193
+          ],
+          [
+            121.605274,
+            31.184154
+          ],
+          [
+            121.605301,
+            31.184154
+          ],
+          [
+            121.605315,
+            31.184351
+          ],
+          [
+            121.605351,
+            31.184351
+          ],
+          [
+            121.605351,
+            31.184533
+          ],
+          [
+            121.605131,
+            31.184502
+          ],
+          [
+            121.605122,
+            31.184421
+          ],
+          [
+            121.604978,
+            31.184413
+          ]
+        ],
+        "center": [
+          121.605234,
+          31.18437
+        ],
+        "orgs": [],
+        "rooms": [],
+        "info": {
+          "zh": "位于学生活动中心东侧、道路右侧的白顶楼，内部设有 ATM。",
+          "en": "White-roofed building across the road east of the Student Activity Center. ATM available."
+        }
+      }
+    },
+    {
+      "id": "5149e81e",
+      "before": {
+        "id": "5149e81e",
+        "name": {
+          "zh": "耐思咖啡",
+          "en": "NestArt Cafe"
+        },
+        "cat": "life",
+        "pos": [
+          121.604211,
+          31.184437
+        ],
+        "desc": {
+          "zh": "耐思咖啡-Nice Coffee",
+          "en": ""
+        },
+        "source": "公共服务处 2026-09-23"
+      },
+      "previous": [
+        {
+          "id": "5149e81e",
+          "name": {
+            "zh": "耐思咖啡",
+            "en": "NestArt Cafe"
+          },
+          "cat": "dining",
+          "pos": [
+            121.604211,
+            31.184437
+          ],
+          "desc": {
+            "zh": "耐思咖啡-Nice Coffee",
+            "en": ""
+          },
+          "source": "公共服务处 2026-09-23",
+          "aliases": [
+            "科大咖啡馆",
+            "Campus Café"
+          ]
+        }
+      ],
+      "building": {
+        "id": "5149e81e",
+        "name": {
+          "zh": "耐思咖啡",
+          "en": "NestArt Cafe"
+        },
+        "short": {
+          "zh": "耐思咖啡",
+          "en": "NestArt Cafe"
+        },
+        "cat": "dining",
+        "aliases": [
+          "耐斯咖啡",
+          "奈斯咖啡",
+          "科大咖啡馆",
+          "Campus Café",
+          "Nice Coffee"
+        ],
+        "poly": [
+          [
+            121.603868,
+            31.184421
+          ],
+          [
+            121.603873,
+            31.18437
+          ],
+          [
+            121.60394,
+            31.18437
+          ],
+          [
+            121.60394,
+            31.184336
+          ],
+          [
+            121.603947,
+            31.184336
+          ],
+          [
+            121.603949,
+            31.184417
+          ],
+          [
+            121.60399,
+            31.18454
+          ],
+          [
+            121.604291,
+            31.184455
+          ],
+          [
+            121.604291,
+            31.184521
+          ],
+          [
+            121.604044,
+            31.184552
+          ],
+          [
+            121.603877,
+            31.184525
+          ]
+        ],
+        "center": [
+          121.603909,
+          31.184467
+        ],
+        "orgs": [],
+        "rooms": [],
+        "info": {
+          "zh": "位于学生公寓1号楼最左侧、临路的低矮灰顶小楼。与学生活动中心位于道路同侧，上海银行在道路另一侧。",
+          "en": "The low grey-roofed building beside the road, west of Student Dorm 1. The Student Activity Center is on the same side of the road; Bank of Shanghai is across the road."
+        },
+        "source": "公共服务处 2026-09-23"
+      }
+    }
+  ],
+  "buildingNames": [
+    {
+      "id": "70bba10b",
+      "before": {
+        "name": {
+          "zh": "H1 校园服务中心",
+          "en": "H1 Campus Service Center"
+        },
+        "short": {
+          "zh": "H1",
+          "en": "H1"
+        }
+      },
+      "after": {
+        "name": {
+          "zh": "校园服务中心",
+          "en": "Campus Service Center"
+        },
+        "short": {
+          "zh": "校园服务中心",
+          "en": "Campus Service Center"
+        }
+      },
+      "aliases": [
+        "H1 校园服务中心",
+        "H1 Campus Service Center",
+        "H1"
+      ]
+    },
+    {
+      "id": "025af73a",
+      "before": {
+        "name": {
+          "zh": "H2 学生科创中心",
+          "en": "H2 Student Innovation Center"
+        },
+        "short": {
+          "zh": "H2",
+          "en": "H2"
+        }
+      },
+      "after": {
+        "name": {
+          "zh": "学生科创中心",
+          "en": "Student Innovation Center"
+        },
+        "short": {
+          "zh": "学生科创中心",
+          "en": "Student Innovation Center"
+        }
+      },
+      "aliases": [
+        "H2 学生科创中心",
+        "H2 Student Innovation Center",
+        "H2"
+      ]
+    },
+    {
+      "id": "dbe3b0a1",
+      "before": {
+        "name": {
+          "zh": "体育场",
+          "en": "Stadium (Track & Field)"
+        },
+        "short": {
+          "zh": "体育场",
+          "en": "Stadium"
+        }
+      },
+      "after": {
+        "name": {
+          "zh": "操场",
+          "en": "Track and Field"
+        },
+        "short": {
+          "zh": "操场",
+          "en": "Track and Field"
+        }
+      },
+      "aliases": [
+        "体育场",
+        "Stadium (Track & Field)",
+        "体育场"
+      ]
+    }
+  ],
+  "diningLocations": [
+    {
+      "id": "c1",
+      "place": "49c92421",
+      "before": {
+        "pos": [
+          121.603906,
+          31.183996
+        ]
+      },
+      "after": {
+        "pos": [
+          121.603747,
+          31.183884
+        ]
+      }
+    },
+    {
+      "id": "c3",
+      "place": "d7191508",
+      "before": {
+        "pos": [
+          121.603133,
+          31.182118
+        ]
+      },
+      "after": {
+        "pos": [
+          121.602993,
+          31.181999
+        ]
+      }
+    },
+    {
+      "id": "kfc",
+      "place": "562411a5",
+      "before": {
+        "pos": [
+          121.603559,
+          31.183495
+        ]
+      },
+      "after": {
+        "pos": [
+          121.603554,
+          31.183478
+        ]
+      }
+    },
+    {
+      "id": "nestart",
+      "place": "5149e81e",
+      "before": {
+        "pos": [
+          121.604211,
+          31.184437
+        ]
+      },
+      "after": {
+        "pos": [
+          121.603909,
+          31.184467
+        ]
+      },
+      "aliases": [
+        "耐斯咖啡",
+        "科大咖啡馆"
+      ]
+    }
+  ]
+}

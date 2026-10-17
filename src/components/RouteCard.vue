@@ -1,6 +1,8 @@
 <script setup lang="ts">
-import { closeRoute, computeRoute, state } from '../lib/store'
+import { closeRoute, computeRoute, setEnd, state } from '../lib/store'
+import { locator, myLocationEnd, simulateWalk, startLocating } from '../lib/locate'
 import Ico from './Ico.vue'
+import { isEnglish, t } from '../lib/i18n'
 
 const r = state.route
 function swap() {
@@ -8,39 +10,54 @@ function swap() {
   computeRoute()
 }
 const togglePick = (which: 'from' | 'to') => (r.picking = r.picking === which ? null : which)
+/** 起点用我的位置：还没定位就先开定位，拿到位置后自动填上 */
+function fromMe() {
+  const me = myLocationEnd()
+  if (me) setEnd('from', me)
+  else {
+    r.from = null
+    startLocating()
+  }
+}
 </script>
 
 <template>
   <div class="page">
     <div class="head">
-      <h2 class="title">步行导航</h2>
-      <button type="button" class="close" aria-label="关闭导航" @click="closeRoute"><Ico name="close" /></button>
+      <h2 class="title">{{ t('route.title') }}</h2>
+      <button type="button" class="close" :aria-label="isEnglish ? 'Close directions' : '关闭导航'" @click="closeRoute"><Ico name="close" /></button>
     </div>
 
     <div class="ends">
       <button v-for="which in (['from', 'to'] as const)" :key="which" type="button" class="end" :class="{ active: r.picking === which }" @click="togglePick(which)">
         <span class="dot" :class="which" />
-        <span class="grow ellipsis" :class="{ empty: !r[which] }">{{ r[which]?.name ?? (which === 'from' ? '选择起点' : '选择终点') }}</span>
-        <small>{{ r.picking === which ? '在地图上点选…' : '地图上选' }}</small>
+        <span class="grow ellipsis" :class="{ empty: !r[which] }">{{ r[which]?.name ?? (which === 'from' ? t('route.from') : t('route.to')) }}</span>
+        <small>{{ r.picking === which ? (isEnglish ? 'Pick on map…' : '在地图上点选…') : (isEnglish ? 'Pick on map' : '地图上选') }}</small>
       </button>
       <button type="button" class="swap" aria-label="交换起点终点" title="交换起点终点" @click="swap"><Ico name="swap" /></button>
     </div>
 
+    <div class="me-row">
+      <button v-if="!r.from?.live" type="button" class="text-link" @click="fromMe"><Ico name="target" />{{ locator.status === 'locating' ? (isEnglish ? 'Locating…' : '正在定位…') : t('route.myLocation') }}</button>
+      <span v-else class="live-note"><Ico name="target" />{{ isEnglish ? 'Route follows your location' : '跟着你的位置实时更新路线' }}</span>
+      <button v-if="locator.mock && r.from?.live && r.result" type="button" class="text-link" :disabled="locator.simulating" @click="simulateWalk">{{ locator.simulating ? (isEnglish ? 'Simulating…' : '模拟行走中…') : (isEnglish ? 'Simulate walk' : '模拟走一遍') }}</button>
+    </div>
+
     <label class="switch" :class="{ on: r.rain }">
-      <input v-model="r.rain" type="checkbox" @change="computeRoute" />
+      <input v-model="r.rain" type="checkbox" @change="computeRoute()" />
       <Ico name="rain" />
-      <span class="grow">雨天模式<small>优先走风雨长廊</small></span>
+      <span class="grow">{{ isEnglish ? 'Rain mode' : '雨天模式' }}<small>{{ isEnglish ? 'Prefer covered walkways' : '优先走风雨长廊' }}</small></span>
       <i class="knob" />
     </label>
 
     <div v-if="r.result" class="result">
-      <p class="big">{{ r.result.minutes }} 分钟 <span>· {{ r.result.meters }} 米</span></p>
-      <p v-if="r.result.coveredMeters" class="covered"><Ico name="walkway" /> 其中 {{ r.result.coveredMeters }} 米在风雨长廊下</p>
-      <p v-else-if="r.rain" class="muted">这条路线附近没有风雨长廊</p>
-      <p class="legend"><i class="open" />露天 <i class="cov" />长廊下</p>
+      <p class="big">{{ r.result.minutes }} {{ isEnglish ? 'min' : '分钟' }} <span>· {{ r.result.meters }} {{ isEnglish ? 'm' : '米' }}</span></p>
+      <p v-if="r.result.coveredMeters" class="covered"><Ico name="walkway" /> {{ r.result.coveredMeters }} {{ isEnglish ? 'm covered' : '米在风雨长廊下' }}</p>
+      <p v-else-if="r.rain" class="muted">{{ isEnglish ? 'No covered walkway on this route' : '这条路线附近没有风雨长廊' }}</p>
+      <p class="legend"><i class="open" />{{ isEnglish ? 'Open air' : '露天' }} <i class="cov" />{{ isEnglish ? 'Covered' : '长廊下' }}</p>
     </div>
-    <p v-else-if="r.failed" class="note warn">没找到这两个地方之间的步行路线，换个起点试试。</p>
-    <p v-else class="muted hint">点地图上的楼、点位或任意位置作为{{ r.picking === 'to' ? '终点' : '起点' }}。</p>
+    <p v-else-if="r.failed" class="note warn">{{ isEnglish ? 'No walking route found. Try another starting point.' : '没找到这两个地方之间的步行路线，换个起点试试。' }}</p>
+    <p v-else class="muted hint">{{ isEnglish ? `Pick a ${r.picking === 'to' ? 'destination' : 'starting point'} on the map.` : `点地图上的楼、点位或任意位置作为${r.picking === 'to' ? '终点' : '起点'}。` }}</p>
   </div>
 </template>
 
@@ -74,5 +91,8 @@ const togglePick = (which: 'from' | 'to') => (r.picking = r.picking === which ? 
 .legend .open { background: var(--blue); }
 .legend .cov { background: var(--walkway); }
 .hint { margin-top: 12px; }
+.me-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 6px; }
+.me-row .text-link, .live-note { display: inline-flex; align-items: center; gap: 4px; }
+.live-note { font-size: 12.5px; color: var(--blue); font-weight: 600; }
 .note.warn { background: #fdf3e5; color: #8a4b00; }
 </style>

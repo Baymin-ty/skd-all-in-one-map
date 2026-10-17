@@ -1,8 +1,10 @@
 // 从赛前数据包生成网页用的数据：node scripts/prepare-data.mjs [datapack 目录]
-// 只做三件事：标出风雨长廊、只留校内点位、复制瓦片。数据包原件不改。
+// 应用轮廓校正、标出风雨长廊、只留校内点位、复制瓦片。数据包原件不改。
 import { cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { applyOutlinePatches } from './outline-patches.mjs'
+import { curatePlaces } from './curate-places.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const pack = resolve(process.argv[2] ?? join(root, '../上科大智慧地图_赛前准备包/datapack'))
@@ -13,6 +15,13 @@ if (!existsSync(join(pack, 'data/places.json'))) {
 const read = (f) => JSON.parse(readFileSync(join(pack, 'data', f), 'utf8'))
 const places = read('places.json')
 const campus = read('campus.json')
+const constructionRefinements = JSON.parse(readFileSync(join(root, 'data/construction-outline-refinements.json'), 'utf8'))
+campus.construction = (campus.construction ?? []).map((area) => {
+  const patch = constructionRefinements.patches.find((p) => p.name === area.name.zh)
+  if (!patch || JSON.stringify(area) === JSON.stringify(patch.after)) return area
+  if (JSON.stringify(area) !== JSON.stringify(patch.before)) throw new Error(`在建区域已有修改：${area.name.zh}`)
+  return patch.after
+})
 
 function pointInPoly([x, y], poly) {
   let inside = false
@@ -31,7 +40,8 @@ const walkwayInfo = walkwayPoi?.desc && {
   zh: walkwayPoi.desc.zh.replace('（位置为近似）', ''),
   en: walkwayPoi.desc.en.replace(' (approximate position)', ''),
 }
-const buildings = places.buildings.map((b) => {
+const refinements = JSON.parse(readFileSync(join(root, 'data/building-outline-refinements.json'), 'utf8'))
+const buildings = applyOutlinePatches(places.buildings, refinements.patches).map((b) => {
   if (!b.name.zh.includes('风雨长廊')) return b
   return { ...b, walkway: true, info: b.info ?? walkwayInfo ?? null }
 })
@@ -41,8 +51,9 @@ const pois = places.pois.filter((p) => p.id !== 'poi-walkway' && pointInPoly(p.p
 
 const out = join(root, 'public/data')
 mkdirSync(out, { recursive: true })
-writeFileSync(join(out, 'places.json'), JSON.stringify({ categories: places.categories, buildings, pois }))
+const curated = curatePlaces({ categories: places.categories, buildings, pois })
+writeFileSync(join(out, 'places.json'), JSON.stringify(curated))
 writeFileSync(join(out, 'campus.json'), JSON.stringify(campus))
 cpSync(join(pack, 'tiles'), join(root, 'public/tiles'), { recursive: true })
 
-console.log(`楼宇 ${buildings.length}（风雨长廊 ${buildings.filter((b) => b.walkway).length}），校内点位 ${pois.length}，瓦片已复制`)
+console.log(`楼宇 ${curated.buildings.length}（风雨长廊 ${curated.buildings.filter((b) => b.walkway).length}），校内点位 ${curated.pois.length}，瓦片已复制`)

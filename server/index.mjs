@@ -1,112 +1,171 @@
-// 后端只管一件事：点位（POI）的增删改，存在 SQLite 里；生产环境顺便提供 dist/ 网页。
+// 地图管理使用管理口令；社区使用独立的匿名会话与内容所有权。
 import express from 'express'
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { fileURLToPath } from 'node:url'
+import { loadEnvFile } from 'node:process'
+import { installCommunity } from './community.mjs'
+import { installCrowd } from './crowd.mjs'
+import { installEventSync } from './eventSync.mjs'
+import { installAccount } from './account.mjs'
+import { installCheckin } from './checkin.mjs'
+import { installOrganizer } from './organizer.mjs'
+import { installSchedule } from './schedule.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const root = resolve(here, '..')
-const PORT = Number(process.env.PORT) || 8790
-const CATS = ['life', 'dining', 'sports', 'parking', 'transit']
+if (existsSync(join(root, '.env'))) loadEnvFile(join(root, '.env'))
 const campus = JSON.parse(readFileSync(join(root, 'public/data/campus.json'), 'utf8'))
-
-// 没设 ADMIN_PASSWORD 时第一次启动随机生成一个，写进只有本机可读的文件，不打印到日志里
+const seed = JSON.parse(readFileSync(join(root, 'public/data/places.json'), 'utf8'))
+const defaultMapSettings = JSON.parse(readFileSync(join(root, 'public/data/map-settings.json'), 'utf8'))
 function loadPassword() {
   if (process.env.ADMIN_PASSWORD) return process.env.ADMIN_PASSWORD
   const file = join(here, '.admin-password')
   if (existsSync(file)) return readFileSync(file, 'utf8').trim()
-  const pw = randomBytes(9).toString('base64url')
+  const pw = randomBytes(18).toString('base64url')
   writeFileSync(file, pw + '\n', { mode: 0o600 })
   console.log('已生成管理口令：server/.admin-password')
   return pw
 }
 const digest = (s) => createHash('sha256').update(String(s)).digest()
 const passwordHash = digest(loadPassword())
-
 const db = new DatabaseSync(process.env.DB_PATH ?? join(here, 'map.db'))
-db.exec('create table if not exists pois (id text primary key, data text not null, updated_at integer not null)')
-// 空库时用数据包里的校内点位起步；之后以数据库为准，删掉的点位不会被重新灌回来
-if (db.prepare('select count(*) as n from pois').get().n === 0) {
-  const { pois } = JSON.parse(readFileSync(join(root, 'public/data/places.json'), 'utf8'))
-  const insert = db.prepare('insert into pois (id, data, updated_at) values (?, ?, ?)')
-  for (const { id, ...rest } of pois) insert.run(id, JSON.stringify(rest), Date.now())
-  console.log(`点位表初始化：${pois.length} 个`)
+db.exec(`pragma journal_mode = WAL;
+  create table if not exists meta (key text primary key, value text not null);
+  create table if not exists pois (id text primary key, data text not null, updated_at integer not null);
+  create table if not exists buildings (id text primary key, data text not null, updated_at integer not null);`)
+// 初始化标记与记录同一事务提交，清空一个分类后重启也不会把已删除内容重新导入。
+for (const table of ['pois', 'buildings']) {
+  if (!db.prepare('select 1 from meta where key = ?').get(`${table}.seeded`)) {
+    db.exec('begin immediate')
+    try {
+      if (!db.prepare(`select 1 from ${table} limit 1`).get()) {
+        const insert = db.prepare(`insert into ${table} (id, data, updated_at) values (?, ?, ?)`)
+        for (const { id, ...data } of seed[table]) insert.run(id, JSON.stringify(data), Date.now())
+      }
+      db.prepare('insert into meta (key, value) values (?, ?)').run(`${table}.seeded`, '1')
+      db.exec('commit')
+    } catch (error) { db.exec('rollback'); throw error }
+  }
 }
-
-const listPois = () => db.prepare('select id, data from pois order by rowid').all().map((r) => ({ id: r.id, ...JSON.parse(r.data) }))
-const getPoi = (id) => {
-  const r = db.prepare('select data from pois where id = ?').get(id)
+const list = (table) => db.prepare(`select id, data from ${table} order by rowid`).all().map((r) => ({ id: r.id, ...JSON.parse(r.data) }))
+const get = (table, id) => {
+  const r = db.prepare(`select data from ${table} where id = ?`).get(id)
   return r ? { id, ...JSON.parse(r.data) } : null
 }
-
 class BadRequest extends Error {}
-const text = (v, max) => (typeof v === 'string' ? v.trim().slice(0, max) : '')
-const i18n = (v, max) => {
-  const zh = text(v?.zh, max)
-  const en = text(v?.en, max)
-  return zh || en ? { zh, en } : null
-}
-/** 只留认识的字段，防止前端塞进任意内容 */
-function clean(p) {
-  const name = i18n(p.name, 40)
-  if (!name?.zh) throw new BadRequest('名称不能为空')
-  if (!CATS.includes(p.cat)) throw new BadRequest('分类不对')
-  const [lng, lat] = Array.isArray(p.pos) ? p.pos.map(Number) : []
+const text = (v, max) => typeof v === 'string' ? v.trim().slice(0, max) : ''
+const i18n = (v, max) => ({ zh: text(v?.zh, max), en: text(v?.en, max) })
+function position(v) {
+  if (!Array.isArray(v) || v.length !== 2 || !v.every((n) => typeof n === 'number' && Number.isFinite(n))) throw new BadRequest('坐标必须是两个有效数字')
+  const [lng, lat] = v
   const [[x0, y0], [x1, y1]] = campus.bounds
   if (!(lng >= x0 && lng <= x1 && lat >= y0 && lat <= y1)) throw new BadRequest('位置不在校园地图范围内')
-  const out = { name, cat: p.cat, pos: [+lng.toFixed(6), +lat.toFixed(6)], desc: i18n(p.desc, 300) }
-  const hours = i18n(p.hours, 60)
-  if (hours) out.hours = hours
-  if (typeof p.source === 'string' && p.source) out.source = text(p.source, 100)
-  return out
+  return [+lng.toFixed(6), +lat.toFixed(6)]
 }
-
+function clean(table, p) {
+  const name = i18n(p.name, 120)
+  if (!name.zh) throw new BadRequest('中文名称不能为空')
+  if (table === 'pois') {
+    if (!['life', 'dining', 'sports', 'parking', 'transit'].includes(p.cat)) throw new BadRequest('点位分类不正确')
+    // 停车点位可细分为地下车库的车行坡道、步行楼梯、电梯
+    if (p.kind != null && (p.cat !== 'parking' || !['garage-ramp', 'garage-stairs', 'garage-elevator'].includes(p.kind))) throw new BadRequest('点位细分不正确')
+    return { name, cat: p.cat, ...(p.kind ? { kind: p.kind } : {}), pos: position(p.pos), desc: i18n(p.desc, 2000), hours: i18n(p.hours, 120), source: text(p.source, 100),
+      ...(p.aliases ? { aliases: Array.isArray(p.aliases) ? p.aliases.map((s) => text(s, 120)).filter(Boolean).slice(0, 100) : [] } : {}) }
+  }
+  if (!Object.hasOwn(seed.categories, p.cat)) throw new BadRequest('楼宇分类不正确')
+  if (!Array.isArray(p.poly) || p.poly.length < 3 || p.poly.length > 500) throw new BadRequest('楼宇轮廓需要 3–500 个顶点')
+  const poly = p.poly.map(position)
+  const area = Math.abs(poly.reduce((sum, a, i) => { const b = poly[(i + 1) % poly.length]; return sum + (a[0] - poly[0][0]) * (b[1] - poly[0][1]) - (b[0] - poly[0][0]) * (a[1] - poly[0][1]) }, 0))
+  if (area < 1e-12) throw new BadRequest('楼宇轮廓面积不能为零')
+  if (p.parts != null && (!Array.isArray(p.parts) || p.parts.length > 32)) throw new BadRequest('附属轮廓数据不正确')
+  const parts = (p.parts ?? []).map((ring) => {
+    if (!Array.isArray(ring) || ring.length < 3 || ring.length > 500) throw new BadRequest('附属轮廓需要 3–500 个顶点')
+    const points = ring.map(position)
+    const area = Math.abs(points.reduce((sum, a, i) => { const b = points[(i + 1) % points.length]; return sum + (a[0] - points[0][0]) * (b[1] - points[0][1]) - (b[0] - points[0][0]) * (a[1] - points[0][1]) }, 0))
+    if (area < 1e-12) throw new BadRequest('附属轮廓面积不能为零')
+    return points
+  })
+  if (p.entrances != null && (!Array.isArray(p.entrances) || p.entrances.length > 100)) throw new BadRequest('出入口数据不正确')
+  return {
+    name, short: { zh: text(p.short?.zh, 40) || name.zh, en: text(p.short?.en, 60) || name.en }, cat: p.cat,
+    aliases: Array.isArray(p.aliases) ? p.aliases.map((s) => text(s, 120)).filter(Boolean).slice(0, 100) : [],
+    center: position(p.center), poly, ...(p.parts !== undefined ? { parts } : {}),
+    orgs: Array.isArray(p.orgs) ? p.orgs.map((o) => i18n(o, 120)).filter((o) => o.zh || o.en).slice(0, 100) : [],
+    rooms: Array.isArray(p.rooms) ? p.rooms.slice(0, 1000) : [],
+    info: i18n(p.info, 2000), note: i18n(p.note, 2000), hours: i18n(p.hours, 120),
+    entrances: (p.entrances ?? []).map((e) => ({ pos: position(e?.pos), zh: text(e?.zh, 60), en: text(e?.en, 100) })),
+    walkway: !!p.walkway, isNew: !!p.isNew,
+  }
+}
 function requireAdmin(req, res, next) {
   const token = (req.get('authorization') ?? '').replace(/^Bearer /, '')
-  if (token && timingSafeEqual(digest(token), passwordHash)) return next()
-  res.status(401).json({ error: '口令不对' })
+  const tokenDigest = token && digest(token)
+  if (tokenDigest && tokenDigest.length === passwordHash.length && timingSafeEqual(tokenDigest, passwordHash)) return next()
+  res.status(401).json({ error: '管理口令不正确或登录已失效' })
 }
-
 const app = express()
-app.use(express.json({ limit: '20kb' }))
-
-app.get('/api/pois', (_req, res) => res.json(listPois()))
+app.disable('x-powered-by')
+app.enable('strict routing')
+installCommunity(app, db, root)
+installAccount(app, db)
+app.use(express.json({ limit: '256kb' }))
+installCrowd(app, db)
+installEventSync(app, db, root, { authorize: requireAdmin })
+installCheckin(app, db, root)
+installOrganizer(app, db)
+installSchedule(app)
+app.use('/api', (_req, res, next) => { res.set('Cache-Control', 'no-store'); next() })
+app.get('/api/places', (_req, res) => res.json({ categories: seed.categories, buildings: list('buildings'), pois: list('pois') }))
 app.post('/api/auth', requireAdmin, (_req, res) => res.json({ ok: true }))
-
-app.post('/api/pois', requireAdmin, (req, res) => {
-  const data = clean(req.body ?? {})
-  const id = 'p-' + randomUUID().slice(0, 8)
-  db.prepare('insert into pois (id, data, updated_at) values (?, ?, ?)').run(id, JSON.stringify(data), Date.now())
-  res.status(201).json({ id, ...data })
+app.get('/api/map-settings', (_req, res) => {
+  const row = db.prepare('select value from meta where key = ?').get('map.settings')
+  res.json(row ? JSON.parse(row.value) : defaultMapSettings)
 })
-
-// 只带要改的字段即可（比如拖动只传 pos），会合并到原来的点位上
-app.put('/api/pois/:id', requireAdmin, (req, res) => {
-  const old = getPoi(req.params.id)
-  if (!old) return res.status(404).json({ error: '点位不存在' })
-  const { id, ...rest } = { ...old, ...req.body, id: old.id }
-  const data = clean(rest)
-  db.prepare('update pois set data = ?, updated_at = ? where id = ?').run(JSON.stringify(data), Date.now(), id)
-  res.json({ id, ...data })
+app.put('/api/map-settings', requireAdmin, (req, res) => {
+  const settings = {}
+  for (const key of Object.keys(defaultMapSettings)) {
+    const value = req.body?.[key]
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 1)
+      throw new BadRequest('三项透明度都必须是 0%–100% 的有效数字')
+    settings[key] = value
+  }
+  db.prepare('insert into meta (key, value) values (?, ?) on conflict(key) do update set value = excluded.value')
+    .run('map.settings', JSON.stringify(settings))
+  res.json(settings)
 })
-
-app.delete('/api/pois/:id', requireAdmin, (req, res) => {
-  const { changes } = db.prepare('delete from pois where id = ?').run(req.params.id)
-  if (!changes) return res.status(404).json({ error: '点位不存在' })
-  res.status(204).end()
-})
-
+for (const table of ['pois', 'buildings']) {
+  app.get(`/api/${table}`, (_req, res) => res.json(list(table)))
+  app.post(`/api/${table}`, requireAdmin, (req, res) => {
+    const data = clean(table, req.body ?? {})
+    const id = (table === 'pois' ? 'p-' : 'b-') + randomUUID().slice(0, 8)
+    db.prepare(`insert into ${table} (id, data, updated_at) values (?, ?, ?)`).run(id, JSON.stringify(data), Date.now())
+    res.status(201).json({ id, ...data })
+  })
+  app.put(`/api/${table}/:id`, requireAdmin, (req, res) => {
+    const old = get(table, req.params.id)
+    if (!old) return res.status(404).json({ error: '记录不存在' })
+    const data = clean(table, { ...old, ...req.body })
+    db.prepare(`update ${table} set data = ?, updated_at = ? where id = ?`).run(JSON.stringify(data), Date.now(), old.id)
+    res.json({ id: old.id, ...data })
+  })
+  app.delete(`/api/${table}/:id`, requireAdmin, (req, res) => {
+    if (!db.prepare(`delete from ${table} where id = ?`).run(req.params.id).changes) return res.status(404).json({ error: '记录不存在' })
+    res.status(204).end()
+  })
+}
 app.use('/api', (_req, res) => res.status(404).json({ error: '没有这个接口' }))
-
+app.get('/admin', (_req, res) => res.redirect(302, '/admin/'))
 const dist = join(root, 'dist')
 if (existsSync(dist)) app.use(express.static(dist))
-
 app.use((err, _req, res, _next) => {
-  if (err instanceof BadRequest || err.type === 'entity.parse.failed') return res.status(400).json({ error: err.message })
+  if (err instanceof BadRequest || err.type === 'entity.parse.failed') return res.status(400).json({ error: err instanceof BadRequest ? err.message : 'JSON 格式不正确' })
+  if (err.type === 'entity.too.large') return res.status(413).json({ error: '数据过大，请减少内容后重试' })
   console.error(err)
   res.status(500).json({ error: '服务器出错了' })
 })
-
-app.listen(PORT, () => console.log(`http://localhost:${PORT}`))
+const server = app.listen(Number(process.env.PORT ?? 8790))
+server.once('listening', () => console.log(`http://localhost:${server.address()?.port ?? process.env.PORT ?? 8790}`))
+for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => server.close(() => { db.close(); process.exit(0) }))

@@ -4,3 +4,9 @@ dist
 server/*.db
 server/*.db-*
 server/.admin-password
+server/.checkin-secret
+server/backups/
+.env
+.env.*
+!.env.example
+server/.env

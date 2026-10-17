@@ -1,0 +1,128 @@
+<script setup lang="ts">
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import type { IconName } from '../lib/icons'
+import Ico from '../components/Ico.vue'
+import PlaceWorkspace from './PlaceWorkspace.vue'
+import MapAppearance from './MapAppearance.vue'
+import TimeMachineLauncher from './TimeMachineLauncher.vue'
+import EventWorkspace from './EventWorkspace.vue'
+import AccountDialog from '../components/AccountDialog.vue'
+import {
+  admin, assets, cancelRemove, category, closeLogin, confirmRemove, create, draftDirty, edit,
+  exportData, load, login, logout, missingEntrances, navigate, notify, syncEventsNow,
+  restore, setKind, settingsDirty, type Kind, type View,
+} from './store'
+
+const nav: { view: View; label: string; icon: IconName; description: string }[] = [
+  { view: 'overview', label: '地点管理', icon: 'pin', description: '查找地点，在地图上定位，随时修改信息与位置。' },
+  { view: 'appearance', label: '地图显示', icon: 'eye', description: '调整地图的显示效果，并实时查看预览。' },
+  { view: 'data', label: '数据与备份', icon: 'chart', description: '查看地点收录情况，导出校园地图数据。' },
+  { view: 'events', label: '活动', icon: 'calendar', description: '主办方发布活动、设置地点并生成海报。' },
+]
+const current = computed(() => nav.find((n) => n.view === admin.view) || nav[0])
+const eventSyncTime = (value: number | null) => value ? new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', dateStyle: 'short', timeStyle: 'short' }).format(value) : ''
+const password = ref(''), loginError = ref(''), signingIn = ref(false)
+const loginDialog = ref<HTMLDialogElement>(), deleteDialog = ref<HTMLDialogElement>(), createDialog = ref<HTMLDialogElement>()
+const breakdown = computed(() => {
+  const result = new Map<string, { zh: string; color: string; n: number }>()
+  for (const a of assets.value) {
+    const c = category(a), key = `${a.kind}:${c.key}`, old = result.get(key)
+    result.set(key, { zh: `${a.kind === 'building' ? '建筑' : '点位'} · ${c.zh}`, color: c.color, n: (old?.n || 0) + 1 })
+  }
+  return [...result.values()].sort((a, b) => b.n - a.n)
+})
+function startCreate(kind: Kind) { createDialog.value?.close(); create(kind) }
+async function submitLogin() {
+  if (signingIn.value) return
+  signingIn.value = true; loginError.value = ''
+  try { await login(password.value); password.value = '' }
+  catch (e) { loginError.value = (e as Error).message }
+  finally { signingIn.value = false }
+}
+async function refresh() {
+  if (draftDirty.value || settingsDirty.value || admin.saving || admin.settingsSaving) return notify('请先保存或撤销当前修改')
+  await load()
+  notify(admin.error ? admin.error : admin.offline ? '服务未连接，当前显示离线数据' : '数据已更新')
+}
+function beforeUnload(e: BeforeUnloadEvent) {
+  if (draftDirty.value || settingsDirty.value || admin.saving || admin.settingsSaving) { e.preventDefault(); e.returnValue = '' }
+}
+function hashChange() {
+  const hash = location.hash.slice(1)
+  if (hash === 'buildings' || hash === 'pois') {
+    navigate('overview'); setKind(hash === 'buildings' ? 'building' : 'poi')
+  } else if (nav.some((n) => n.view === hash) && hash !== admin.view) navigate(hash as View)
+  if (location.hash !== `#${admin.view}`) location.hash = admin.view
+}
+watch(() => admin.loginOpen, (value) => {
+  if (value) { loginError.value = ''; loginDialog.value?.showModal() }
+  else loginDialog.value?.close()
+}, { flush: 'post' })
+watch(() => admin.deleteTarget, (value) => { if (value) deleteDialog.value?.showModal(); else deleteDialog.value?.close() }, { flush: 'post' })
+onMounted(async () => {
+  window.addEventListener('beforeunload', beforeUnload); window.addEventListener('hashchange', hashChange)
+  await load(); await restore()
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('beforeunload', beforeUnload); window.removeEventListener('hashchange', hashChange)
+})
+</script>
+
+<template>
+  <div class="admin-shell">
+    <header class="app-header">
+      <a href="/admin/" class="admin-brand"><span class="brand-mark"><Ico name="building" /></span><span>上科大一图通<small>地图管理工作台</small></span></a>
+      <nav class="admin-nav" aria-label="管理导航">
+        <button v-for="item in nav" :key="item.view" :class="{ active: admin.view === item.view }" :aria-current="admin.view === item.view ? 'page' : undefined" @click="navigate(item.view)"><Ico :name="item.icon" />{{ item.label }}</button>
+      </nav>
+      <span v-if="admin.ready" class="connection-state" :class="{ offline: admin.offline }"><i />{{ admin.offline ? '离线只读' : '已连接' }}</span>
+      <div class="header-links"><TimeMachineLauncher /><a href="/" target="_blank" rel="noopener">查看前台<Ico name="external" /></a><button class="account-button" @click="admin.loggedIn ? logout() : admin.loginOpen = true"><Ico :name="admin.loggedIn ? 'users' : 'lock'" />{{ admin.loggedIn ? '退出登录' : '管理员登录' }}</button></div>
+    </header>
+    <main class="admin-main" :class="{ 'map-page': admin.view === 'overview' }">
+      <header v-if="admin.view !== 'overview'" class="page-toolbar">
+        <div><h1>{{ current.label }}</h1><p>{{ current.description }}</p></div>
+        <div class="toolbar-actions">
+          <button class="button secondary refresh-button" title="刷新数据" aria-label="刷新数据" :disabled="admin.loading || admin.saving" @click="refresh"><Ico name="refresh" /><span>刷新</span></button>
+        </div>
+      </header>
+      <div v-if="admin.offline" class="offline-banner" role="status">数据服务未连接，当前为只读。<button class="text-button" @click="refresh">重新连接</button></div>
+      <div v-if="admin.error" class="empty-state" role="alert"><h3>数据加载失败</h3><p>{{ admin.error }}</p><button class="button primary" @click="refresh">重试</button></div>
+      <div v-else-if="!admin.ready" class="empty-state">正在加载校园地图…</div>
+      <template v-else>
+        <PlaceWorkspace v-if="admin.view === 'overview'" @create="createDialog?.showModal()" @refresh="refresh" />
+        <MapAppearance v-else-if="admin.view === 'appearance'" />
+        <EventWorkspace v-else-if="admin.view === 'events'" />
+          <div v-else class="data-grid">
+            <section class="data-card"><header class="section-heading"><h2>分类分布</h2><span class="count-tag">{{ assets.length }} 项</span></header><div class="breakdown"><div v-for="c in breakdown" :key="c.zh"><div><span><i :style="{ background: c.color }" />{{ c.zh }}</span><b>{{ c.n }}</b></div><div class="bar-track"><span :style="{ width: `${c.n / Math.max(1, assets.length) * 100}%`, background: c.color }" /></div></div></div></section>
+            <div class="data-side">
+              <section class="data-card event-sync-card"><div class="section-title"><h2>官网活动同步</h2><span class="count-tag" :class="{ offline: !admin.loggedIn }">{{ admin.loggedIn ? (admin.eventSync.running ? '同步中' : '已连接') : '需登录' }}</span></div><p v-if="admin.eventSync.lastSyncAt">最近同步：{{ eventSyncTime(admin.eventSync.lastSyncAt) }}</p><p v-else>尚未同步官网活动。</p><p v-if="admin.eventSync.lastError" class="editor-error">{{ admin.eventSync.lastError }}</p><div class="event-sync-stats"><span>新增 {{ admin.eventSync.added }}</span><span>更新 {{ admin.eventSync.updated }}</span><span>取消 {{ admin.eventSync.cancelled }}</span></div><button class="button secondary" :disabled="!admin.loggedIn || admin.eventSync.running" @click="syncEventsNow">{{ admin.eventSync.running ? '同步中…' : '立即同步' }}</button></section>
+              <section class="data-card export-card"><h2>导出数据</h2><p>保存全部建筑、轮廓、出入口和点位的 JSON 副本。</p><button class="button secondary" @click="exportData"><Ico name="download" />导出全部数据</button></section>
+              <section class="data-card quality-card"><div class="section-title"><h2>待补充出入口</h2><span class="count-tag">{{ missingEntrances.length }}</span></div><p>补充入口，让导航带到楼门口。</p><button v-for="b in missingEntrances.slice(0, 8)" :key="b.id" @click="edit({ kind: 'building', data: b })"><span>{{ b.name.zh }}</span><Ico name="edit" /></button><p v-if="!missingEntrances.length">全部建筑已标注入口。</p></section>
+            </div>
+          </div>
+      </template>
+    </main>
+    <dialog ref="createDialog" class="admin-dialog create-dialog" aria-labelledby="create-title" @click="(e) => { if (e.target === createDialog) createDialog?.close() }">
+      <button class="icon-button dialog-close" aria-label="关闭新增地点" @click="createDialog?.close()"><Ico name="close" /></button>
+      <span class="dialog-eyebrow">添加到校园地图</span><h2 id="create-title">你想添加哪种地点？</h2><p>根据地点的形态选择，之后可以随时修改信息。</p>
+      <div class="create-options">
+        <button @click="startCreate('poi')"><span class="create-icon"><Ico name="pin" /></span><span><b>新增点位</b><small>快递柜、饮水机、停车点等设施</small><em>在地图上点一下，放置位置</em></span><Ico name="chevron" /></button>
+        <button @click="startCreate('building')"><span class="create-icon building"><Ico name="building" /></span><span><b>新增建筑 / 区域</b><small>楼宇、运动场、校门、风雨长廊等</small><em>在地图上描绘范围，可标注出入口</em></span><Ico name="chevron" /></button>
+      </div>
+    </dialog>
+    <dialog ref="loginDialog" class="admin-dialog login-dialog" aria-labelledby="login-title" @cancel.prevent="!signingIn && closeLogin()" @click="(e) => { if (e.target === loginDialog && !signingIn) closeLogin() }">
+      <button class="icon-button dialog-close" aria-label="关闭登录" :disabled="signingIn" @click="closeLogin"><Ico name="close" /></button>
+      <span class="dialog-eyebrow">校园地图管理</span><h2 id="login-title">管理员登录</h2><p>输入管理口令，登录后继续刚才的操作。</p>
+      <form @submit.prevent="submitLogin"><label for="admin-password">管理口令</label><input id="admin-password" v-model="password" type="password" autocomplete="current-password" required :disabled="signingIn" autofocus /><p v-if="loginError" class="login-error" role="alert">{{ loginError }}</p><button class="button primary full" :disabled="signingIn">{{ signingIn ? '验证中…' : '登录并继续' }}</button></form>
+    </dialog>
+    <dialog ref="deleteDialog" class="admin-dialog delete-dialog" aria-labelledby="delete-title" @cancel.prevent="cancelRemove" @click="(e) => { if (e.target === deleteDialog) cancelRemove() }">
+      <template v-if="admin.deleteTarget">
+        <span class="delete-symbol"><Ico name="trash" /></span><h2 id="delete-title">删除这个地点？</h2><p class="delete-name">{{ admin.deleteTarget.data.name.zh }}</p><p>删除后，该地点{{ admin.deleteTarget.kind === 'building' ? '及其轮廓、出入口' : '' }}将从校园地图移除。此操作无法撤销。</p>
+        <p v-if="admin.deleteError" class="editor-error" role="alert">{{ admin.deleteError }}</p>
+        <div class="dialog-actions"><button class="button secondary" :disabled="admin.saving" autofocus @click="cancelRemove">保留地点</button><button class="button destructive" :disabled="admin.saving" @click="confirmRemove">{{ admin.saving ? '删除中…' : '确认删除' }}</button></div>
+      </template>
+    </dialog>
+    <div v-if="admin.notice" class="admin-toast" role="status"><Ico name="check" />{{ admin.notice }}</div>
+    <AccountDialog />
+  </div>
+</template>

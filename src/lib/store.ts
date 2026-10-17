@@ -1,26 +1,29 @@
-import { reactive, toRaw } from 'vue'
-import { groupBuildings, type BuildingGroup } from './groups'
+import { computed, reactive } from 'vue'
 import type { IconName } from './icons'
+import { groupBuildings, type BuildingGroup } from './groups'
 import { findRoute, initRouting, type RouteResult, type Target } from './route'
-import { openSheet } from './ui'
-import type { Building, Campus, I18nText, LngLat, PlaceCat, Poi, PoiCat } from './types'
+import { openSheet, ui } from './ui'
+import type { Building, Campus, I18nText, LngLat, PlaceCat, Places, Poi } from './types'
 
-export const POI_CATS: Record<PoiCat, { zh: string; icon: IconName; color: string }> = {
-  life: { zh: '生活服务', icon: 'life', color: '#16a2a8' },
-  dining: { zh: '餐饮', icon: 'dining', color: '#e07a1f' },
-  sports: { zh: '运动', icon: 'sports', color: '#d64545' },
-  parking: { zh: '停车', icon: 'parking', color: '#4a4a4f' },
-  transit: { zh: '交通', icon: 'transit', color: '#2f6fd6' },
-}
-export const PLACE_COLORS: Record<PlaceCat, string> = {
-  academic: '#527da3', dining: '#bd8046', housing: '#64937a', sports: '#b86b67', service: '#528f92', gate: '#8c7ba5',
-}
-export const WALKWAY_COLOR = '#0e8fa8'
-
+import { poiIcon, poiKindLabel } from './catalog'
+import { DEFAULT_MAP_SETTINGS, validMapSettings } from './mapSettings'
+import { discovery, eventsIn, type EventRange } from './discoveryData'
+import { dateKey, dayLabel, evStart, outletState } from './campusTime'
+import { defaultMenuDay, menuMeals } from './canteenMenu'
+import { menuItems, priceShort, searchMenu, type MenuSort } from './menu'
+import type { Meal } from './discoveryTypes'
+import { defaultMapPrefs, type MapPrefs } from './mapPrefs'
+import { outlinePoints } from './outlineGeometry'
+import { mergedPlace } from './placeCuration'
+import { defaultMapLabels } from './mapLabelCategories'
+import { buildRoomIndex, findRooms, floorFromCode, type RoomHit } from './roomSearch'
+import { floorLabel } from './rooms'
+import { itemsOn, plan } from './today'
+export { POI_CATS, PLACE_COLORS, WALKWAY_COLOR } from './catalog'
 /** 顶部分类条：每个分类对应哪些楼、哪些点位 */
 export type Chip = 'dining' | 'academic' | 'housing' | 'sports' | 'service' | 'gate' | 'walkway' | 'parking'
 export const CHIPS: { id: Chip; zh: string; icon: IconName }[] = [
-  { id: 'dining', zh: '餐饮', icon: 'dining' },
+  { id: 'dining', zh: '食堂', icon: 'dining' },
   { id: 'academic', zh: '教学科研', icon: 'academic' },
   { id: 'housing', zh: '住宿', icon: 'housing' },
   { id: 'walkway', zh: '风雨长廊', icon: 'walkway' },
@@ -42,6 +45,9 @@ export type Selection = { kind: 'building' | 'poi' | 'group'; id: string }
 /** 导航的一端：一栋楼、一个点位，或者地图上随手点的位置 */
 export interface RouteEnd extends Target {
   name: string
+  place?: Selection
+  /** 实时定位的「我的位置」，走动时跟着更新 */
+  live?: boolean
 }
 
 export const state = reactive({
@@ -52,22 +58,26 @@ export const state = reactive({
   groups: [] as BuildingGroup[],
   pois: [] as Poi[],
   campus: null as Campus | null,
+  mapSettings: { ...DEFAULT_MAP_SETTINGS },
   /** 后端连不上时只读，用打包进来的静态点位 */
   readonly: false,
   selected: null as Selection | null,
+  entranceBuilding: '',
+  /** 从教室号搜索进来时要定位的房间，只在选中同一栋楼时生效 */
+  room: null as RoomHit | null,
   chip: null as Chip | null,
-  /** 地图上显示普通地点名称（选中的、导航的始终显示） */
-  labels: true,
+  panel: 'home' as 'home' | 'events' | 'dining' | 'canteen' | 'today',
+  canteen: { id: '', outlet: '', stall: '', day: '', meal: '' as Meal | '', query: '', dish: '' },
+  radar: { range: 'week' as EventRange, cat: 'all', place: '' },
+  eventId: '',
+  /** Query currently highlighted on the map as a campus-wide dish distribution. */
+  dishFocus: '',
+  menu: { query: '', canteen: '', outlet: '', stall: '', dish: '', tags: [] as string[], price: '', sort: 'best' as MenuSort, openNow: false },
+  /** Personal map settings; the visible label map remains exposed for existing controls. */
+  mapPrefs: defaultMapPrefs() as MapPrefs,
+  /** 地图标签按类型独立显示；悬停或选中的地点临时显示标签。 */
+  labelVisibility: defaultMapLabels(),
   showRoads: false,
-  /** 管理后台（地址带 #admin） */
-  admin: location.hash === '#admin',
-  /** 口令验证过 */
-  loggedIn: false,
-  password: '',
-  /** 正在编辑的点位表单；id 为空 = 新建 */
-  draft: null as Poi | null,
-  /** 下一次点地图 = 放新点位 */
-  placing: false,
   route: {
     open: false,
     from: null as RouteEnd | null,
@@ -81,14 +91,39 @@ export const state = reactive({
   toast: '',
 })
 
-/** 能拖动、编辑点位：在后台并且登录了 */
-export const canEdit = () => state.admin && state.loggedIn
+/** 分类与活动/菜单面板共用地图的批量选中集合，不依赖侧栏是否显示分类列表。 */
+export const mapHighlights = computed(() => {
+  const ids = new Set<string>()
+  if (state.mapPrefs.mode === 'mine') {
+    for (const place of state.mapPrefs.places) ids.add(place.place)
+    for (const item of itemsOn(plan.items, plan.date)) if (item.place) ids.add(item.place)
+  }
+  const dining = !state.route.open && (state.panel === 'dining' || state.panel === 'canteen')
+  const chip = state.chip || (dining ? 'dining' : null)
+  if (chip) {
+    for (const b of state.buildings) if (chipHasBuilding(chip, b)) ids.add(b.id)
+    for (const p of state.pois) if (chipHasPoi(chip, p)) ids.add(p.id)
+  }
+  if (dining) {
+    const focused = state.dishFocus ? new Set(searchMenu(state.dishFocus).items.map((item) => item.c.place)) : null
+    for (const c of discovery.canteens) if (!focused || focused.has(c.place)) ids.add(c.place)
+  }
+  if (!state.route.open && state.panel === 'events') {
+    for (const event of eventsIn(state.radar.range, state.radar.cat, state.radar.place)) if (event.place) ids.add(event.place)
+    const selected = discovery.events.find((e) => e.id === state.eventId)
+    if (selected?.place) ids.add(selected.place)
+  }
+  const known = new Set([...state.buildings, ...state.pois].map((p) => p.id))
+  return new Set([...ids].filter((id) => known.has(id)))
+})
 
 /** 地图相机，由 MapView 实现；地图还没建好时调用就什么也不做 */
 export const mapApi = {
   fit: (_pts: LngLat[], _maxZoom?: number) => {},
-  focus: (_p: LngLat, _zoom?: number) => {},
+  focus: (_p: LngLat, _zoom?: number, _dy?: number) => {},
   home: () => {},
+  /** 其他图层画了参与避让的标记后，请地图重新排一次标签 */
+  relayout: () => {},
 }
 
 let toastTimer = 0
@@ -116,21 +151,25 @@ async function getJson<T>(url: string, init?: RequestInit, ms = 6000): Promise<T
 
 export async function loadData() {
   try {
-    const [places, campus] = await Promise.all([
-      getJson<{ categories: Record<PlaceCat, I18nText>; buildings: Building[]; pois: Poi[] }>('data/places.json'),
-      getJson<Campus>('data/campus.json'),
+    const [places, campus, mapSettings] = await Promise.all([
+      getJson<{ categories: Record<PlaceCat, I18nText>; buildings: Building[]; pois: Poi[] }>('/data/places.json'),
+      getJson<Campus>('/data/campus.json'),
+      getJson<unknown>('/api/map-settings', undefined, 4000).catch(() => DEFAULT_MAP_SETTINGS),
     ])
     state.categories = places.categories
-    state.buildings = places.buildings
-    state.groups = groupBuildings(places.buildings)
     state.campus = campus
-    initRouting(campus, places.buildings.filter((b) => b.walkway).map((b) => b.poly))
+    state.mapSettings = validMapSettings(mapSettings) ? mapSettings : { ...DEFAULT_MAP_SETTINGS }
     try {
-      state.pois = await getJson<Poi[]>('api/pois', undefined, 4000)
+      const live = await getJson<Places>('/api/places', undefined, 4000)
+      state.buildings = live.buildings
+      state.pois = live.pois
     } catch {
+      state.buildings = places.buildings
       state.pois = places.pois
       state.readonly = true
     }
+    state.groups = groupBuildings(state.buildings)
+    initRouting(campus, state.buildings.filter((b) => b.walkway).map((b) => b.poly))
     state.ready = true
   } catch (e) {
     state.error = `地图数据加载失败：${(e as Error).message}`
@@ -162,14 +201,19 @@ export function placeName(sel: Selection) {
 }
 
 export function select(sel: Selection | null, fly = true) {
+  if (sel?.kind === 'poi') sel = mergedPlace(sel.id) ?? sel
+  state.panel = 'home'
+  state.eventId = ''
+  state.room = null
   state.selected = sel
+  state.entranceBuilding = ''
   if (!sel) return
   state.chip = null
   openSheet(1)
   if (!fly) return
   if (sel.kind === 'building') {
     const b = buildingById(sel.id)
-    if (b) mapApi.fit(b.poly, 19)
+    if (b) mapApi.fit(outlinePoints(b), 19)
   } else if (sel.kind === 'group') {
     const g = groupById(sel.id)
     if (g) mapApi.fit(g.points, 18)
@@ -180,20 +224,32 @@ export function select(sel: Selection | null, fly = true) {
 }
 
 export function setChip(c: Chip | null) {
+  if (c === 'dining' && !state.route.open) {
+    if (state.panel === 'dining' || state.panel === 'canteen') showPanel('home')
+    else openDining()
+    return
+  }
+  state.panel = 'home'
+  state.eventId = ''
   state.chip = state.chip === c ? null : c
   state.selected = null
   if (!state.chip) return
   openSheet(1)
   const chip = state.chip
   const pts = [
-    ...state.buildings.filter((b) => chipHasBuilding(chip, b)).flatMap((b) => b.poly),
+    ...state.buildings.filter((b) => chipHasBuilding(chip, b)).flatMap(outlinePoints),
     ...state.pois.filter((p) => chipHasPoi(chip, p)).map((p) => p.pos),
   ]
   if (pts.length) mapApi.fit(pts, 18)
 }
 
 // ---------- 搜索：名称、简称、别名里包含关键字就算；楼群排最前 ----------
-export type SearchHit = { sel: Selection; name: string; sub: string; icon: IconName }
+export type SearchTarget = Selection | { kind: 'event'; id: string } | { kind: 'dish'; id: string; outlet: string } | { kind: 'dishGroup'; query: string } | { kind: 'canteen'; id: string; outlet?: string; stall?: string }
+  | { kind: 'room'; id: string; room: RoomHit }
+const roomIndex = computed(() => buildRoomIndex(state.buildings, state.groups, discovery.events))
+const ROOM_HINT = { exact: '', rule: ' · 按房间号推测', history: ' · 按往期活动推测' }
+export type SearchHit = { sel: SearchTarget; name: string; sub: string; icon: IconName }
+const targetId = (target: SearchTarget) => 'id' in target ? target.id : ''
 export function search(q: string): SearchHit[] {
   const k = q.trim().toLowerCase()
   if (!k) return []
@@ -210,25 +266,203 @@ export function search(q: string): SearchHit[] {
         icon: b.walkway ? 'walkway' : b.cat,
       })
   for (const p of state.pois)
-    if (has(p.name.zh, p.name.en, p.desc?.zh))
-      hits.push({ sel: { kind: 'poi', id: p.id }, name: p.name.zh, sub: POI_CATS[p.cat]?.zh ?? '', icon: POI_CATS[p.cat]?.icon ?? 'pin' })
-  return hits.slice(0, 20)
+    if (has(p.name.zh, p.name.en, p.desc?.zh, ...p.kind ? [poiKindLabel(p), '地下车库', '地库'] : [], ...(p.aliases ?? [])))
+      hits.push({ sel: { kind: 'poi', id: p.id }, name: p.name.zh, sub: poiKindLabel(p), icon: poiIcon(p) })
+  const rooms = findRooms(q, roomIndex.value).map((r): SearchHit => {
+    const b = buildingById(r.building)
+    return { sel: { kind: 'room', id: r.building, room: r }, name: r.code, icon: 'door',
+      sub: `${b?.short.zh || b?.name.zh} · ${floorLabel(r.floor)}${r.label ? ' · ' + r.label : ''}${ROOM_HINT[r.confidence]}` }
+  })
+  let places = hits.slice(0, 8)
+  const events = [...eventsIn('upcoming'), ...eventsIn('past')].filter((e) => has(e.title, e.organizer, e.speaker, e.venueRaw)).slice(0, 5)
+    .map((e): SearchHit => ({ sel: { kind: 'event', id: e.id }, name: e.title, sub: `活动 · ${dayLabel(evStart(e))}`, icon: 'calendar' }))
+  const dining: SearchHit[] = []
+  for (const c of discovery.canteens) {
+    const matchesPlace = hits.some((hit) => targetId(hit.sel) === c.place)
+    if (has(c.zh, c.en, ...c.aliases ?? []) || matchesPlace) {
+      dining.push({ sel: { kind: 'canteen', id: c.id }, name: c.zh, sub: '食堂 · 查看菜单', icon: 'dining' })
+      continue // 查餐厅名称时只展示一个入口，楼层和窗口在详情中展开。
+    }
+    for (const o of c.outlets) {
+      if (has(o.zh, ...o.aliases ?? []) && o.zh !== c.zh) dining.push({ sel: { kind: 'canteen', id: c.id, outlet: o.id }, name: `${c.zh} · ${o.zh}`, sub: '餐厅 · 查看菜单', icon: 'dining' })
+      for (const s of o.stalls) if (has(s.zh, s.en, ...s.aliases ?? [])) dining.push({ sel: { kind: 'canteen', id: c.id, outlet: o.id, stall: s.id }, name: s.zh, sub: `${c.zh} · ${o.zh}`, icon: 'dining' })
+    }
+  }
+  const dishResults = searchMenu(q).items
+  const dishes = dishResults.slice(0, 8).map((x): SearchHit => ({ sel: { kind: 'dish', id: x.d.id, outlet: x.o.id }, name: x.d.zh, sub: `${x.c.zh} · ${x.d.stall || x.o.zh} · ${priceShort(x.d)}`, icon: 'dining' }))
+  const dishGroups = [...new Set(dishResults.map((x) => x.c.id))]
+  const distribution: SearchHit[] = dishGroups.length >= 2 ? [{ sel: { kind: 'dishGroup', query: q }, name: `全校 ${dishGroups.length} 家食堂有「${q}」`, sub: '查看全校分布、价格和排队情况', icon: 'dining' }] : []
+  if (!state.route.picking) {
+    const diningPlaces = new Set(dining.filter((hit) => hit.sel.kind === 'canteen').map((hit) => discovery.canteens.find((c) => c.id === targetId(hit.sel))?.place))
+    places = places.filter((hit) => !diningPlaces.has(targetId(hit.sel)))
+  }
+  return [...rooms, ...places, ...events, ...dining.slice(0, 5), ...distribution, ...dishes]
+}
+
+/** 打开某栋楼并定位到房间（分享链接的 room 参数） */
+export function openRoom(building: string, code: string) {
+  select({ kind: 'building', id: building })
+  state.room = findRooms(code, roomIndex.value, 20).find((h) => h.building === building)
+    ?? { building, code, floor: floorFromCode(code), confidence: 'rule' }
+}
+
+export function placeSelection(id?: string | null): Selection | null {
+  if (id) {
+    const merged = mergedPlace(id)
+    if (merged && (merged.kind === 'building' ? buildingById(merged.id) : merged.kind === 'poi' ? poiById(merged.id) : groupById(merged.id))) return merged
+  }
+  return id && buildingById(id) ? { kind: 'building', id } : id && poiById(id) ? { kind: 'poi', id } : null
+}
+export function showEntrances(id: string, point?: LngLat) {
+  const building = buildingById(id)
+  if (!building?.entrances?.length) return
+  state.entranceBuilding = id
+  if (point) mapApi.focus(point, 19)
+  else mapApi.fit(outlinePoints(building), 19)
+}
+export function showPanel(panel: 'home' | 'events' | 'dining' | 'today') {
+  closeRoute()
+  state.panel = panel
+  state.selected = null
+  state.room = null
+  state.chip = null
+  state.eventId = ''
+  state.dishFocus = ''
+  state.menu.dish = ''
+  openSheet(1)
+  if (panel === 'events') fitEvents()
+  if (panel === 'dining') mapApi.fit(discovery.canteens.map((c) => c.pos), 18)
+  if (panel === 'today') fitToday()
+}
+/** 「我的今天」：缩放到当天各站 */
+export function fitToday() {
+  const points = itemsOn(plan.items, plan.date).flatMap((i) => {
+    const sel = placeSelection(i.place)
+    const end = sel && endFor(sel)
+    return end ? [end.point] : []
+  })
+  if (points.length) mapApi.fit(points, 18)
+}
+export function fitEvents() {
+  const points = eventsIn(state.radar.range, state.radar.cat, state.radar.place).flatMap((e) => {
+    const sel = placeSelection(e.place)
+    const end = sel && endFor(sel)
+    return end ? [end.point] : []
+  })
+  if (points.length) mapApi.fit(points, 18)
+}
+export function showEventsAt(id: string) {
+  state.radar.place = id
+  showPanel('events')
+}
+export function openEvent(id: string) {
+  const event = discovery.events.find((e) => e.id === id)
+  if (!event) return
+  showPanel('events')
+  state.eventId = id
+  const sel = placeSelection(event.place)
+  state.selected = sel
+  const end = sel && endFor(sel)
+  // 地点往下挪一点，上方留给活动标注卡片
+  if (end) mapApi.focus(end.point, 19, 90)
+}
+export function openDining(canteen = '', outlet = '', stall = '', dish = '') {
+  showPanel('dining')
+  state.dishFocus = ''
+  Object.assign(state.menu, { canteen, outlet, stall, dish, query: '', tags: [], price: '', sort: 'best', openNow: false })
+  const c = discovery.canteens.find((c) => c.id === canteen)
+  if (c) {
+    state.selected = placeSelection(c.place)
+    mapApi.focus(c.pos, 19)
+  }
+}
+/** A canteen has its own floor, opening-hours and weekly-menu view. Search filters stay intact. */
+export function openCanteen(id: string, outlet = '', stall = '') {
+  const c = discovery.canteens.find((c) => c.id === id)
+  if (!c) return
+  closeRoute()
+  state.panel = 'canteen'
+  state.chip = null
+  state.eventId = ''
+  state.dishFocus = ''
+  state.selected = placeSelection(c.place)
+  const o = c.outlets.find((o) => o.id === outlet) || c.outlets[0]
+  Object.assign(state.canteen, { id, outlet: '', stall: '', query: '', dish: '', day: '', meal: '' })
+  if (o) selectCanteenOutlet(o.id)
+  state.canteen.stall = stall
+  openSheet(stall ? 2 : 1)
+  mapApi.focus(c.pos, 19)
+}
+/** Initialize on entry or a floor change, never when the responsive panel remounts. */
+export function selectCanteenOutlet(id: string) {
+  if (state.canteen.outlet === id) return
+  const o = discovery.canteens.find((c) => c.id === state.canteen.id)?.outlets.find((o) => o.id === id)
+  if (!o) return
+  const day = defaultMenuDay(o), status = outletState(o)
+  const meal = day === dateKey() && (status.kind === 'open' || status.kind === 'later') && menuMeals(o).includes(status.meal) ? status.meal : ''
+  Object.assign(state.canteen, { outlet: id, stall: '', day, meal, query: '', dish: '' })
+}
+export function chooseSearch(hit: SearchHit) {
+  const sel = hit.sel
+  if (sel.kind === 'event') {
+    const event = discovery.events.find((e) => e.id === sel.id)
+    const place = placeSelection(event?.place)
+    const end = place && endFor(place)
+    if (state.route.picking && end) setEnd(state.route.picking, end)
+    else openEvent(sel.id)
+  } else if (sel.kind === 'dishGroup') {
+    if (state.route.picking) return
+    state.panel = 'dining'; state.selected = null; state.eventId = ''; state.chip = null; state.dishFocus = sel.query; state.menu.query = sel.query; openSheet(1)
+  } else if (sel.kind === 'dish' || sel.kind === 'canteen') {
+    const item = sel.kind === 'dish' ? menuItems.value.find((x) => x.d.id === sel.id && x.o.id === sel.outlet) : undefined
+    const c = item?.c ?? discovery.canteens.find((c) => c.id === sel.id)
+    const place = placeSelection(c?.place)
+    const end = place && endFor(place)
+    if (state.route.picking && end) setEnd(state.route.picking, end)
+    else if (c && sel.kind === 'canteen') openCanteen(c.id, sel.outlet, sel.stall)
+    else if (c) openDining(c.id, sel.outlet, '', item?.d.id)
+  } else if (sel.kind === 'room') {
+    const end = endFor({ kind: 'building', id: sel.id })
+    if (state.route.picking && end) setEnd(state.route.picking, { ...end, name: `${end.name} ${sel.room.code}` })
+    else {
+      select({ kind: 'building', id: sel.id })
+      state.room = sel.room
+    }
+  } else {
+    const end = state.route.picking && endFor(sel)
+    if (end) setEnd(state.route.picking!, end)
+    else select(sel)
+  }
+}
+
+export function navigateToPlace(id: string, fallback?: RouteEnd) {
+  const sel = placeSelection(id)
+  const end = sel && endFor(sel) || fallback
+  if (!end) return
+  state.panel = 'home'
+  state.selected = null
+  state.eventId = ''
+  state.dishFocus = ''
+  state.menu.dish = ''
+  if (!ui.desktop) ui.sheet = ui.anchors[1]
+  setEnd('to', end)
 }
 
 // ---------- 导航 ----------
 export function endFor(sel: Selection): RouteEnd | null {
   if (sel.kind === 'building') {
     const b = buildingById(sel.id)
-    return b ? { name: b.short.zh || b.name.zh, point: b.center, poly: b.poly, entrances: b.entrances?.map((e) => e.pos) } : null
+    return b ? { name: b.short.zh || b.name.zh, place: sel, point: b.center, poly: b.poly, entrances: b.entrances?.map((e) => e.pos) } : null
   }
   if (sel.kind === 'poi') {
     const p = poiById(sel.id)
-    return p ? { name: p.name.zh, point: p.pos } : null
+    return p ? { name: p.name.zh, place: sel, point: p.pos } : null
   }
   return null
 }
 
 export function openRoute(rain = false) {
+  state.panel = 'home'
   state.route.open = true
   if (rain) state.route.rain = true
   if (!state.route.from) state.route.picking = 'from'
@@ -238,6 +472,7 @@ export function openRoute(rain = false) {
 }
 
 export function setEnd(which: 'from' | 'to', end: RouteEnd | null) {
+  state.panel = 'home'
   state.route.open = true
   state.route[which] = end
   state.route.picking = null
@@ -248,105 +483,19 @@ export function setEnd(which: 'from' | 'to', end: RouteEnd | null) {
   computeRoute()
 }
 
-export function computeRoute() {
+/** fit = false：边走边重算时不动地图 */
+export function computeRoute(fit = true) {
   const r = state.route
-  r.result = null
-  r.failed = false
-  if (!r.from || !r.to) return
+  if (!r.from || !r.to) {
+    r.result = null
+    r.failed = false
+    return
+  }
   r.result = findRoute(r.from, r.to, r.rain)
   r.failed = !r.result
-  if (r.result) mapApi.fit(r.result.segments.flatMap((s) => s.path), 19)
+  if (r.result && fit) mapApi.fit(r.result.segments.flatMap((s) => s.path), 19)
 }
 
 export function closeRoute() {
   Object.assign(state.route, { open: false, from: null, to: null, picking: null, result: null, failed: false })
-}
-
-// ---------- 管理后台：点位 ----------
-const authHeaders = () => ({ 'Content-Type': 'application/json', Authorization: `Bearer ${state.password}` })
-
-export async function login(password: string) {
-  await getJson('api/auth', { method: 'POST', headers: { Authorization: `Bearer ${password}` } })
-  state.password = password
-  state.loggedIn = true
-  try {
-    sessionStorage.setItem('map.pw', password)
-  } catch {
-    /* 隐私模式下存不了，刷新后重新输入即可 */
-  }
-}
-
-export function logout() {
-  Object.assign(state, { loggedIn: false, password: '', draft: null, placing: false })
-  try {
-    sessionStorage.removeItem('map.pw')
-  } catch {
-    /* 同上 */
-  }
-}
-
-export async function restoreLogin() {
-  let pw: string | null = null
-  try {
-    pw = sessionStorage.getItem('map.pw')
-  } catch {
-    return
-  }
-  if (pw && !state.readonly) await login(pw).catch(() => logout())
-}
-
-/** 进出后台跟着地址栏的 #admin 走，前进后退也对 */
-export function syncAdminFromHash() {
-  state.admin = location.hash === '#admin'
-  if (!state.admin) Object.assign(state, { draft: null, placing: false })
-  else closeRoute()
-  openSheet(1)
-}
-
-export function newDraft(pos: LngLat) {
-  state.placing = false
-  state.draft = { id: '', name: { zh: '', en: '' }, cat: 'life', pos, desc: { zh: '', en: '' }, hours: { zh: '', en: '' } }
-  openSheet(1)
-}
-
-export function editDraft(p: Poi) {
-  // 复制一份再改：取消编辑时地图上的点位不受影响（structuredClone 不能直接克隆响应式代理）
-  const raw = structuredClone(toRaw(p))
-  state.draft = { ...raw, desc: raw.desc ?? { zh: '', en: '' }, hours: raw.hours ?? { zh: '', en: '' } }
-  state.selected = { kind: 'poi', id: p.id }
-  openSheet(1)
-}
-
-export async function saveDraft() {
-  const d = state.draft
-  if (!d) return
-  const body = JSON.stringify({ name: d.name, cat: d.cat, pos: d.pos, desc: d.desc, hours: d.hours })
-  const saved = d.id
-    ? await getJson<Poi>(`api/pois/${d.id}`, { method: 'PUT', headers: authHeaders(), body })
-    : await getJson<Poi>('api/pois', { method: 'POST', headers: authHeaders(), body })
-  upsert(saved)
-  state.draft = null
-  state.selected = { kind: 'poi', id: saved.id }
-  toast(d.id ? '已保存' : '已添加点位')
-}
-
-export async function movePoi(id: string, pos: LngLat) {
-  const saved = await getJson<Poi>(`api/pois/${id}`, { method: 'PUT', headers: authHeaders(), body: JSON.stringify({ pos }) })
-  upsert(saved)
-  if (state.draft?.id === id) state.draft.pos = saved.pos
-  toast('位置已更新')
-}
-
-export async function deletePoi(id: string) {
-  await getJson(`api/pois/${id}`, { method: 'DELETE', headers: authHeaders() })
-  state.pois = state.pois.filter((p) => p.id !== id)
-  if (state.selected?.id === id) state.selected = null
-  state.draft = null
-  toast('已删除')
-}
-
-function upsert(p: Poi) {
-  const i = state.pois.findIndex((x) => x.id === p.id)
-  if (i >= 0) state.pois.splice(i, 1, p)
-  else state.pois.push(p)
 }

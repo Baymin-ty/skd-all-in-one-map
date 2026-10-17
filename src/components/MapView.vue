@@ -2,58 +2,152 @@
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { BaiduCRS, baiduTiles, clampToOutline, fillZoom, fromLatLng, limitPan, PAINTED_OUTLINE, toLatLng } from '../lib/geo'
+import { createCampusMap } from '../lib/campusMap'
+import { clampToOutline, fillZoom, fromLatLng, limitPan, PAINTED_OUTLINE, toLatLng } from '../lib/geo'
 import type { BuildingGroup } from '../lib/groups'
 import { ICONS } from '../lib/icons'
+import { buildingOutline, constructionOutline, walkwayOutline } from '../lib/buildingOutline'
+import { outlineLatLngs } from '../lib/outlineGeometry'
+import { createMapOpacity } from '../lib/mapOpacity'
+import {
+  collapsedLabelGroups, labelFits, labelLevels, labelPresentation, labelSlots, labelsOverlap, poiPresentation, shiftRect,
+  type LabelLevel, type LabelRect, type LabelSlot,
+} from '../lib/mapLabels'
+import { EVENT_PRIO, eventsByPlace, eventShortTitle, eventWhen, type PlaceEvents } from '../lib/mapEvents'
+import { landmark, majorGate, facilityBuilding } from '../lib/placeCuration'
+import { visibleEntrances } from '../lib/mapEntrances'
+import { createLabelInteraction } from '../lib/mapLabelInteraction'
+import { createLabelHover } from '../lib/mapLabelHover'
+import { buildingLabelCategory, mapLabelColor, poiLabelCategory } from '../lib/mapLabelCategories'
+import { discovery, eventsAhead, eventsIn } from '../lib/discoveryData'
+import { clockText, dateKey, dayName, dayStart, eventStatus, evStart, nowTick, STATUS_LABELS, timeRange } from '../lib/campusTime'
+import type { CampusEvent } from '../lib/discoveryTypes'
 import { walkableCells } from '../lib/route'
 import {
-  buildingById, canEdit, chipHasBuilding, chipHasPoi, endFor, expandedGroups, groupOf, mapApi, movePoi, newDraft,
-  PLACE_COLORS, POI_CATS, select, setEnd, state, toast, WALKWAY_COLOR, type Selection,
+  buildingById, endFor, expandedGroups, groupById, groupOf, mapApi, mapHighlights,
+  openEvent, PLACE_COLORS, POI_CATS, select, setEnd, showEventsAt, state, WALKWAY_COLOR, type Selection,
 } from '../lib/store'
 import type { Building, LngLat } from '../lib/types'
 import { covered, SIDEBAR_W, TOPBAR_H, ui } from '../lib/ui'
 import Ico from './Ico.vue'
+import MapLabelControls from './MapLabelControls.vue'
+import { mountTodayLayer } from '../lib/todayLayer'
+import { poiIcon, poiKindLabel } from '../lib/catalog'
+import { mountLocateLayer } from '../lib/locateLayer'
+import { mountTimeMachineLayer } from '../lib/timeMachineLayer'
+import { tm } from '../lib/timeMachine'
+import { crowdAt, crowdRevision, CROWD_LABELS } from '../lib/crowd'
+import LocateButton from './LocateButton.vue'
 
+const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!))
 const el = ref<HTMLDivElement>()
 let map: L.Map
 const zoom = ref(17)
 const minZoom = ref(16)
+const mapTools = ref<HTMLDivElement>()
+const hoverSelection = ref<Selection | null>(null)
+let labelInteraction: ReturnType<typeof createLabelInteraction> | undefined
 /** 放大到这一级，楼群自动展开显示各栋（标签放得下了） */
 const EXPAND_ALL_ZOOM = 19
 
 const buildingLayer = L.layerGroup()
 const labelLayer = L.layerGroup()
 const poiLayer = L.layerGroup()
+const poiTargetLayer = L.layerGroup()
+const hoverLabelLayer = L.layerGroup()
 const routeLayer = L.layerGroup()
 const entranceLayer = L.layerGroup()
+const crowdLayer = L.layerGroup()
+/** 选中活动的标注卡片和脉冲圈；内容不变时不重建，免得每次刷新都重播动画 */
+const eventFocusLayer = L.layerGroup()
+let eventFocusKey = ''
 let roadLayer: L.LayerGroup | null = null
 const polys = new Map<string, L.Polygon>()
+let opacityLayer: ReturnType<typeof createMapOpacity>
+let hovered: Selection | null = null
 
-// ---------- 楼的多边形：底图上楼已经画好了，平时透明只接点击；风雨长廊常亮 ----------
-const baseStyle: L.PathOptions = { stroke: false, fillColor: '#fff', fillOpacity: 0 }
-const hoverStyle: L.PathOptions = { stroke: true, color: '#fffdf4', weight: 2, opacity: 1, fillColor: '#fff8de', fillOpacity: 0.22 }
-const selStyle: L.PathOptions = { stroke: true, color: '#a8242b', weight: 2.5, opacity: 1, dashArray: undefined, fillColor: '#fff0d9', fillOpacity: 0.26 }
-const catStyle = (c: string): L.PathOptions => ({ stroke: true, color: c, weight: 1.5, opacity: 0.9, dashArray: undefined, fillColor: c, fillOpacity: 0.2 })
-/** 展开的楼群：虚线圈出同组的楼 */
-const memberStyle = (c: string): L.PathOptions => ({ stroke: true, color: c, weight: 1.5, opacity: 0.95, dashArray: '4 3', fillColor: c, fillOpacity: 0.12 })
-const walkwayStyle = (strong: boolean): L.PathOptions => ({
-  stroke: true, color: WALKWAY_COLOR, weight: strong ? 3 : 2, opacity: 1, dashArray: strong ? undefined : '6 4',
-  fillColor: WALKWAY_COLOR, fillOpacity: strong ? 0.35 : 0.18,
+function includesBuilding(selection: Selection | null, b: { id: string }) {
+  return selection?.kind === 'building' && selection.id === b.id
+    || selection?.kind === 'group' && groupOf(b.id)?.id === selection.id
+    || selection?.kind === 'poi' && facilityBuilding(selection.id) === b.id
+}
+function updateOpacity() {
+  const settings = state.mapSettings
+  const selectable = mapHighlights.value.size ? settings.selectable * 0.45 : settings.selectable
+  opacityLayer?.update((b) => includesBuilding(state.selected, b) || includesBuilding(hovered, b) ? settings.selected
+    : mapHighlights.value.has(b.id) ? settings.selected
+    : selectable, settings.background)
+  // 地点文字始终清晰；透明度设置继续控制底图建筑。
+  el.value?.classList.toggle('has-highlights', mapHighlights.value.size > 0)
+}
+const hoverState = createLabelHover<Selection>((selection) => {
+  hovered = selection
+  hoverSelection.value = selection
+  restyle()
+  // 悬停只更新当前标签，不参与全局排布，也不改动其他标签的位置。
+  updateHoverLabel()
+}, () => !!labelInteraction?.canHover)
+const hover = (selection: Selection | null) => hoverState.set(selection)
+
+/** 建筑、透明命中区和标签之间交接时保留当前对象，跨过小间隙也不会闪烁。 */
+function leaveHover(selection: Selection, event: L.LeafletMouseEvent) {
+  const next = event.originalEvent?.relatedTarget
+  if (next instanceof Element && next.closest('[data-place]')?.getAttribute('data-place') === `${selection.kind}:${selection.id}`) return
+  hoverState.leave(selection)
+}
+
+const hoverPreview = computed(() => {
+  const s = hoverSelection.value
+  if (!s) return null
+  if (s.kind === 'group') {
+    const g = groupById(s.id)
+    return g && { name: g.name.zh, category: '楼群', detail: `${g.members.length} 栋建筑 · 点击展开`, icon: g.cat, color: PLACE_COLORS[g.cat] }
+  }
+  // 有活动的地点，说明里直接写最近一场，不用点开也知道这里在办什么
+  const ev = mapEvents.get(s.id)
+  const evText = ev && `${eventWhen(ev.lead, ev.tier)} · ${eventShortTitle(ev.lead.title)}${ev.events.length > 1 ? ` 等 ${ev.events.length} 场` : ''}`
+  if (s.kind === 'building') {
+    const b = buildingById(s.id)
+    return b && { name: b.name.zh, category: b.walkway ? '风雨长廊' : state.categories[b.cat]?.zh,
+      detail: evText || b.hours?.zh || b.orgs[0]?.zh || '查看地点详情与步行路线', icon: b.walkway ? 'walkway' as const : b.cat, color: b.walkway ? WALKWAY_COLOR : PLACE_COLORS[b.cat] }
+  }
+  const p = state.pois.find((p) => p.id === s.id)
+  return p && { name: p.name.zh, category: poiKindLabel(p),
+    detail: evText || p.hours?.zh || '查看地点详情与步行路线', icon: poiIcon(p), color: POI_CATS[p.cat].color }
 })
 
+// ---------- 楼的多边形：底图上楼已经画好了，平时透明只接点击；风雨长廊常亮 ----------
+const batchStyle = (): L.PathOptions => ({
+  ...buildingOutline(true, false, state.mapSettings),
+  weight: 3, fillColor: '#a8242b', fillOpacity: 0.1 * state.mapSettings.selected,
+})
+/** 展开的楼群：虚线圈出同组的楼 */
+const memberStyle = (c: string): L.PathOptions => ({ stroke: true, color: c, weight: 1.5, opacity: 0.5, dashArray: '4 3', fillOpacity: 0 })
+
+
 function styleFor(b: Building): L.PathOptions {
-  if (state.selected?.id === b.id) return selStyle
-  if (b.walkway) return walkwayStyle(state.route.rain || state.chip === 'walkway')
-  if (state.chip && chipHasBuilding(state.chip, b)) return catStyle(PLACE_COLORS[b.cat])
+  const selected = includesBuilding(state.selected, b)
+  const isHovered = includesBuilding(hovered, b)
+  const matching = mapHighlights.value.has(b.id)
+  if (selected) return { ...buildingOutline(true, isHovered, state.mapSettings), weight: 3.5, fillColor: '#a8242b', fillOpacity: 0.16 * state.mapSettings.selected }
+  if (matching) return { ...batchStyle(), weight: isHovered ? 4 : 3 }
+  if (isHovered) return buildingOutline(false, true, state.mapSettings)
+  if (b.walkway) return walkwayOutline(state.route.rain || state.chip === 'walkway')
   const g = groupOf(b.id)
   if (g && expandedGroups().has(g.id) && state.selected) return memberStyle(PLACE_COLORS[b.cat])
-  return baseStyle
+  return buildingOutline(false, false, state.mapSettings)
 }
-const restyle = () => state.buildings.forEach((b) => polys.get(b.id)?.setStyle(styleFor(b)))
+const restyle = () => {
+  state.buildings.forEach((b) => polys.get(b.id)?.setStyle(styleFor(b)))
+  for (const id of mapHighlights.value) polys.get(id)?.bringToFront()
+  for (const b of state.buildings) if (includesBuilding(state.selected, b) || includesBuilding(hovered, b)) polys.get(b.id)?.bringToFront()
+  updateOpacity()
+}
 
 /** 楼、楼群、点位被点到：在选导航端点就设端点，否则打开详情 */
 function pick(sel: Selection) {
-  if (state.placing) return
+  // 时光机全屏时侧栏收起，点楼不打开详情
+  if (tm.open) return
   const which = state.route.picking
   if (which && sel.kind !== 'group') {
     const end = endFor(sel)
@@ -65,157 +159,425 @@ function drawBuildings() {
   buildingLayer.clearLayers()
   polys.clear()
   for (const b of state.buildings) {
-    const p = L.polygon(b.poly.map(toLatLng), { ...styleFor(b), bubblingMouseEvents: false })
+    const p = L.polygon(outlineLatLngs(b), { ...styleFor(b), smoothFactor: 0, className: 'building-outline', bubblingMouseEvents: false })
     p.on('click', () => pick({ kind: 'building', id: b.id }))
-    p.on('mouseover', () => state.selected?.id !== b.id && p.setStyle(hoverStyle))
-    p.on('mouseout', () => p.setStyle(styleFor(b)))
+    p.on('mouseover', () => hover({ kind: 'building', id: b.id }))
+    p.on('mouseout', (event) => leaveHover({ kind: 'building', id: b.id }, event))
+    p.on('add', () => p.getElement()?.setAttribute('data-place', `building:${b.id}`))
     p.addTo(buildingLayer)
     polys.set(b.id, p)
   }
 }
 
-// ---------- 标签：优先级高的先占位置，被挡住的藏起来（declutter） ----------
+// ---------- 标签：优先级高的先占位置，放不下先挪位置、再精简内容，最后才藏起来（declutter） ----------
+/** 校门在校园边缘、几乎不挡别人，排最前；地标（食堂、图书馆等）排在楼群前面：楼群标签有备选位置可挪，地标没有 */
 function prioOf(b: Building, inGroup: boolean, focused: boolean) {
-  if (state.selected?.id === b.id) return 100
-  if (focused) return 95 // 点开的楼群：各栋名字优先
-  if (state.chip && chipHasBuilding(state.chip, b)) return 92 // 分类条选中的那类优先
-  if (b.walkway) return 90
-  if (b.cat === 'gate') return 85
-  if (b.cat === 'dining') return 80
+  if (state.selected?.kind === 'building' && state.selected.id === b.id) return 140
+  if (focused) return 100 // 点开的楼群：各栋名字优先
+  if (mapHighlights.value.has(b.id)) return 98 // 批量选中的建筑名称优先
+  if (b.walkway) return state.route.rain ? 90 : 55
+  if (b.cat === 'gate') return 92
+  if (landmark(b.id)) return 90
+  if (b.cat === 'dining') return 78
+  if (b.cat === 'service') return 70
   if (inGroup) return 60
   return b.cat === 'housing' ? 45 : 50
 }
+const GROUP_PRIO = 84
+/** 重要地点放不下名称时先缩成图标，仍能看出这里有什么 */
+const ICON_FALLBACK_PRIO = 70
 
-function labelIcon(html: string, cls: string, prio: number, color: string, group = '') {
-  const data = group ? ` data-group="${group}"` : ''
-  return L.divIcon({ className: '', html: `<div class="${cls}" data-prio="${prio}"${data} style="--c:${color}">${html}</div>`, iconSize: [0, 0] })
+const labelMarkers = new Map<string, L.Marker>()
+const poiMarkers = new Map<string, L.Marker>()
+const hoverMarkers = new Map<string, L.Marker>()
+const markerHtml = new WeakMap<HTMLElement, string>()
+
+interface MarkerSpec {
+  html: string
+  cls: string
+  /** null：不参与避让（悬停标签） */
+  prio: number | null
+  color: string
+  zIndexOffset?: number
+  /** 楼群标签：避让时改用 groupMarkers 里的备选位置 */
+  group?: string
+  title?: string
+  pane?: string
+  /** 放不下时依次尝试的显示层级，见 labelLevels */
+  levels?: string
+  /** 允许在地点附近微移避让 */
+  shift?: boolean
+}
+
+/** 点到标签里的活动那一行：一场直接打开，多场先列出这里的活动；点名称照常打开地点 */
+function pickLabel(selection: Selection, event: L.LeafletMouseEvent) {
+  const target = event.originalEvent?.target
+  const events = selection.kind !== 'group' && target instanceof Element && target.closest('.ev') ? mapEvents.get(selection.id) : undefined
+  if (events && !state.route.picking && !tm.open) openPlaceEvents(selection.id, events)
+  else pick(selection)
+}
+
+/** 复用标签节点，选择变化时只改样式，让透明度能从当前值平滑过渡。 */
+function syncMarker(cache: Map<string, L.Marker>, layer: L.LayerGroup, selection: Selection, pos: LngLat, spec: MarkerSpec) {
+  const { html, cls, prio, color, zIndexOffset = 0, group = '', title = '', pane = 'markerPane', levels = '', shift = false } = spec
+  const key = `${selection.kind}:${selection.id}`
+  let marker = cache.get(key)
+  let node = marker?.getElement()?.firstElementChild as HTMLElement | undefined
+  if (!marker) {
+    node = document.createElement('div')
+    marker = L.marker(toLatLng(pos), {
+      icon: L.divIcon({ className: '', html: node, iconSize: [0, 0] }), keyboard: false, title, pane, bubblingMouseEvents: false,
+    }).on('click', (event) => pickLabel(selection, event))
+      .on('mouseover', () => hover(selection))
+      .on('mouseout', (event) => leaveHover(selection, event))
+      .addTo(layer)
+    cache.set(key, marker)
+  }
+  if (node) {
+    node.className = cls
+    node.dataset.place = key
+    if (prio === null) delete node.dataset.prio
+    else node.dataset.prio = String(prio)
+    node.title = title
+    if (group) node.dataset.group = group
+    if (levels) node.dataset.levels = levels
+    else delete node.dataset.levels
+    if (shift) node.dataset.shift = '1'
+    else delete node.dataset.shift
+    node.style.setProperty('--c', color)
+    if (markerHtml.get(node) !== html) { node.innerHTML = html; markerHtml.set(node, html) }
+  }
+  marker.setLatLng(toLatLng(pos)).setZIndexOffset(zIndexOffset)
+  return marker
+}
+
+function removeStaleMarkers(cache: Map<string, L.Marker>, layer: L.LayerGroup, visible: Set<string>) {
+  for (const [key, marker] of cache) if (!visible.has(key)) {
+    layer.removeLayer(marker)
+    cache.delete(key)
+  }
 }
 /** 楼群标签和它的备选位置：先放各栋中心的平均点，挡住了就挪到离平均点最近的那栋，依次往后试 */
 const groupMarkers = new Map<string, { marker: L.Marker; spots: LngLat[] }>()
+const groupPositions = new Map<string, LngLat>()
+
+/** 避让后没有完整显示的状态；悬停时临时补一个完整标签 */
+const REDUCED = ['clash', 'lv-brief', 'lv-icon', 'icon-only']
+/** 排布和交互临时加的 class，复制成悬停标签时去掉 */
+const LAYOUT_CLASSES = [...REDUCED, 'hover-suppressed', 'is-hovered', 'near-pointer', 'hover-label']
+
+/** 悬停标签独立于基础标签；临时露出的子标签只遮去自己的父标签。 */
+function updateHoverLabel() {
+  const key = hovered && `${hovered.kind}:${hovered.id}`
+  for (const [id, marker] of [...labelMarkers, ...poiMarkers]) {
+    const node = marker.getElement()?.firstElementChild
+    node?.classList.toggle('is-hovered', id === key)
+    node?.classList.remove('hover-suppressed')
+  }
+  const visible = new Set<string>()
+  if (hovered && key) {
+    const base = (hovered.kind === 'poi' ? poiMarkers : labelMarkers).get(key)
+    const node = base?.getElement()?.firstElementChild as HTMLElement | undefined
+    if (hovered.kind === 'building') {
+      const g = groupOf(hovered.id)
+      if (g) labelMarkers.get(`group:${g.id}`)?.getElement()?.firstElementChild?.classList.add('hover-suppressed')
+    }
+    // 已完整显示的标签只变颜色；被避让、精简或按分类隐藏的标签临时完整展示。
+    if (!node || REDUCED.some((c) => node.classList.contains(c))) {
+      const b = hovered.kind === 'building' ? buildingById(hovered.id) : undefined
+      const p = hovered.kind === 'poi' ? state.pois.find((p) => p.id === hovered!.id) : undefined
+      const g = hovered.kind === 'group' ? groupById(hovered.id) : undefined
+      const pos = b ? b.center : p ? p.pos : g ? g.center : undefined
+      if (pos) {
+        const category = b ? buildingLabelCategory(b) : p ? poiLabelCategory(p) : g!.cat
+        const icon = b ? b.walkway ? 'walkway' : b.cat : p ? poiIcon(p) : g!.cat
+        const name = b ? b.short.zh : p ? p.name.zh : g!.name.zh
+        const html = node?.innerHTML || (p ? `<i>${ICONS[icon]}</i><span>${escapeHtml(name)}</span>`
+          : `${ICONS[icon]}<span>${escapeHtml(name)}</span>${g ? `<em>${g.members.length} 栋</em>` : ''}`)
+        // 复用基础标签已排好的锚点和微移，避免图标展开时跳回原始中心。
+        const anchor: LngLat = base ? [base.getLatLng().lng, base.getLatLng().lat] : pos
+        const kept = node ? [...node.classList].filter((c) => !LAYOUT_CLASSES.includes(c)).join(' ') : `${p ? 'pmark' : 'blabel'}${g ? ' group' : ''}`
+        const hoverMarker = syncMarker(hoverMarkers, hoverLabelLayer, hovered, anchor, {
+          html, cls: `${kept} hover-label is-hovered`, prio: null, color: mapLabelColor(category), title: name, pane: 'label-hover-pane',
+        })
+        const hoverNode = hoverMarker.getElement()?.firstElementChild as HTMLElement | undefined
+        const placed = node && !node.classList.contains('clash') ? node : undefined
+        for (const v of ['--dx', '--dy']) hoverNode?.style.setProperty(v, placed?.style.getPropertyValue(v) || '0px')
+        node?.classList.add('hover-suppressed')
+        visible.add(key)
+      }
+    }
+  }
+  removeStaleMarkers(hoverMarkers, hoverLabelLayer, visible)
+  labelInteraction?.refresh()
+}
 
 function drawLabels() {
-  labelLayer.clearLayers()
+  const visible = new Set<string>()
+  const shownChildren = new Set<string>()
   groupMarkers.clear()
   const expanded = expandedGroups()
   const all = map.getZoom() >= EXPAND_ALL_ZOOM
   const s = state.selected
   const focusGroup = s?.kind === 'group' ? s.id : s?.kind === 'building' ? groupOf(s.id)?.id : undefined
   for (const b of state.buildings) {
+    const category = buildingLabelCategory(b)
     const g = groupOf(b.id)
-    const sel = state.selected?.id === b.id
-    if (g && !all && !expanded.has(g.id) && !sel) continue
-    const major = b.cat === 'gate' || b.cat === 'dining' || b.walkway
-    const matching = state.chip && chipHasBuilding(state.chip, b)
-    const cls = ['blabel', major && 'major', b.walkway && 'walkway', sel && 'sel', matching && 'matching', g && 'member'].filter(Boolean).join(' ')
+    const sel = s?.kind === 'building' && s.id === b.id
+    const groupSelected = s?.kind === 'group' && g?.id === s.id
+    const matching = mapHighlights.value.has(b.id)
+    const ev = mapEvents.get(b.id)
+    // 选中、批量筛选和活动都是用户正在看的内容，不受分类开关影响，免得筛选和开关互相打架。
+    if (!state.labelVisibility[category] && !sel && !groupSelected && !matching && !ev) continue
+    const focused = !!g && g.id === focusGroup
+    const routeEnd = state.route.open && [state.route.from, state.route.to].some((end) => end?.place?.kind === 'building' && end.place.id === b.id)
+    if (b.cat === 'gate' && !majorGate(b.id) && map.getZoom() < 19 && !sel && !matching && !routeEnd && !ev) continue
+    // 楼群收起时，有活动的楼也单独显示，但不顶掉楼群标签
+    const viaGroup = !!g && !all && !expanded.has(g.id) && !sel && !matching
+    if (viaGroup && !ev) continue
+    if (labelPresentation({ kind: 'building', zoom: map.getZoom(), detailed: false,
+      emphasized: sel || matching || focused || routeEnd || !!ev || !!b.walkway && state.route.rain, overview: !b.walkway }) === 'hidden') continue
+    const cls = ['blabel', b.walkway && 'walkway', sel && 'sel', focused && 'focused', matching && 'matching', g && 'member', ev && `has-ev ev-${ev.tier}`].filter(Boolean).join(' ')
     const icon = ICONS[b.walkway ? 'walkway' : b.cat]
-    L.marker(toLatLng(b.center), {
-      icon: labelIcon(`${icon}<span>${b.short.zh}</span>`, cls, prioOf(b, !!g, !!g && g.id === focusGroup), b.walkway ? WALKWAY_COLOR : PLACE_COLORS[b.cat]),
-      zIndexOffset: sel ? 1000 : 0,
-      keyboard: false,
+    const prio = ev && !sel ? Math.max(prioOf(b, !!g, focused), EVENT_PRIO[ev.tier]) : prioOf(b, !!g, focused)
+    visible.add(`building:${b.id}`)
+    if (!viaGroup) shownChildren.add(b.id)
+    syncMarker(labelMarkers, labelLayer, { kind: 'building', id: b.id }, b.center, {
+      html: `${icon}<span>${escapeHtml(b.short.zh)}</span>${sel && state.room?.building === b.id ? `<em class="room-code">${escapeHtml(state.room.code)}</em>` : ''}${ev ? eventLine(ev) : ''}`,
+      cls, prio, color: mapLabelColor(category), zIndexOffset: sel ? 1500 : ev ? 1000 + EVENT_PRIO[ev.tier] : matching ? 900 : 0,
+      title: ev ? eventTitle(b.name.zh, ev) : b.name.zh, levels: labelLevelsFor(prio, ev), shift: !sel,
     })
-      .on('click', () => pick({ kind: 'building', id: b.id }))
-      .addTo(labelLayer)
   }
-  if (!all) for (const g of state.groups) if (!expanded.has(g.id)) drawGroupLabel(g)
+  if (!all) for (const g of collapsedLabelGroups(state.groups, expanded, shownChildren)) if (state.labelVisibility[g.cat]) {
+    visible.add(`group:${g.id}`)
+    drawGroupLabel(g)
+  }
+  removeStaleMarkers(labelMarkers, labelLayer, visible)
   declutter()
 }
 
 function drawGroupLabel(g: BuildingGroup) {
-  const matching = state.chip === g.cat
-  const marker = L.marker(toLatLng(g.center), {
-    icon: labelIcon(`${ICONS[g.cat]}<span>${g.name.zh}</span><em>${g.members.length}</em>`, `blabel group major${matching ? ' matching' : ''}`, 75, PLACE_COLORS[g.cat], g.id),
-    keyboard: false,
-    title: `${g.name.zh}（${g.members.length} 栋），点击展开`,
+  const matching = g.members.every((id) => mapHighlights.value.has(id))
+  const marker = syncMarker(labelMarkers, labelLayer, { kind: 'group', id: g.id }, groupPositions.get(g.id) || g.center, {
+    html: `${ICONS[g.cat]}<span>${escapeHtml(g.name.zh)}</span><em>${g.members.length} 栋</em>`,
+    cls: `blabel group${matching ? ' matching' : ''}`, prio: matching ? 98 : GROUP_PRIO, color: PLACE_COLORS[g.cat],
+    zIndexOffset: matching ? 900 : 0, group: g.id, title: `${g.name.zh}（${g.members.length} 栋），点击展开`, shift: true,
   })
-    .on('click', () => pick({ kind: 'group', id: g.id }))
-    .addTo(labelLayer)
   const centers = g.members.map((id) => buildingById(id)!.center)
   const d = (p: LngLat) => (p[0] - g.center[0]) ** 2 + (p[1] - g.center[1]) ** 2
   groupMarkers.set(g.id, { marker, spots: [g.center, ...centers.sort((a, b) => d(a) - d(b))] })
 }
 
 function drawPois() {
-  poiLayer.clearLayers()
-  const editable = canEdit()
+  const visible = new Set<string>()
   for (const p of state.pois) {
-    const c = POI_CATS[p.cat] ?? POI_CATS.life
-    const sel = state.selected?.id === p.id
-    const matching = state.chip && chipHasPoi(state.chip, p)
-    const cls = ['pmark', sel && 'sel', editable && 'editable', matching && 'matching'].filter(Boolean).join(' ')
-    const m = L.marker(toLatLng(p.pos), {
-      icon: labelIcon(`<i>${ICONS[c.icon]}</i><span>${p.name.zh}</span>`, cls, sel ? 100 : matching ? 55 : 30, c.color),
-      draggable: editable,
-      zIndexOffset: sel ? 1100 : 600,
-      keyboard: false,
+    const category = poiLabelCategory(p)
+    const sel = state.selected?.kind === 'poi' && state.selected.id === p.id
+    const matching = mapHighlights.value.has(p.id)
+    const ev = mapEvents.get(p.id)
+    if (!state.labelVisibility[category] && !sel && !matching && !ev) continue
+    const routeEnd = state.route.open && [state.route.from, state.route.to].some((end) => end?.place?.kind === 'poi' && end.place.id === p.id)
+    // 交通分类由用户明确打开后显示；其余设施沿用缩放分层与入口规则。
+    const presentation = category === 'transport'
+      ? map.getZoom() >= 19 || sel || matching || routeEnd ? 'full' : 'icon'
+      : poiPresentation(p, { zoom: map.getZoom(), detailed: false, emphasized: sel || matching || routeEnd || !!ev })
+    if (presentation === 'hidden') continue
+    const cls = ['pmark', presentation === 'icon' && 'icon-only', sel && 'sel', matching && 'matching', ev && `has-ev ev-${ev.tier}`].filter(Boolean).join(' ')
+    const prio = sel ? 140 : ev ? EVENT_PRIO[ev.tier] : matching ? 97 : 30
+    visible.add(`poi:${p.id}`)
+    syncMarker(poiMarkers, poiLayer, { kind: 'poi', id: p.id }, p.pos, {
+      html: `<i>${ICONS[poiIcon(p)]}</i><span>${escapeHtml(p.name.zh)}</span>${ev ? eventLine(ev) : ''}`, cls, prio,
+      color: mapLabelColor(category), zIndexOffset: sel ? 1500 : ev ? 1000 + EVENT_PRIO[ev.tier] : matching ? 950 : 600,
+      title: ev ? eventTitle(p.name.zh, ev) : p.name.zh, levels: presentation === 'icon' ? 'icon' : labelLevelsFor(Math.max(prio, ICON_FALLBACK_PRIO), ev), shift: !sel,
     })
-    m.on('click', () => pick({ kind: 'poi', id: p.id }))
-    m.on('dragend', () => {
-      movePoi(p.id, fromLatLng(m.getLatLng())).catch((e) => {
-        toast(`没保存：${e.message}`)
-        drawPois()
-      })
-    })
-    m.addTo(poiLayer)
   }
-  // 新建中的点位：可以拖动微调，保存前只在表单里
-  const d = state.draft
-  if (d && !d.id) {
-    const m = L.marker(toLatLng(d.pos), {
-      icon: labelIcon(`<i>${ICONS.plus}</i><span>新点位</span>`, 'pmark draft', 100, '#2f6fd6'),
-      draggable: true,
-      zIndexOffset: 1200,
-    })
-    m.on('dragend', () => state.draft && (state.draft.pos = fromLatLng(m.getLatLng())))
-    m.addTo(poiLayer)
-  }
+  removeStaleMarkers(poiMarkers, poiLayer, visible)
   declutter()
 }
 
+/** 有活动的地点：名称下面挂一行「时间 + 短标题 + 还有几场」，地点和活动是同一个标签，不再互相挤掉 */
+function eventLine({ lead, tier, events }: PlaceEvents) {
+  return `<span class="ev"><b>${escapeHtml(eventWhen(lead, tier))}</b><span class="ev-t">${escapeHtml(eventShortTitle(lead.title))}</span>`
+    + `${events.length > 1 ? `<em>+${events.length - 1}</em>` : ''}</span>`
+}
+const eventTitle = (place: string, { lead, events }: PlaceEvents) =>
+  `${place} · ${events.length > 1 ? `${events.length} 场活动，最近一场：` : ''}${lead.title}`
+
+/**
+ * 放不下时的退路。有活动：两行 → 一行（名称 + 时间）→ 图标；缩小到 16 级以下、或是长期展览和更晚的活动，从一行起步。
+ * 普通地点：重要的缩成图标，其余直接让位。
+ */
+function labelLevelsFor(prio: number, ev?: PlaceEvents) {
+  if (ev) return map.getZoom() <= 16 || (ev.tier === 'ongoing' || ev.tier === 'later') && map.getZoom() < 18 ? 'brief icon' : 'full brief icon'
+  return prio >= ICON_FALLBACK_PRIO ? 'full icon' : 'full'
+}
+
+/** 点位隐藏名称后保留小范围命中区，仍可悬停或点击探索。 */
+function drawPoiTargets() {
+  poiTargetLayer.clearLayers()
+  for (const p of state.pois) {
+    const selection: Selection = { kind: 'poi', id: p.id }
+    L.circleMarker(toLatLng(p.pos), {
+      radius: 10, stroke: false, fillOpacity: 0, pane: 'poi-hit-pane', className: 'poi-hit-target', bubblingMouseEvents: false,
+    }).on('mouseover', () => hover(selection)).on('mouseout', (event) => leaveHover(selection, event)).on('click', () => pick(selection))
+      .on('add', (e) => e.target.getElement()?.setAttribute('data-place', `poi:${p.id}`))
+      .addTo(poiTargetLayer)
+  }
+}
+
 let declutterFrame = 0
+const CENTER: LabelSlot = { slot: 'c', dx: 0, dy: 0 }
 function declutter() {
   cancelAnimationFrame(declutterFrame)
   declutterFrame = requestAnimationFrame(() => {
     if (!el.value) return
+    el.value.classList.add('label-layout')
     const nodes = [...el.value.querySelectorAll<HTMLElement>('[data-prio]')]
-    for (const n of nodes) n.classList.remove('clash', 'compact')
-    nodes.sort((a, b) => Number(b.dataset.prio) - Number(a.dataset.prio))
-    const placed: DOMRect[] = []
-    const hits = (r: DOMRect) => placed.some((q) => r.left < q.right + 2 && r.right > q.left - 2 && r.top < q.bottom + 1 && r.bottom > q.top - 1)
+    for (const n of nodes) n.classList.remove('clash', 'lv-brief', 'lv-icon')
+    // 同级按地点排序，结果不随图层插入顺序变化
+    nodes.sort((a, b) => Number(b.dataset.prio) - Number(a.dataset.prio) || (a.dataset.place ?? '').localeCompare(b.dataset.place ?? ''))
+    const bounds = el.value.getBoundingClientRect()
+    const cov = covered()
+    const viewport: LabelRect = { left: bounds.left + cov.l + 8, right: bounds.right - cov.r - 8,
+      top: bounds.top + cov.t + 8, bottom: bounds.bottom - (ui.desktop || ui.overlay ? cov.b : ui.sheet) - 8 }
+    const placed: LabelRect[] = [mapTools.value]
+      .filter((node): node is HTMLDivElement => !!node && node.offsetParent !== null)
+      .map((node) => node.getBoundingClientRect())
+    const gapX = map.getZoom() <= 17 ? 16 : 10
+    const gapY = 8
+    // 文字之间要留读得开的间距；只剩图标时贴近一些也不会看错
+    const hits = (r: LabelRect, level: LabelLevel = 'full') => !labelFits(r, viewport)
+      || placed.some((q) => level === 'icon' ? labelsOverlap(r, q, 6, 4) : labelsOverlap(r, q, gapX, gapY))
+    const setLevel = (n: HTMLElement, level: LabelLevel) => {
+      n.classList.toggle('lv-brief', level === 'brief')
+      n.classList.toggle('lv-icon', level === 'icon')
+    }
+    const setSlot = (n: HTMLElement, s: LabelSlot) => {
+      n.dataset.slot = s.slot
+      n.style.setProperty('--dx', `${s.dx}px`)
+      n.style.setProperty('--dy', `${s.dy}px`)
+    }
     for (const n of nodes) {
       if (n.offsetParent === null) continue // 被缩放级别的样式藏掉了
+      // 选中、活动标注等必须出现的标签固定在原位、完整显示，其他标签给它们让路
+      const pinned = Number(n.dataset.prio) >= 130
+      const levels = labelLevels(n.dataset.levels)
       const gm = n.dataset.group ? groupMarkers.get(n.dataset.group) : undefined
-      if (gm) gm.marker.setLatLng(toLatLng(gm.spots[0]))
-      let r = n.getBoundingClientRect()
-      if (!r.width) continue
-      if (gm && hits(r)) {
-        for (const spot of gm.spots.slice(1)) {
-          gm.marker.setLatLng(toLatLng(spot))
-          r = n.getBoundingClientRect()
-          if (!hits(r)) break
+      if (!n.getBoundingClientRect().width) continue
+      // 楼群：先试上次的位置，再从各栋中心的平均点起依次试离它最近的楼
+      const here = gm?.marker.getLatLng()
+      const spots: (L.LatLng | undefined)[] = gm ? [here, ...gm.spots.map(toLatLng)] : [undefined]
+      let done = false
+      for (const level of pinned ? levels.slice(0, 1) : levels) {
+        setLevel(n, level)
+        for (const spot of spots) {
+          if (spot) gm!.marker.setLatLng(spot)
+          const r = n.getBoundingClientRect()
+          // 先在地点附近挪位置，挪不开再换备选位置、精简内容
+          const slot = (n.dataset.shift ? labelSlots(r.width, r.height, n.dataset.slot) : [CENTER])
+            .find((s) => !hits(shiftRect(r, s.dx, s.dy), level))
+          if (!slot) continue
+          setSlot(n, slot)
+          placed.push(shiftRect(r, slot.dx, slot.dy))
+          if (gm) groupPositions.set(n.dataset.group!, [gm.marker.getLatLng().lng, gm.marker.getLatLng().lat])
+          done = true
+          break
         }
-        if (hits(r)) gm.marker.setLatLng(toLatLng(gm.spots[0]))
-        r = n.getBoundingClientRect()
+        if (done) break
       }
-      if (hits(r) && n.classList.contains('pmark')) {
-        // 点位先只留图标，图标也挡住才藏
-        n.classList.add('compact')
-        r = n.getBoundingClientRect()
-      }
-      if (hits(r) && Number(n.dataset.prio) < 100) n.classList.add('clash')
-      else placed.push(r)
+      if (gm && !done) gm.marker.setLatLng(toLatLng(gm.spots[0]))
+      if (done) continue
+      // 藏起来的标签回到完整内容和正中，悬停时按原样补出；上次的位置保留，重新出现时优先用
+      setLevel(n, levels[0])
+      n.style.setProperty('--dx', '0px')
+      n.style.setProperty('--dy', '0px')
+      if (pinned) placed.push(n.getBoundingClientRect())
+      else n.classList.add('clash')
     }
+    el.value.classList.remove('label-layout')
+    updateHoverLabel()
   })
 }
 
 function drawEntrances() {
   entranceLayer.clearLayers()
-  const b = state.selected?.kind === 'building' ? buildingById(state.selected.id) : undefined
-  for (const e of b?.entrances ?? [])
+  if (map.getZoom() < 18) return
+  const explicit = state.selected?.kind === 'building' && state.selected.id === state.entranceBuilding ? state.entranceBuilding : ''
+  const routeEnds: { buildingId: string; point: LngLat }[] = []
+  const segments = state.route.open ? state.route.result?.segments : undefined
+  if (segments?.length) for (const [end, point] of [
+    [state.route.from, segments[0].path[0]], [state.route.to, segments.at(-1)!.path.at(-1)!],
+  ] as const) if (end?.place?.kind === 'building') routeEnds.push({ buildingId: end.place.id, point })
+  for (const { building, entrance: e } of visibleEntrances(state.buildings, explicit, routeEnds))
     L.marker(toLatLng(e.pos), {
-      icon: L.divIcon({ className: '', html: `<div class="emark">${ICONS.entrance}<span>${e.zh ?? ''}</span></div>`, iconSize: [0, 0] }),
+      icon: L.divIcon({ className: '', html: `<div class="emark" data-prio="120">${ICONS.entrance}<span>${escapeHtml(e.zh || building.short.zh + '入口')}</span></div>`, iconSize: [0, 0] }),
       zIndexOffset: 950,
       interactive: false,
     }).addTo(entranceLayer)
+  declutter()
+}
+
+/** 地图上要显示的活动，按地点合并。不另画地图钉：活动挂在举办地点的名称标签上，由 drawLabels / drawPois 画出。 */
+let mapEvents = new Map<string, PlaceEvents>()
+function drawEvents() {
+  if (!map) return
+  // 时光机有自己的活动图层；导航、菜单和「我的今天」时地图让给它们
+  const hidden = tm.open || state.route.open || state.panel === 'dining' || state.panel === 'canteen' || state.panel === 'today'
+  // 活动雷达里跟随筛选，不受「活动」标签开关影响；其他时候常驻显示进行中和未来 24 小时内的活动
+  const radar = state.panel === 'events'
+  const list = hidden || !radar && !state.labelVisibility.events ? []
+    : radar ? eventsIn(state.radar.range, state.radar.cat, state.radar.place) : eventsAhead(24)
+  const selected = discovery.events.find((e) => e.id === state.eventId)
+  const active = !hidden && selected?.place ? selected : undefined
+  const byPlace = eventsByPlace(list)
+  // 选中活动所在地点改由标注卡片表示，名称标签不再重复挂活动
+  const others = active ? byPlace.get(active.place!)?.events.filter((e) => e.id !== active.id).length ?? 0 : 0
+  if (active) byPlace.delete(active.place!)
+  mapEvents = byPlace
+  drawEventFocus(active, others)
+  drawLabels()
+  drawPois()
+}
+
+/** 一场直接打开；多场先打开该地点的活动列表，时间范围覆盖明天以后的活动 */
+function openPlaceEvents(id: string, { lead, events }: PlaceEvents) {
+  if (events.length === 1) { openEvent(lead.id); return }
+  if (state.panel !== 'events') {
+    state.radar.range = events.some((e) => evStart(e) >= dayStart(nowTick.value) + 86_400_000) ? 'week' : 'today'
+    state.radar.cat = 'all'
+  }
+  showEventsAt(id)
+}
+
+/** 选中的活动：在地点名称上方弹出标注卡片（状态、标题、时间、房间），尖角指向名称，地点处有脉冲圈。 */
+function drawEventFocus(event: CampusEvent | undefined, others: number) {
+  const b = event && buildingById(event.place!)
+  const p = event && state.pois.find((p) => p.id === event.place)
+  const point = b?.center || p?.pos
+  const status = event && eventStatus(event)
+  const key = event && point ? `${event.id}|${status}|${others}` : ''
+  if (key === eventFocusKey) return
+  const replacing = !!eventFocusKey && eventFocusKey.split('|')[0] === event?.id
+  eventFocusKey = key
+  eventFocusLayer.clearLayers()
+  if (!event || !point || !status) return
+  const day = dateKey(evStart(event))
+  const pill = status === 'live' || status === 'soon' || status === 'past' ? STATUS_LABELS[status]
+    : `${Number(day.slice(5, 7))}月${Number(day.slice(8))}日 ${dayName(day)}`
+  const where = [b?.name.zh || p?.name.zh, event.room].filter(Boolean).join(' · ')
+  const html = `<button type="button" aria-label="${escapeHtml(event.title)}" class="event-focus${replacing ? '' : ' enter'}" data-prio="150"><div class="event-callout">
+    <span class="ec-head"><span class="ec-status ${status}">${escapeHtml(pill)}</span><b>${escapeHtml(timeRange(event))}</b></span>
+    <b class="ec-title">${escapeHtml(event.title)}</b>
+    <span class="ec-place">${ICONS.pin}<span>${escapeHtml(where)}</span>${others ? `<em>另有 ${others} 场</em>` : ''}</span>
+  </div></button>`
+  L.marker(toLatLng(point), {
+    icon: L.divIcon({ className: '', html: '<div class="event-pulse"></div>', iconSize: [0, 0] }),
+    pane: 'event-label-pane', interactive: false, keyboard: false, zIndexOffset: -1000,
+  }).addTo(eventFocusLayer)
+  L.marker(toLatLng(point), {
+    icon: L.divIcon({ className: '', html, iconSize: [0, 0] }),
+    title: event.title, alt: event.title, pane: 'event-label-pane', keyboard: false, zIndexOffset: 1600, bubblingMouseEvents: false,
+  }).on('click', () => openEvent(event.id)).addTo(eventFocusLayer)
 }
 
 function drawRoute() {
@@ -230,6 +592,25 @@ function drawRoute() {
   const last = r.segments.at(-1)!.path.at(-1)!
   L.circleMarker(toLatLng(first), { radius: 7, color: '#2f6fd6', weight: 3, fillColor: '#fff', fillOpacity: 1, interactive: false }).addTo(routeLayer)
   L.marker(toLatLng(last), { icon: L.divIcon({ className: '', html: `<div class="rend">${ICONS.pin}</div>`, iconSize: [0, 0] }), interactive: false, zIndexOffset: 1300 }).addTo(routeLayer)
+}
+
+function drawCrowd() {
+  crowdLayer.clearLayers()
+  if (tm.open || state.route.open || (state.panel !== 'dining' && state.panel !== 'canteen')) return
+  const hm = clockText(nowTick.value)
+  if (!((hm >= '11:00' && hm < '13:30') || (hm >= '16:30' && hm < '19:00'))) return
+  const styles = [
+    { color: '#2a9d62', radius: 32, opacity: 0.14 },
+    { color: '#d28b29', radius: 45, opacity: 0.18 },
+    { color: '#c64e4e', radius: 58, opacity: 0.22 },
+  ] as const
+  for (const canteen of discovery.canteens) {
+    const crowd = crowdAt(canteen.id, nowTick.value)
+    const style = styles[crowd.level]
+    L.circle(toLatLng(canteen.pos), { radius: style.radius, color: style.color, weight: 1.5, fillColor: style.color, fillOpacity: style.opacity, bubblingMouseEvents: false })
+      .bindTooltip(`${canteen.zh} · ${CROWD_LABELS[crowd.level]} · 约 ${crowd.waitMin} 分钟${crowd.source === 'live' ? ' · 实时反馈' : ' · 估算'}`)
+      .addTo(crowdLayer)
+  }
 }
 
 /** 路网：红 = 手绘图上的路，蓝 = OpenStreetMap 补的路，青 = 风雨长廊下 */
@@ -252,13 +633,14 @@ function toggleRoads(on: boolean) {
 
 function drawConstruction(layer: L.LayerGroup) {
   for (const c of state.campus?.construction ?? [])
-    L.polygon(c.poly.map(toLatLng), { color: '#e0891f', weight: 2, dashArray: '6 5', fillColor: '#e0891f', fillOpacity: 0.1 })
-      .bindTooltip(`🚧 ${c.name.zh}`, { sticky: true })
+    L.polygon(outlineLatLngs(c), constructionOutline)
+      .bindTooltip(`🚧 ${escapeHtml(c.name.zh)}`, { sticky: true })
       .addTo(layer)
 }
 
 // ---------- 相机：避开侧栏 / 顶栏 / 底部面板，范围限制在手绘图里（同 skdmap） ----------
 function uiPadding(): { tl: L.PointTuple; br: L.PointTuple } {
+  if (ui.overlay) return { tl: [ui.overlay.l + 40, ui.overlay.t + 40], br: [ui.overlay.r + 40, ui.overlay.b + 24] }
   if (ui.desktop) return { tl: [SIDEBAR_W + 48, 48], br: [48, 48] }
   return { tl: [20, TOPBAR_H + 16], br: [20, Math.min(ui.sheet, ui.anchors[1]) + 20] }
 }
@@ -280,6 +662,8 @@ function clampCenter(c: L.Point, z: number): L.Point {
 type CenterZoom = (b: L.LatLngBounds, o: L.FitBoundsOptions) => { center: L.LatLng; zoom: number }
 function fit(pts: LngLat[], maxZoom = 19, animate = true) {
   if (!pts.length) return
+  if (animate) map.stop()
+  map.invalidateSize({ pan: false })
   const { tl, br } = uiPadding()
   const opts: L.FitBoundsOptions = { paddingTopLeft: tl, paddingBottomRight: br, maxZoom: Math.max(maxZoom, map.getMinZoom()) }
   const b = L.latLngBounds(pts.map(toLatLng))
@@ -289,18 +673,26 @@ function fit(pts: LngLat[], maxZoom = 19, animate = true) {
   if (animate) map.flyTo(target, z, { duration: 0.6 })
   else map.setView(target, z, { animate: false })
 }
-function focus(p: LngLat, z = Math.max(map.getZoom(), 18)) {
-  const pt = map.project(toLatLng(p), z).subtract(visibleOffset())
+/** dy > 0：让目标点落在可见区域中心下方 dy 像素，给上方的标注卡片留位置 */
+function focus(p: LngLat, z = Math.max(map.getZoom(), 18), dy = 0) {
+  map.stop()
+  map.invalidateSize({ pan: false })
+  const pt = map.project(toLatLng(p), z).subtract(visibleOffset()).subtract(L.point(0, dy))
   map.flyTo(map.unproject(clampCenter(pt, z), z), z, { duration: 0.6 })
 }
 /** 往外缩到校园差不多铺满可见区域为止 */
 function limitZoomOut() {
   const cov = covered()
   const size = map.getSize().subtract([cov.l + cov.r, 0])
+  // 媒体查询可能先于 Leaflet 的 resize 回调触发，不能用旧宽度减去新侧栏宽度计算缩放。
+  if (size.x <= 0 || size.y <= 0) return
   map.setMinZoom(fillZoom(map, L.latLngBounds(state.campus!.boundary.map(toLatLng)), size, 15, 17))
   minZoom.value = map.getMinZoom()
 }
 let keepInside = () => {}
+let unmountToday = () => {}
+let unmountLocate = () => {}
+let unmountTimeMachine = () => {}
 let sheetTimer = 0
 
 function zoomClass() {
@@ -310,101 +702,135 @@ function zoomClass() {
 }
 
 onMounted(() => {
-  map = L.map(el.value!, {
-    crs: BaiduCRS,
-    zoomControl: false,
-    attributionControl: false,
-    minZoom: 15,
-    maxZoom: 20,
-    // 只用整数缩放：小数缩放时瓦片之间会有细缝
-    zoomSnap: 1,
-    zoomDelta: 1,
-    wheelPxPerZoomLevel: 120,
-  })
+  map = createCampusMap(el.value!, state.campus!)
   limitZoomOut()
   keepInside = limitPan(map, clampCenter)
   L.control.attribution({ prefix: false, position: 'bottomright' }).addAttribution('底图 © 上海科技大学校园地图 · 部分道路 © OpenStreetMap contributors').addTo(map)
-  const [[x0, y0], [x1, y1]] = state.campus!.bounds
-  baiduTiles({
-    minZoom: 14, maxZoom: 20, maxNativeZoom: 19, keepBuffer: 4,
-    bounds: L.latLngBounds([y0 - 0.006, x0 - 0.006], [y1 + 0.006, x1 + 0.006]),
-    errorTileUrl: 'data:image/gif;base64,R0lGODlhAQABAAAAACw=',
-  }).addTo(map)
+  opacityLayer = createMapOpacity(map, [...state.buildings, ...(state.campus?.construction ?? []).map((c, i) => ({ ...c, id: `construction-${i}` }))])
+  for (const [name, z] of [['poi-hit-pane', 450], ['label-hover-pane', 610], ['event-label-pane', 630]] as const) {
+    const pane = map.createPane(name)
+    pane.style.zIndex = String(z)
+    pane.style.pointerEvents = 'none'
+  }
+  labelInteraction = createLabelInteraction(el.value!, () => hover(null))
+  updateOpacity()
   const extras = L.layerGroup().addTo(map)
   drawConstruction(extras)
-  ;[buildingLayer, labelLayer, entranceLayer, routeLayer, poiLayer].forEach((l) => l.addTo(map))
+  ;[buildingLayer, poiTargetLayer, labelLayer, hoverLabelLayer, entranceLayer, routeLayer, poiLayer, eventFocusLayer, crowdLayer].forEach((l) => l.addTo(map))
   drawBuildings()
+  drawPoiTargets()
   fit(state.campus!.boundary, 17, false)
   zoomClass()
   drawLabels()
   drawPois()
+  drawEvents()
+  drawCrowd()
   mapApi.fit = fit
   mapApi.focus = focus
   mapApi.home = () => fit(state.campus!.boundary, 17)
+  mapApi.relayout = declutter
+  unmountToday = mountTodayLayer(map)
+  unmountLocate = mountLocateLayer(map)
+  unmountTimeMachine = mountTimeMachineLayer(map)
   map.on('zoomend', () => {
-    const crossed = (zoom.value >= EXPAND_ALL_ZOOM) !== (map.getZoom() >= EXPAND_ALL_ZOOM)
     zoomClass()
-    if (crossed) drawLabels()
-    else declutter()
+    drawLabels()
+    drawPois()
+    drawEntrances()
   })
+  map.on('movestart', () => labelInteraction?.setMoving(true))
+  map.on('moveend', () => { labelInteraction?.setMoving(false); declutter() })
   map.on('resize', () => {
     limitZoomOut()
     keepInside()
+    declutter()
   })
   map.on('click', (e: L.LeafletMouseEvent) => {
+    if (tm.open) { tm.focus = ''; return }
     const pos = fromLatLng(e.latlng)
-    if (state.placing) newDraft(pos)
-    else if (state.route.picking) setEnd(state.route.picking, { name: '地图上的点', point: pos })
-    else if (state.selected && !state.draft) select(null)
+    if (state.route.picking) setEnd(state.route.picking, { name: '地图上的点', point: pos })
+    else if (state.selected) select(null)
   })
   if (import.meta.env.DEV) (window as unknown as { __map: L.Map }).__map = map
 })
 onBeforeUnmount(() => {
   clearTimeout(sheetTimer)
   cancelAnimationFrame(declutterFrame)
+  labelInteraction?.destroy()
+  hoverState.dispose()
+  cancelAnimationFrame(declutterFrame)
+  unmountToday()
+  unmountLocate()
+  unmountTimeMachine()
   map?.remove()
 })
 
-watch(() => [state.selected, state.chip], () => {
+watch(() => [state.selected, state.chip, mapHighlights.value, state.room], () => {
+  hover(null)
   keepInside()
   restyle()
   drawLabels()
   drawPois()
   drawEntrances()
 })
-watch(() => [state.pois, canEdit(), state.draft?.id, state.draft?.pos], drawPois, { deep: true })
+watch(() => state.pois, () => { drawPoiTargets(); drawPois() }, { deep: true })
 watch(() => state.route.result, drawRoute)
-watch(() => state.route.rain, restyle)
-watch(() => state.showRoads, toggleRoads)
-watch(() => state.labels, (on) => {
-  el.value?.classList.toggle('labels-hidden', !on)
-  declutter()
-})
-// 不用 :class 绑定：Vue 会整个覆盖 className，把 Leaflet 加在容器上的 class 冲掉
-watch(() => !!(state.route.picking || state.placing), (on) => el.value?.classList.toggle('picking', on))
-watch(() => ui.sheet, () => {
-  clearTimeout(sheetTimer)
-  sheetTimer = window.setTimeout(() => keepInside(), 200)
-})
-watch(() => ui.desktop, () => {
+watch(() => [state.entranceBuilding, state.route.open, state.route.result, state.route.from, state.route.to], () => { drawEntrances(); drawLabels(); drawPois() })
+watch(() => [state.panel, state.eventId, state.radar.range, state.radar.cat, state.radar.place, state.route.open, discovery.events, nowTick.value, tm.open], drawEvents)
+watch(() => [state.panel, state.route.open, nowTick.value, crowdRevision.value, discovery.canteens, tm.open], drawCrowd)
+// 时光机全屏：侧栏和底部面板让开后重新计算缩放范围；打开和退出时回到全校，界面尺寸变化不打断镜头跟随
+watch(() => [tm.open, ui.overlay?.t, ui.overlay?.r, ui.overlay?.b], ([open], [wasOpen]) => {
   limitZoomOut()
   keepInside()
+  if (open !== wasOpen) {
+    map.stop()
+    mapApi.home()
+  }
+  declutter()
+}, { flush: 'post' })
+watch(() => state.route.rain, restyle)
+watch(() => state.route.rain, drawLabels)
+watch(() => state.labelVisibility, () => {
+  hover(null)
+  drawLabels()
+  drawPois()
+  drawEvents()
+}, { deep: true })
+watch(() => state.mapSettings, restyle, { deep: true })
+watch(() => state.showRoads, toggleRoads)
+// 不用 :class 绑定：Vue 会整个覆盖 className，把 Leaflet 加在容器上的 class 冲掉
+watch(() => !!(state.route.picking), (on) => el.value?.classList.toggle('picking', on))
+watch(() => ui.sheet, () => {
+  clearTimeout(sheetTimer)
+  sheetTimer = window.setTimeout(() => { keepInside(); declutter() }, 250)
 })
+watch(() => ui.desktop, () => {
+  map.stop()
+  map.invalidateSize({ pan: false })
+  limitZoomOut()
+  keepInside()
+  declutter()
+}, { flush: 'post' })
 
 // 右侧按钮：手机上跟着底部面板走，面板拉高时藏起来
 const toolsBottom = computed(() => (ui.desktop ? 24 : Math.min(ui.sheet, ui.anchors[1]) + 12))
-const toolsHidden = computed(() => !ui.desktop && ui.sheet > ui.anchors[1] + 40)
+const toolsHidden = computed(() => tm.open || !ui.desktop && ui.sheet > ui.anchors[1] + 40)
 </script>
 
 <template>
-  <div ref="el" class="map" role="application" aria-label="校园地图" />
-  <div class="map-tools" :class="{ hidden: toolsHidden }" :style="{ bottom: toolsBottom + 'px' }">
-    <button type="button" class="fab" :class="{ on: !state.labels }" :aria-pressed="!state.labels" :title="state.labels ? '隐藏地点名称' : '显示地点名称'" @click="state.labels = !state.labels">
-      <Ico :name="state.labels ? 'eye' : 'eyeClosed'" />
-    </button>
-    <button type="button" class="fab" :class="{ on: state.showRoads }" :aria-pressed="state.showRoads" title="显示步行路网" @click="state.showRoads = !state.showRoads">
-      <Ico name="road" />
-    </button>
+  <div ref="el" class="map campus-map" role="application" aria-label="校园地图" />
+  <div v-if="ui.desktop && !tm.open && hoverPreview" class="map-hover-card exploring" :style="hoverPreview ? { '--preview-color': hoverPreview.color } : undefined" aria-hidden="true">
+    <span class="hover-card-icon"><Ico :name="hoverPreview?.icon || 'target'" /></span>
+    <div class="hover-card-copy">
+      <span class="hover-card-eyebrow"><i />{{ hoverPreview?.category || '校园漫游' }}</span>
+      <b>{{ hoverPreview?.name || '移动鼠标，探索校园' }}</b>
+      <small>{{ hoverPreview?.detail || '靠近聚焦 · 悬停预览 · 点击查看' }}</small>
+    </div>
+    <Ico name="chevron" class="hover-card-arrow" />
+  </div>
+  <div ref="mapTools" class="map-tools" :class="{ hidden: toolsHidden }" :style="{ bottom: toolsBottom + 'px' }">
+    <MapLabelControls v-model="state.labelVisibility" @layout="declutter" />
+    <LocateButton />
     <button type="button" class="fab" title="回到全校" aria-label="回到全校" @click="mapApi.home()"><Ico name="home" /></button>
     <div v-if="ui.desktop" class="zoom">
       <button type="button" aria-label="放大" :disabled="zoom >= 20" @click="map.zoomIn()"><Ico name="plus" /></button>
@@ -416,11 +842,16 @@ const toolsHidden = computed(() => !ui.desktop && ui.sheet > ui.anchors[1] + 40)
 <style>
 .map { position: absolute; inset: 0; background: #fbfaf7; isolation: isolate; }
 .map.leaflet-container { font: inherit; }
+.map-opacity-cutout { transition: fill 240ms ease-in-out; }
+.building-outline { transition: stroke 240ms ease-in-out, stroke-opacity 240ms ease-in-out, stroke-width 240ms ease-in-out, fill-opacity 240ms ease-in-out; }
+/* 描边仅作提示，命中范围沿轮廓内部，避免粗线抢到相邻建筑。 */
+.building-outline.leaflet-interactive { pointer-events: fill; }
 .map.picking, .map.picking .leaflet-interactive { cursor: crosshair; }
 .leaflet-marker-icon { background: none; border: 0; }
 .leaflet-control-attribution { font-size: 10px; }
 
-.map-tools { position: absolute; z-index: 1000; right: 12px; display: flex; flex-direction: column; gap: 10px; align-items: center; transition: bottom 0.25s, opacity 0.2s; }
+
+.map-tools { position: absolute; z-index: 1100; right: 12px; display: flex; flex-direction: column; gap: 10px; align-items: center; transition: bottom 0.25s, opacity 0.2s; }
 .map-tools.hidden { opacity: 0; pointer-events: none; }
 .fab { width: 42px; height: 42px; border-radius: 50%; border: 0; background: #fff; box-shadow: var(--shadow); display: grid; place-items: center; font-size: 19px; color: var(--ink); cursor: pointer; }
 .fab.on { background: var(--ink); color: #fff; }
@@ -431,42 +862,24 @@ const toolsHidden = computed(() => !ui.desktop && ui.sheet > ui.anchors[1] + 40)
 .zoom button:disabled { color: #ccc; cursor: default; }
 @media (hover: hover) { .fab:not(.on):hover, .zoom button:not(:disabled):hover { background: #f7f7f3; } }
 
-/* 楼名：白底胶囊 + 分类色图标（同 skdmap） */
-.blabel {
-  position: absolute; transform: translate(-50%, -50%); white-space: nowrap; cursor: pointer;
-  display: flex; align-items: center; gap: 4px; padding: 2px 6px 2px 2px; border-radius: 6px;
-  background: #fffffff0; box-shadow: 0 1px 3px #0000001f; color: #303b36; font-size: 11px; font-weight: 600; line-height: 16px;
-}
-.blabel svg { flex: none; font-size: 11px; color: #fff; background: var(--c); border-radius: 4px; padding: 3px; box-sizing: content-box; }
-.blabel.group { font-size: 12px; padding-right: 3px; box-shadow: 0 0 0 1px color-mix(in srgb, var(--c) 45%, transparent), 0 2px 6px #00000024; }
-.blabel.group em { font-style: normal; font-size: 10.5px; font-weight: 700; color: #fff; background: var(--c); border-radius: 999px; padding: 0 6px; }
-.blabel.walkway { background: var(--c); color: #fff; }
-.blabel.walkway svg { background: #ffffff38; }
-.blabel.matching { box-shadow: 0 0 0 1.5px var(--c), 0 1px 3px #0000001f; }
-.blabel.sel { padding: 4px 8px 4px 4px; background: var(--brand); color: #fff; box-shadow: 0 2px 6px #8f303a40; z-index: 5; }
-.blabel.sel svg { background: #ffffff38; }
-@media (hover: hover) { .blabel:not(.sel):hover { background: #fff; box-shadow: 0 1px 6px #00000029; } }
 
-/* 点位：圆形图标，放大到 18 级才带名字 */
-.pmark {
-  position: absolute; transform: translate(-50%, -50%); display: flex; align-items: center; gap: 4px; white-space: nowrap;
-  padding: 2px; border-radius: 999px; background: #fff; box-shadow: 0 1px 4px #0000004d; font-size: 11px; font-weight: 600; cursor: pointer;
+.map-hover-card { --preview-color: #355c4c; position: absolute; z-index: 1000; left: 456px; bottom: 24px; display: flex; align-items: center; gap: 12px; width: 280px; padding: 12px 14px; border: 1px solid #e0e6df; border-radius: 18px; background: #fff; box-shadow: 0 6px 24px #23372f0d; pointer-events: none; transition: border-color 180ms, box-shadow 180ms; }
+.map-hover-card.exploring { border-color: color-mix(in srgb, var(--preview-color) 45%, #fff); box-shadow: 0 8px 28px #23372f1c; }
+.hover-card-icon { flex: none; display: grid; place-items: center; width: 42px; height: 48px; border-radius: 13px; background: color-mix(in srgb, var(--preview-color) 11%, #fff); color: var(--preview-color); font-size: 23px; }
+.hover-card-copy { min-width: 0; flex: 1; }
+.hover-card-eyebrow { display: flex; align-items: center; gap: 5px; margin-bottom: 3px; color: var(--preview-color); font-size: 10px; font-weight: 600; letter-spacing: .04em; }
+.hover-card-eyebrow i { width: 5px; height: 5px; border-radius: 50%; background: currentColor; box-shadow: 0 0 0 3px color-mix(in srgb, var(--preview-color) 10%, #fff); }
+.hover-card-copy b { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; color: #253b32; font-size: 13px; line-height: 1.5; }
+.hover-card-copy small { display: block; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #7a857e; font-size: 10px; }
+.hover-card-arrow { flex: none; color: var(--preview-color); font-size: 14px; opacity: .4; transition: transform 180ms, opacity 180ms; }
+.exploring .hover-card-arrow { opacity: 1; transform: translateX(2px); }
+@media (hover: none), (pointer: coarse) { .map-hover-card { display: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .map-opacity-cutout, .building-outline, .map .blabel, .map .pmark, .map-hover-card, .hover-card-arrow { transition: none; }
 }
-.pmark i { display: grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; background: var(--c); color: #fff; font-size: 12px; }
-.pmark span { padding-right: 6px; }
-.pmark.compact span { display: none; }
-.pmark.matching { box-shadow: 0 0 0 2px var(--c), 0 1px 4px #0000004d; }
-.pmark.sel { outline: 2.5px solid var(--brand); }
-.pmark.editable { outline: 2px dashed var(--blue); cursor: grab; }
-.pmark.draft { outline: 2.5px solid var(--blue); }
-.pmark.editable.sel { outline: 2.5px solid var(--brand); }
 
-/* 缩放分级：16 级只看校门、食堂、风雨长廊和楼群；17 级点位只有图标 */
-.map.z15 .blabel:not(.major):not(.sel), .map.z16 .blabel:not(.major):not(.sel) { display: none; }
-.map.z15 .pmark:not(.sel):not(.matching):not(.draft), .map.z16 .pmark:not(.sel):not(.matching):not(.draft) { display: none; }
-.map.z17 .pmark:not(.sel):not(.draft) span { display: none; }
-.map.labels-hidden .blabel:not(.sel), .map.labels-hidden .pmark:not(.sel):not(.draft) { display: none; }
 .clash { visibility: hidden; pointer-events: none; }
+.hover-label { pointer-events: auto; }
 
 .emark { position: absolute; transform: translate(-50%, -50%); display: flex; align-items: center; gap: 3px; white-space: nowrap; padding: 2px; border-radius: 999px; background: #fff; color: var(--green); font-size: 11px; font-weight: 700; box-shadow: 0 1px 4px #0000004d; }
 .emark svg { font-size: 13px; }
@@ -474,4 +887,39 @@ const toolsHidden = computed(() => !ui.desktop && ui.sheet > ui.anchors[1] + 40)
 .map.z17 .emark span { display: none; }
 .rend { position: absolute; transform: translate(-50%, -100%); color: #d93025; font-size: 34px; line-height: 0; filter: drop-shadow(0 2px 2px #0000004d); }
 .rend svg { fill: #fff; }
+/* 从教室号搜索进来：选中的楼名后面跟房间号 */
+.blabel .room-code { margin-left: 1px; padding: 1px 6px; border-radius: 6px; background: #ffffff30; font-style: normal; font-variant-numeric: tabular-nums; }
+
+/* 选中活动：标注卡片，尖角指向地点名称上沿，名称和卡片都不被遮住 */
+.event-focus { position: absolute; left: 0; bottom: 18px; transform: translateX(-50%); padding: 0 0 9px; border: 0; background: transparent; color: inherit; font: inherit; display: block; cursor: pointer; pointer-events: auto; }
+.event-focus.enter { animation: ec-in 320ms cubic-bezier(.2,.8,.25,1.2) both; }
+.event-focus > * { pointer-events: none; }
+.event-focus:focus-visible { outline: 2px solid var(--brand); outline-offset: 3px; border-radius: 12px; }
+.event-callout {
+  display: flex; flex-direction: column; gap: 4px; width: max-content; min-width: 168px; max-width: 236px;
+  padding: 9px 11px 10px; border: 2px solid var(--brand); border-radius: 14px; background: #fff; color: var(--ink);
+  box-shadow: 0 10px 28px #6b1d2340, 0 2px 6px #0000001f; text-align: left; white-space: normal; position: relative;
+}
+.event-callout::after { content: ''; position: absolute; left: 50%; top: 100%; width: 12px; height: 12px; margin: -7px 0 0 -6px; border: 2px solid var(--brand); border-top: 0; border-left: 0; border-radius: 0 0 3px; background: #fff; transform: rotate(45deg); }
+.ec-head { display: flex; align-items: center; gap: 6px; font-size: 11.5px; }
+.ec-head b { font-variant-numeric: tabular-nums; color: var(--ink-2); font-weight: 600; }
+.ec-status { padding: 1px 7px; border-radius: 999px; background: var(--brand); color: #fff; font-weight: 650; white-space: nowrap; }
+.ec-status.live { background: #1f9d55; }
+.ec-status.soon { background: #d9861c; }
+.ec-status.past { background: var(--bg-2); color: var(--ink-3); }
+.ec-title { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: 13.5px; line-height: 1.4; font-weight: 700; }
+.ec-place { display: flex; align-items: center; gap: 4px; min-width: 0; font-size: 11.5px; color: var(--brand); font-weight: 600; }
+.ec-place > svg { flex: none; font-size: 13px; }
+.ec-place span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ec-place em { flex: none; margin-left: auto; padding-left: 6px; font-style: normal; font-weight: 500; color: var(--ink-3); }
+@keyframes ec-in { from { opacity: 0; } }
+
+.event-pulse { position: absolute; left: -22px; top: -22px; width: 44px; height: 44px; border-radius: 50%; background: #a8242b33; box-shadow: 0 0 0 2px #a8242b55; }
+.event-pulse::before, .event-pulse::after { content: ''; position: absolute; inset: 0; border-radius: 50%; border: 3px solid var(--brand); animation: ec-pulse 2.4s ease-out infinite; }
+.event-pulse::after { animation-delay: 1.2s; }
+@keyframes ec-pulse { from { transform: scale(1); opacity: .9; } to { transform: scale(2.8); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .event-focus.enter, .event-pulse::before, .event-pulse::after { animation: none; }
+  .event-pulse::before { transform: scale(1.8); opacity: .5; }
+}
 </style>

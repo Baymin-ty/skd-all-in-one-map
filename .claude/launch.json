@@ -19,6 +19,17 @@
       ],
       "port": 5180,
       "autoPort": false
+    },
+    {
+      "name": "web-5181",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": [
+        "vite",
+        "--port",
+        "5181"
+      ],
+      "port": 5181,
+      "autoPort": false
     }
   ]
 }

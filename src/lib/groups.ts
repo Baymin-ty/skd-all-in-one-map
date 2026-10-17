@@ -1,4 +1,5 @@
 import type { Building, I18nText, LngLat, PlaceCat } from './types'
+import { outlinePoints } from './outlineGeometry'
 
 /**
  * 同质化的楼（物质学院 1–8 号楼、信息学院 1–3 号楼、学生公寓、教授公寓）在地图上先合成一个标签，
@@ -37,7 +38,7 @@ export function groupBuildings(buildings: Building[]): BuildingGroup[] {
       cat: bs[0].cat,
       members: bs.map((b) => b.id),
       center: [avg(0), avg(1)],
-      points: bs.flatMap((b) => b.poly),
+      points: bs.flatMap(outlinePoints),
     })
   }
   return groups

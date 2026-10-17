@@ -4,6 +4,8 @@ export type I18nText = { zh: string; en: string }
 
 export type PlaceCat = 'academic' | 'dining' | 'housing' | 'sports' | 'service' | 'gate'
 export type PoiCat = 'life' | 'dining' | 'sports' | 'parking' | 'transit'
+/** 停车点位的细分：地下车库的车行坡道、步行楼梯、电梯 */
+export type PoiKind = 'garage-ramp' | 'garage-stairs' | 'garage-elevator'
 
 export interface Entrance {
   pos: LngLat
@@ -18,6 +20,8 @@ export interface Building {
   cat: PlaceCat
   aliases: string[]
   poly: LngLat[]
+  /** 分离的附属轮廓，例如体育场看台。每一项都是独立外环。 */
+  parts?: LngLat[][]
   center: LngLat
   orgs: I18nText[]
   rooms: unknown[]
@@ -34,6 +38,9 @@ export interface Poi {
   id: string
   name: I18nText
   cat: PoiCat
+  /** null 表示不细分（保存时用 null 覆盖原记录里的细分） */
+  kind?: PoiKind | null
+  aliases?: string[]
   pos: LngLat
   desc: I18nText | null
   hours?: I18nText
@@ -44,7 +51,9 @@ export interface Campus {
   boundary: LngLat[]
   bounds: [LngLat, LngLat]
   grid: { x0: number; y0: number; dx: number; dy: number; rows: string[] }
-  construction?: { name: I18nText; poly: LngLat[] }[]
+  construction?: { name: I18nText; poly: LngLat[]; parts?: LngLat[][] }[]
+  /** 真实坐标 → 手绘图的校正（175 个路口控制点），见 geoConvert.ts */
+  warp?: { A: number[][]; src: LngLat[]; res: LngLat[] }
 }
 
 export interface Places {

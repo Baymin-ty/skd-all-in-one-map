@@ -3,6 +3,23 @@ const p = (d: string) =>
   `<svg viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`
 
 export const ICONS = {
+  chat: p('<path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5H4l-2 2V11.5A8.5 8.5 0 0 1 10.5 3h2a8.5 8.5 0 0 1 8.5 8.5Z"/><path d="M7 9h9M7 13h6"/>'),
+  heart: p('<path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1.1-1.1a5.5 5.5 0 0 0-7.8 7.8L12 21l8.8-8.6a5.5 5.5 0 0 0 0-7.8Z"/>'),
+  bookmark: p('<path d="M6 3h12v18l-6-4-6 4z"/>'),
+  image: p('<rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8" cy="8" r="1.5"/><path d="m3 17 5-5 4 4 4-6 5 7"/>'),
+  sparkles: p('<path d="m12 3 2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5L12 3ZM20 2v4M18 4h4"/>'),
+  calendar: p('<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 11h18M8 15h2M14 15h2"/>'),
+  book: p('<path d="M12 5v16M12 5C8 2 4 3 2 4v15c4-1 7-1 10 2 3-3 6-3 10-2V4c-2-1-6-2-10 1Z"/>'),
+  undo: p('<path d="M8 4 3 9l5 5M3 9h10a7 7 0 0 1 0 14" transform="translate(0 -2)"/>'),
+  redo: p('<path d="m16 4 5 5-5 5M21 9H11a7 7 0 0 0 0 14" transform="translate(0 -2)"/>'),
+  grid: p('<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>'),
+  building: p('<path d="M4 21V5l10-2v18M14 9h6v12M2 21h20M8 7h2M8 11h2M8 15h2M17 13h1M17 17h1"/>'),
+  chart: p('<path d="M4 3v18h17M8 16v-5M13 16V6M18 16v-8"/>'),
+  download: p('<path d="M12 3v12m-5-5 5 5 5-5M4 16v5h16v-5"/>'),
+  external: p('<path d="M14 3h7v7m0-7L10 14M11 4H4v16h16v-7"/>'),
+  refresh: p('<path d="M20 7A8 8 0 1 0 21 14M20 3v5h-5"/>'),
+  check: p('<path d="m5 12 4 4L19 6"/>'),
+
   dining: p('<path d="M7 3v8a2 2 0 0 0 2 2v8M5 3v5M9 3v5M17 3c-1.7 1.3-2.5 3.5-2.5 6.5V13H17v8"/>'),
   academic: p('<path d="M2 9l10-5 10 5-10 5z"/><path d="M6 11v5c3 2.5 9 2.5 12 0v-5"/>'),
   housing: p('<path d="M3 10.5 12 4l9 6.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/>'),
@@ -20,6 +37,8 @@ export const ICONS = {
   clock: p('<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>'),
   entrance: p('<path d="M10 3h9v18h-9"/><path d="M3 12h10M9.5 8.5 13 12l-3.5 3.5"/>'),
   users: p('<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c1-3.5 3.5-5.5 6.5-5.5s5.5 2 6.5 5.5M16 4.5a3.5 3.5 0 0 1 0 7M18 14.5c2 .7 3.2 2.6 3.7 5.5"/>'),
+  stairs: p('<path d="M3 20h5v-4h4v-4h4V8h5"/><path d="M3 20V4M21 8v12H3"/>'),
+  elevator: p('<rect x="5" y="3" width="14" height="18" rx="2"/><path d="m9 10 3-3 3 3M9 14l3 3 3-3"/>'),
   door: p('<path d="M14 3H6v18h8M14 3l5 2v14l-5 2zM11 12h.01"/>'),
   road: p('<path d="M8 3 5 21M16 3l3 18M12 4v2M12 10v3M12 17v3"/>'),
   rain: p('<path d="M7 15a4.5 4.5 0 0 1-.5-9A6 6 0 0 1 18 7.5a3.8 3.8 0 0 1-.5 7.5z"/><path d="M8 18l-1 3M12 18l-1 3M16 18l-1 3"/>'),
@@ -35,5 +54,13 @@ export const ICONS = {
   trash: p('<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/>'),
   target: p('<circle cx="12" cy="12" r="7.5"/><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/>'),
   lock: p('<rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/>'),
+  play: p('<path d="M7 4.5v15a1 1 0 0 0 1.5.86l12.5-7.5a1 1 0 0 0 0-1.72L8.5 3.64A1 1 0 0 0 7 4.5Z" fill="currentColor"/>'),
+  pause: p('<rect x="6" y="4" width="4" height="16" rx="1" fill="currentColor"/><rect x="14" y="4" width="4" height="16" rx="1" fill="currentColor"/>'),
+  restart: p('<path d="M4 4v6h6"/><path d="M4.5 10A8 8 0 1 1 6 16.5"/>'),
+  history: p('<path d="M3 12a9 9 0 1 0 2.6-6.4L3 8"/><path d="M3 3v5h5M12 7v5l3.5 2"/>'),
+  expand: p('<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>'),
+  shrink: p('<path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/>'),
 }
+/** 地图钉外形（viewBox 0 0 32 42），钉尖在底边中点 */
+export const PIN_PATH = 'M16 1.5C8 1.5 1.5 7.9 1.5 15.9c0 10.2 12.7 23.2 13.6 24a1.3 1.3 0 0 0 1.8 0c.9-.8 13.6-13.8 13.6-24C30.5 7.9 24 1.5 16 1.5z'
 export type IconName = keyof typeof ICONS

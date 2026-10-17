@@ -52,6 +52,7 @@ function up() {
       <span />
     </div>
     <div ref="body" class="sheet-body"><slot /></div>
+    <div v-if="$slots.footer" class="sheet-foot"><slot name="footer" /></div>
   </section>
 </template>
 
@@ -60,5 +61,7 @@ function up() {
 .sheet.dragging { transition: none; }
 .grip { flex: none; height: 24px; display: grid; place-items: center; cursor: grab; touch-action: none; }
 .grip span { width: 36px; height: 5px; border-radius: 3px; background: #d6d6db; }
-.sheet-body { flex: 1; overflow-y: auto; overscroll-behavior: contain; padding-bottom: env(safe-area-inset-bottom); }
+.sheet-body { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.sheet-foot { flex: none; padding: 4px 6px calc(env(safe-area-inset-bottom) + 4px); border-top: 1px solid var(--line); background: #fff; }
+.sheet-body:last-child { padding-bottom: env(safe-area-inset-bottom); }
 </style>

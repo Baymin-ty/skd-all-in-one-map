@@ -55,7 +55,7 @@ export const BaiduCRS: L.CRS = L.extend({}, L.CRS.Earth, {
 /** 本地瓦片，百度编号：y 要写成 -y-1 */
 export function baiduTiles(opts: L.TileLayerOptions) {
   const Layer = L.TileLayer.extend({
-    getTileUrl: (c: L.Coords) => `tiles/${c.z}/tile${c.x}_${-c.y - 1}.png`,
+    getTileUrl: (c: L.Coords) => `/tiles/${c.z}/tile${c.x}_${-c.y - 1}.png`,
   })
   return new (Layer as unknown as new (url: string, o: L.TileLayerOptions) => L.TileLayer)('', opts)
 }
