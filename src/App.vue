@@ -19,12 +19,10 @@ import { clockText, configureDemoClock, demoClockEnabled, demoNow, nowTick, spee
 import { initPlan } from './lib/today'
 import { computeAnchors, ui } from './lib/ui'
 import AccountDialog from './components/AccountDialog.vue'
-import AccountButton from './components/AccountButton.vue'
 import NavTabs from './components/NavTabs.vue'
 import { loadAccount } from './lib/account'
 import { loadUserData } from './lib/userData'
-import { labelsForMode, normalizeMapPrefs } from './lib/mapPrefs'
-import { readUserData } from './lib/userData'
+import { applyMapPrefs } from './lib/profile'
 
 let clock = 0
 let crowdClock = 0
@@ -39,8 +37,7 @@ onMounted(async () => {
   window.addEventListener('resize', computeAnchors)
   clock = window.setInterval(() => { nowTick.value = demoNow() }, simulated && speed.value > 1 ? 1_000 : 30_000)
   await Promise.all([loadData(), loadDiscovery(), loadCrowd()])
-  state.mapPrefs = normalizeMapPrefs(readUserData('map', null), [...state.buildings, ...state.pois].map((item) => item.id))
-  state.labelVisibility = labelsForMode(state.mapPrefs)
+  applyMapPrefs()
   crowdClock = window.setInterval(() => { void loadCrowd() }, 60_000)
   // 分享链接：?event= 活动详情，?place= 地点详情，?to= 直接导航（起点用我的位置），?timemachine 全屏播放活动
   const link = parseDeepLink(window.location.search)
@@ -81,7 +78,7 @@ function shareSite() {
     </div>
 
     <header v-if="!ui.desktop && !tm.open" class="topbar">
-      <SearchBar><AccountButton /></SearchBar>
+      <SearchBar />
     </header>
 
     <template v-if="ui.desktop">
@@ -90,7 +87,6 @@ function shareSite() {
         <NavTabs vertical />
         <span class="grow" />
         <button type="button" class="rail-tool" title="手机扫码使用" @click="shareSite"><Ico name="grid" /><span>扫码</span></button>
-        <AccountButton placement="up" />
       </nav>
       <aside class="sidebar" :class="{ away: tm.open }" :inert="tm.open">
         <div class="side-head">
@@ -124,15 +120,13 @@ function shareSite() {
 .boot { position: absolute; inset: 0; display: grid; place-items: center; }
 .topbar { position: absolute; z-index: 1001; top: calc(env(safe-area-inset-top) + 10px); left: 12px; right: 12px; }
 
-/* 桌面：左侧导航栏只放功能切换和账号，内容面板放搜索和详情 */
+/* 桌面：左侧导航栏只放功能切换（含「我的」），内容面板放搜索和详情 */
 .rail { position: absolute; z-index: 1003; top: 0; bottom: 0; left: 0; width: var(--rail-w); display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 14px 0 16px; background: #fbfbfc; border-right: 1px solid var(--line); transition: transform 0.35s cubic-bezier(0.2, 0.8, 0.2, 1); }
 .rail-logo { display: grid; place-items: center; width: 44px; height: 44px; margin-bottom: 8px; border-radius: 12px; }
 .rail .nav-tabs { width: 100%; }
 .rail-tool { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 4px 0; border: 0; background: none; color: var(--ink-3); font-size: 10.5px; cursor: pointer; }
 .rail-tool .svgi { display: grid; place-items: center; width: 40px; height: 30px; border-radius: 999px; font-size: 18px; color: var(--ink-2); }
 @media (hover: hover) { .rail-tool:hover .svgi { background: var(--bg-2); } }
-.rail :deep(.login) { flex-direction: column; gap: 2px; height: auto; padding: 6px 8px; border-radius: 12px; font-size: 11px; }
-.rail :deep(.login .svgi) { font-size: 18px; }
 .sidebar { position: absolute; z-index: 1002; top: 0; bottom: 0; left: var(--rail-w); width: calc(var(--side-w) - var(--rail-w)); background: #fff; box-shadow: 2px 0 18px #0000001c; display: flex; flex-direction: column; transition: transform 0.35s cubic-bezier(0.2, 0.8, 0.2, 1); }
 /* 时光机全屏：侧栏滑出，保留里面的浏览状态 */
 .sidebar.away, .rail.away { transform: translateX(calc(-1 * var(--side-w) - 20px)); }

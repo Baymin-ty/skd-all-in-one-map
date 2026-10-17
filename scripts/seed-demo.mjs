@@ -193,7 +193,7 @@ function topic(db, id, type, name, context) {
 function seedUsers(db) {
   for (const [id, name, email, role] of users) {
     upsert(db, 'community_users', { id, name, created_at: CREATED_AT })
-    upsert(db, 'accounts', { user_id: id, email, role, created_at: CREATED_AT }, 'user_id')
+    upsert(db, 'accounts', { user_id: id, email, role, created_at: CREATED_AT, nickname_at: CREATED_AT }, 'user_id')
   }
 }
 

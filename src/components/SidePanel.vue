@@ -8,6 +8,7 @@ import CategoryList from './CategoryList.vue'
 import GroupCard from './GroupCard.vue'
 import HomePanel from './HomePanel.vue'
 import PlaceCard from './PlaceCard.vue'
+import ProfilePanel from './ProfilePanel.vue'
 import RouteCard from './RouteCard.vue'
 import TodayPanel from './TodayPanel.vue'
 
@@ -24,6 +25,7 @@ watch(() => [state.panel, state.eventId, state.menu.dish, state.canteen.dish, st
   <DiningPanel v-else-if="state.panel === 'dining'" />
   <CanteenDetail v-else-if="state.panel === 'canteen'" />
   <TodayPanel v-else-if="state.panel === 'today' && !state.selected" />
+  <ProfilePanel v-else-if="state.panel === 'me' && !state.selected" />
   <GroupCard v-else-if="state.selected?.kind === 'group'" />
   <PlaceCard v-else-if="state.selected" />
   <template v-else-if="!state.route.open">

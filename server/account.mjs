@@ -11,6 +11,11 @@ const CODE_TRIES = 5
 const SMTP_TIMEOUT = 10_000
 const DATA_LIMIT = 200 * 1024
 const DATA_KEYS = new Set(['today', 'map', 'prefs'])
+const NAME_WINDOW = 10 * 60_000
+const NAME_LIMIT = 10
+/** 匿名会话的占位名。只在后台标识会话，不会作为公开昵称显示。 */
+const PLACEHOLDER_NAME = /^科大同学 [0-9A-F]{4}$/
+const RESERVED_NAME = /管理员|官方|admin|系统|一图通/i
 
 export class AccountError extends Error {
   constructor(status, message) { super(message); this.status = status }
@@ -35,6 +40,18 @@ export function maskEmail(value) {
   const local = email.slice(0, at), domain = email.slice(at + 1)
   if (local.length <= 2) return `${local[0]}***@${domain}`
   return `${local[0]}${'*'.repeat(Math.max(3, local.length - 2))}${local.at(-1)}@${domain}`
+}
+
+/** 校验并规整昵称：2–16 个字，不含控制字符和 @，普通账号不能冒充官方。 */
+export function cleanNickname(value, role = 'student') {
+  if (typeof value !== 'string') fail(400, '请填写昵称')
+  const name = value.normalize('NFC').replace(/\s+/g, ' ').trim()
+  const length = [...name].length
+  if (length < 2 || length > 16) fail(400, '昵称需要 2–16 个字')
+  if (/[\p{C}@]/u.test(name)) fail(400, '昵称不能包含 @ 或特殊控制字符')
+  if (PLACEHOLDER_NAME.test(name)) fail(400, '换一个属于你自己的昵称吧')
+  if (role !== 'admin' && RESERVED_NAME.test(name)) fail(400, '昵称不能包含“管理员”“官方”等字样')
+  return name
 }
 
 const requestToken = (req) => (req.headers.cookie || '').split(';').map((v) => v.trim()).find((v) => v.startsWith('campus_session='))?.slice('campus_session='.length) ?? null
@@ -70,6 +87,12 @@ function setupSchema(db) {
       PRIMARY KEY(user_id, key)
     );
   `)
+  // 昵称归账号所有：nickname_at 为空表示还没起过昵称。旧库里改过名的账号视为已设置。
+  if (!db.prepare('PRAGMA table_info(accounts)').all().some((column) => column.name === 'nickname_at')) {
+    db.exec('ALTER TABLE accounts ADD COLUMN nickname_at INTEGER')
+    for (const row of db.prepare('SELECT a.user_id, a.created_at, u.name FROM accounts a JOIN community_users u ON u.id=a.user_id').all())
+      if (!PLACEHOLDER_NAME.test(row.name)) db.prepare('UPDATE accounts SET nickname_at=? WHERE user_id=?').run(row.created_at, row.user_id)
+  }
 }
 
 function checkSameOrigin(req) {
@@ -86,7 +109,15 @@ function tableExists(db, table) {
 }
 
 function accountFor(db, userId) {
-  return db.prepare('SELECT user_id AS id, email, role, created_at AS createdAt FROM accounts WHERE user_id=?').get(userId) ?? null
+  return db.prepare('SELECT user_id AS id, email, role, created_at AS createdAt, nickname_at AS nicknameAt FROM accounts WHERE user_id=?').get(userId) ?? null
+}
+
+/** 前端「我的」页看到的账号资料；邮箱只返回打码后的形式。 */
+function profileJson(db, userId) {
+  const account = accountFor(db, userId)
+  if (!account) return null
+  const user = db.prepare('SELECT name FROM community_users WHERE id=?').get(userId)
+  return { id: userId, name: user?.name ?? '', email: maskEmail(account.email), role: account.role, nameSet: account.nicknameAt != null, createdAt: account.createdAt }
 }
 
 function makeName() { return `科大同学 ${randomBytes(2).toString('hex').toUpperCase()}` }
@@ -193,6 +224,7 @@ export function installAccount(app, db, options = {}) {
   const sendCode = options.sendCode ?? ((email, code) => defaultSendCode(email, code, demoMode))
   const generateCode = options.generateCode ?? defaultCode
   const ipWindows = new Map()
+  const nameWindows = new Map()
   const accountRouter = express.Router()
   const dataRouter = express.Router()
   for (const router of [accountRouter, dataRouter]) {
@@ -275,14 +307,30 @@ export function installAccount(app, db, options = {}) {
       if (token) db.prepare('DELETE FROM community_sessions WHERE token_hash=?').run(tokenHash(token))
       const targetId = target?.id ?? anonymous.id
       issueSession(req, res, db, targetId, now)
-      const user = db.prepare('SELECT id,name FROM community_users WHERE id=?').get(targetId)
-      res.json({ id: targetId, name: user?.name ?? anonymous.name, email: maskEmail(email), role: target?.role ?? 'student' })
+      res.json(profileJson(db, targetId))
     } catch (error) { next(error) }
   })
 
   accountRouter.get('/me', (req, res) => {
-    const me = communitySession(req, db), account = me && accountFor(db, me.id)
-    res.json(account ? { id: me.id, name: me.name, email: maskEmail(account.email), role: account.role } : null)
+    const me = communitySession(req, db)
+    res.json(me ? profileJson(db, me.id) : null)
+  })
+
+  accountRouter.patch('/profile', (req, res, next) => {
+    try {
+      const me = communitySession(req, db), account = me && accountFor(db, me.id)
+      if (!account) fail(401, '请先登录校园账号')
+      const name = cleanNickname(req.body?.name, account.role), current = now()
+      const window = nameWindows.get(me.id)
+      if (window && window.until > current && window.count >= NAME_LIMIT) fail(429, '昵称改得太频繁了，请稍后再试')
+      if (!window || window.until <= current) nameWindows.set(me.id, { count: 1, until: current + NAME_WINDOW })
+      else window.count++
+      const taken = db.prepare('SELECT 1 FROM community_users u JOIN accounts a ON a.user_id=u.id WHERE u.id<>? AND lower(u.name)=lower(?)').get(me.id, name)
+      if (taken) fail(409, '这个昵称已经有人用了，换一个吧')
+      db.prepare('UPDATE community_users SET name=? WHERE id=?').run(name, me.id)
+      db.prepare('UPDATE accounts SET nickname_at=? WHERE user_id=?').run(current, me.id)
+      res.json(profileJson(db, me.id))
+    } catch (error) { next(error) }
   })
 
   accountRouter.post('/logout', (req, res, next) => {

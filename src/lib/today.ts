@@ -128,8 +128,19 @@ export function removeItem(id: string) {
   item.updatedAt = Date.now()
   save()
 }
-/** ③ 课表截图解析等批量导入：调用方先给用户预览，确认后再写入 */
-export function importItems(items: Omit<PlanItem, 'id'>[]) {
+/** 课表 = 每周重复的课程；「我的」里集中管理，「我的今天」按星期展开 */
+export const isWeeklyClass = (i: PlanItem) => !i.deleted && i.kind === 'class' && !!i.weekdays?.length
+function dropClasses() {
+  const now = Date.now()
+  for (const item of plan.items) if (isWeeklyClass(item)) { item.deleted = true; item.updatedAt = now }
+}
+/** ③ 课表截图解析等批量导入：调用方先给用户预览，确认后再写入；replace 时先清掉旧课表，避免重复导入 */
+export function importItems(items: Omit<PlanItem, 'id'>[], replace = false) {
+  if (replace) dropClasses()
   for (const item of items) plan.items.push({ ...item, id: newId(), updatedAt: Date.now(), deleted: false })
+  save()
+}
+export function clearClasses() {
+  dropClasses()
   save()
 }

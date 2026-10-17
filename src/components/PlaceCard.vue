@@ -12,8 +12,7 @@ import CommunityEntry from './CommunityEntry.vue'
 import { floorLabel } from '../lib/rooms'
 import { POI_KINDS, poiKindLabel } from '../lib/catalog'
 import { buildLink, openShare } from '../lib/deepLink'
-import { setUserData } from '../lib/userData'
-import { upsertMapPlace } from '../lib/mapPrefs'
+import { homePlace, isFavorite, openProfile, setHomePlace, toggleFavorite } from '../lib/profile'
 import { displayText, t } from '../lib/i18n'
 
 const b = computed(() => (state.selected?.kind === 'building' ? buildingById(state.selected.id) : undefined))
@@ -46,11 +45,18 @@ function routeHere(which: 'from' | 'to') {
   // 收起详情，让出地方给导航卡片和路线
   select(null)
 }
-function savePlace(role: 'dorm' | 'lab' | 'office' | 'fav') {
+// 寝室只有一个，换楼就替换；其他地点是收藏，可随时取消。都在「我的」里集中管理。
+const isDorm = computed(() => !!place.value && homePlace('dorm')?.place === place.value.id)
+const faved = computed(() => !!place.value && isFavorite(place.value.id))
+function setDorm() {
   if (!place.value) return
-  state.mapPrefs = upsertMapPlace(state.mapPrefs, { id: `${role}-${place.value.id}`, role, place: place.value.id, room: room.value?.code, label: place.value.name.zh })
-  setUserData('map', state.mapPrefs)
-  state.toast = role === 'dorm' ? '已设为我的寝室' : '已加入我的地点'
+  if (isDorm.value) return openProfile('places')
+  setHomePlace('dorm', place.value.id, room.value?.code)
+  state.toast = '已设为我的寝室，可在「我的」里改房间号'
+}
+function favorite() {
+  if (!place.value) return
+  state.toast = toggleFavorite(place.value.id, room.value?.code) ? '已收藏，在「我的」里查看' : '已取消收藏'
 }
 </script>
 
@@ -83,7 +89,8 @@ function savePlace(role: 'dorm' | 'lab' | 'office' | 'fav') {
       <button type="button" class="act primary" @click="routeHere('to')"><Ico name="walk" />{{ t('event.navigate') }}</button>
       <button type="button" class="act" @click="routeHere('from')">从这出发</button>
       <button v-if="canteen" type="button" class="act" @click="openCanteen(canteen.id)"><Ico name="book" />食堂与菜单</button>
-      <button type="button" class="act" @click="savePlace(b?.cat === 'housing' ? 'dorm' : 'fav')"><Ico name="bookmark" />{{ b?.cat === 'housing' ? '设为我的寝室' : '加入我的地点' }}</button>
+      <button v-if="b?.cat === 'housing'" type="button" class="act" :class="{ saved: isDorm }" @click="setDorm"><Ico :name="isDorm ? 'check' : 'housing'" />{{ isDorm ? '我的寝室' : '设为我的寝室' }}</button>
+      <button v-else type="button" class="act" :class="{ saved: faved }" :aria-pressed="faved" @click="favorite"><Ico name="bookmark" />{{ faved ? '已收藏' : '收藏' }}</button>
       <button type="button" class="act" @click="sharePlace"><Ico name="external" />分享</button>
     </div>
 
@@ -133,6 +140,7 @@ function savePlace(role: 'dorm' | 'lab' | 'office' | 'fav') {
 .ents h4 { display: flex; align-items: center; gap: 6px; margin: 0 0 6px; font-size: 13.5px; color: var(--ink-2); }
 .echip { border: 1px solid #bfe5cf; background: #eefaf3; color: #146c3c; border-radius: 999px; padding: 4px 10px; font-size: 13px; font-weight: 600; cursor: pointer; }
 .pill.walkway { background: var(--walkway); color: #fff; }
+.act.saved { border-color: #ecc9cc; background: var(--brand-soft); color: var(--brand); }
 .note.rain { background: #eaf6f9; color: #0b6577; display: flex; gap: 6px; align-items: flex-start; }
 .top { margin-top: 10px; }
 .room-banner { display: flex; gap: 12px; align-items: center; margin: 12px 0 4px; padding: 12px 14px; border: 1.5px solid #e9c8cb; border-radius: 14px; background: var(--brand-soft); }

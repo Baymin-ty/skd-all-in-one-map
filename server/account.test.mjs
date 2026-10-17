@@ -58,7 +58,12 @@ describe('account login and user data API', () => {
     expect(verified.status).toBe(200)
     const cookie = verified.headers.get('set-cookie').split(';')[0]
     const me = await (await call('/api/account/me', 'GET', undefined, cookie)).json()
-    expect(me).toMatchObject({ id: session.user.id, email: 's*****t@shanghaitech.edu.cn' })
+    expect(me).toMatchObject({ id: session.user.id, email: 's*****t@shanghaitech.edu.cn', nameSet: false })
+    // 新账号先起昵称，才能用它署名发布
+    const unnamed = await call(topic, 'POST', { title: '我的笔记', content: '内容' }, cookie)
+    expect(unnamed.status).toBe(403)
+    expect((await unnamed.json()).error).toContain('昵称')
+    expect((await call('/api/account/profile', 'PATCH', { name: '小科' }, cookie)).status).toBe(200)
     expect((await call(topic, 'POST', { title: '我的笔记', content: '内容' }, cookie)).status).toBe(201)
     expect((await (await call(topic, 'GET', undefined, cookie)).json()).total).toBe(1)
   })
@@ -78,6 +83,7 @@ describe('account login and user data API', () => {
     const firstLogin = await verify('first@shanghaitech.edu.cn', code, first.cookie)
     const firstCookie = firstLogin.headers.get('set-cookie').split(';')[0]
     const firstId = (await (await call('/api/account/me', 'GET', undefined, firstCookie)).json()).id
+    await call('/api/account/profile', 'PATCH', { name: '第一位同学' }, firstCookie)
     db.prepare('INSERT OR IGNORE INTO community_topics VALUES (?, ?, ?, ?)').run('event:o-2', 'event', '活动', '{}')
     const post = await call('/api/community/topics/event/o-2/posts', 'POST', { title: '保留', content: '内容' }, firstCookie)
     expect(post.status).toBe(201)
@@ -89,9 +95,43 @@ describe('account login and user data API', () => {
     await requestCode('first@shanghaitech.edu.cn', anonymous.cookie)
     const switched = await verify('first@shanghaitech.edu.cn', code, anonymous.cookie)
     const switchedCookie = switched.headers.get('set-cookie').split(';')[0]
-    expect((await switched.json()).id).toBe(firstId)
+    // 昵称跟着账号走：换个浏览器登录还是原来的昵称
+    expect(await switched.json()).toMatchObject({ id: firstId, name: '第一位同学', nameSet: true })
     expect(await (await call(`/api/community/posts/${postId}`, 'GET', undefined, switchedCookie)).json()).toMatchObject({ mine: true, saved: true })
     expect(db.prepare('SELECT count(*) AS n FROM community_users WHERE id=?').get(anonymous.user.id).n).toBe(0)
+  })
+
+  test('nickname belongs to the account and is validated', async () => {
+    const anonymous = await createSession()
+    expect((await call('/api/account/profile', 'PATCH', { name: '路人甲' }, anonymous.cookie)).status).toBe(401)
+    await requestCode('a@shanghaitech.edu.cn', anonymous.cookie)
+    const a = (await verify('a@shanghaitech.edu.cn', code, anonymous.cookie)).headers.get('set-cookie').split(';')[0]
+    for (const name of ['甲', '这是一个特别特别特别特别长的昵称啊', 'me@example', '科大同学 1A2B', '官方小助手']) {
+      expect((await call('/api/account/profile', 'PATCH', { name }, a)).status).toBe(400)
+    }
+    const saved = await call('/api/account/profile', 'PATCH', { name: '  阿  哲 ' }, a)
+    expect(await saved.json()).toMatchObject({ name: '阿 哲', nameSet: true })
+    expect(await (await call('/api/account/me', 'GET', undefined, a)).json()).toMatchObject({ name: '阿 哲', nameSet: true })
+    time += 61_000
+    const other = await createSession()
+    await requestCode('b@shanghaitech.edu.cn', other.cookie)
+    const b = (await verify('b@shanghaitech.edu.cn', code, other.cookie)).headers.get('set-cookie').split(';')[0]
+    const taken = await call('/api/account/profile', 'PATCH', { name: '阿 哲' }, b)
+    expect(taken.status).toBe(409)
+    expect((await call('/api/account/profile', 'PATCH', { name: '阿 哲' }, a)).status).toBe(200)
+  })
+
+  test('marks renamed legacy accounts as named when the column is added', async () => {
+    await stop()
+    folder = mkdtempSync(join(tmpdir(), 'campus-account-'))
+    const legacy = new DatabaseSync(join(folder, 'test.db'))
+    legacy.exec(`CREATE TABLE community_users (id TEXT PRIMARY KEY, name TEXT NOT NULL, created_at INTEGER NOT NULL);
+      CREATE TABLE accounts (user_id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, role TEXT NOT NULL DEFAULT 'student', created_at INTEGER NOT NULL);
+      INSERT INTO community_users VALUES ('u1','小林',1),('u2','科大同学 0F3C',1);
+      INSERT INTO accounts VALUES ('u1','u1@shanghaitech.edu.cn','student',5),('u2','u2@shanghaitech.edu.cn','student',6);`)
+    legacy.close()
+    await start()
+    expect(db.prepare('SELECT user_id, nickname_at FROM accounts ORDER BY user_id').all().map((row) => ({ ...row }))).toEqual([{ user_id: 'u1', nickname_at: 5 }, { user_id: 'u2', nickname_at: null }])
   })
 
   test('reports a mail delivery failure as 503 without consuming the cooldown', async () => {

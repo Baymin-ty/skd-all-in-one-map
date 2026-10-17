@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { endFor, navigateToPlace, openDining, openRoute, PLACE_COLORS, placeName, placeSelection, select, setEnd, showPanel, state } from '../lib/store'
+import { endFor, navigateToPlace, openDining, openRoute, PLACE_COLORS, placeSelection, select, setEnd, showPanel, state } from '../lib/store'
 import { discovery, eventsIn } from '../lib/discoveryData'
 import { CROWD_LABELS, crowdAt, crowdRevision } from '../lib/crowd'
 import { dateKey, nowTick } from '../lib/campusTime'
 import { endMin, fromMin, itemsOn, nowMinute, plan, startMin } from '../lib/today'
+import { homePlace, placeLabel } from '../lib/profile'
 import EventCard from './EventCard.vue'
 import Ico from './Ico.vue'
 
@@ -15,13 +16,9 @@ const leastCrowd = computed(() => {
   void nowTick.value
   return discovery.canteens.map((canteen) => ({ canteen, crowd: crowdAt(canteen.id, nowTick.value) })).sort((a, b) => a.crowd.waitMin - b.crowd.waitMin)[0]
 })
-const personalPlace = (role: 'dorm' | 'lab') => computed(() => state.mapPrefs.places.find((place) => place.role === role))
-const dorm = personalPlace('dorm')
-const placeLabel = (p: { place: string; room?: string; label?: string }) => {
-  const sel = placeSelection(p.place)
-  return p.label || [sel ? placeName(sel) : '', p.room].filter(Boolean).join(' ')
-}
-const lab = personalPlace('lab')
+// 寝室、实验室在「我的」里设置
+const dorm = computed(() => homePlace('dorm'))
+const lab = computed(() => homePlace('lab'))
 function goPersonal(place: { place: string }) {
   // Keep a useful origin when the user has not granted location access yet.
   if (!state.route.from) {

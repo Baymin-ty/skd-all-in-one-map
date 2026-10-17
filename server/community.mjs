@@ -21,7 +21,8 @@ export function ensureEventTopics(db, events) {
   for (const event of events) insert.run(topicKey('event', event.id), 'event', event.title, JSON.stringify(event))
 }
 
-// 交流区和排队反馈共用这一份匿名会话；cookie 路径覆盖全部 /api 接口。
+// 交流区和排队反馈共用这一份会话；cookie 路径覆盖全部 /api 接口。
+// 未登录时它只是匿名占位（用于点赞、收藏、排队反馈），公开署名的昵称由校园账号在「我的」里设置。
 const communityToken = (req) => (req.headers.cookie || '').split(';').map(v => v.trim()).find(v => v.startsWith('campus_session='))?.slice('campus_session='.length) ?? null
 export function communitySession(req, db) {
   const token = communityToken(req)
@@ -93,11 +94,13 @@ export function installCommunity(app, db, root, { fetchAI = fetch } = {}) {
   }
   const session = (req) => communitySession(req, db)
   const user = (req) => session(req) ?? fail(401, '会话已失效，请重新打开交流区')
+  // 公开内容署名用账号昵称：没登录或还没起昵称都不能发布
   const verifiedUser = (req) => {
     const me = user(req)
     const account = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='accounts'").get()
-      && db.prepare('SELECT 1 FROM accounts WHERE user_id=?').get(me.id)
+      && db.prepare('SELECT * FROM accounts WHERE user_id=?').get(me.id)
     if (!account) fail(401, '请先登录校园账号后再发布')
+    if ('nickname_at' in account && account.nickname_at == null) fail(403, '请先在「我的」里设置昵称')
     return me
   }
   // 地点话题按需创建：楼宇和点位由地图后台维护（buildings / pois 表），随时会新增或修改资料
@@ -140,12 +143,6 @@ export function installCommunity(app, db, root, { fetchAI = fetch } = {}) {
     // 给旧版 Path=/api/community 的会话补发一次 /api cookie，让排队反馈等接口也能识别。
     if (token) res.cookie('campus_session', token, { httpOnly: true, sameSite: 'lax', secure: req.secure || process.env.COOKIE_SECURE === 'true', maxAge: 365 * 86400_000, path: '/api' })
     res.json(me)
-  })
-  router.patch('/profile', (req, res) => {
-    const me = user(req), name = field(req.body?.name, 24, '昵称')
-    limit(req, 'profile', 10)
-    db.prepare('UPDATE community_users SET name=? WHERE id=?').run(name, me.id)
-    res.json({ ...me, name })
   })
   const postJson = (p, me) => ({
     id: p.id, title: p.title, content: p.content, tag: p.tag, createdAt: p.created_at,

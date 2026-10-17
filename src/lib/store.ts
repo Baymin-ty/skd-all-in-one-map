@@ -66,7 +66,7 @@ export const state = reactive({
   /** 从教室号搜索进来时要定位的房间，只在选中同一栋楼时生效 */
   room: null as RoomHit | null,
   chip: null as Chip | null,
-  panel: 'home' as 'home' | 'events' | 'dining' | 'canteen' | 'today',
+  panel: 'home' as 'home' | 'events' | 'dining' | 'canteen' | 'today' | 'me',
   canteen: { id: '', outlet: '', stall: '', day: '', meal: '' as Meal | '', query: '', dish: '' },
   radar: { range: 'week' as EventRange, cat: 'all', place: '' },
   eventId: '',
@@ -320,7 +320,7 @@ export function showEntrances(id: string, point?: LngLat) {
   if (point) mapApi.focus(point, 19)
   else mapApi.fit(outlinePoints(building), 19)
 }
-export function showPanel(panel: 'home' | 'events' | 'dining' | 'today') {
+export function showPanel(panel: 'home' | 'events' | 'dining' | 'today' | 'me') {
   closeRoute()
   state.panel = panel
   state.selected = null

@@ -5,7 +5,8 @@ import { placeName, placeSelection, search, toast, type SearchHit } from '../lib
 import { addItem, itemsOn, overlaps, plan, PLAN_KINDS, updateItem, weekdayOf, type PlanItem, type PlanKind } from '../lib/today'
 import Ico from './Ico.vue'
 
-const props = defineProps<{ item: PlanItem | null; date: string }>()
+/** classOnly：在「我的」课表里用，只编辑每周重复的课程 */
+const props = defineProps<{ item: PlanItem | null; date: string; classOnly?: boolean }>()
 const emit = defineEmits<{ done: [] }>()
 const WEEKDAYS = ['一', '二', '三', '四', '五', '六', '日']
 
@@ -16,7 +17,7 @@ const form = reactive({
   room: props.item?.room ?? '',
   start: props.item?.start ?? '08:00',
   end: props.item?.end ?? '',
-  weekly: props.item ? !!props.item.weekdays?.length : true,
+  weekly: props.classOnly || (props.item ? !!props.item.weekdays?.length : true),
   weekdays: props.item?.weekdays ?? [weekdayOf(props.date)],
   note: props.item?.note ?? '',
 })
@@ -62,10 +63,10 @@ function save() {
 
 <template>
   <form class="form plan-form" @submit.prevent="save">
-    <div class="kind-switch" role="radiogroup" aria-label="类型">
+    <div v-if="!classOnly" class="kind-switch" role="radiogroup" aria-label="类型">
       <button v-for="(k, key) in PLAN_KINDS" :key="key" type="button" role="radio" :aria-checked="form.kind === key" :class="{ on: form.kind === key }" @click="form.kind = key"><Ico :name="k.icon" />{{ k.zh }}</button>
     </div>
-    <label>名称<input v-model="form.title" type="text" maxlength="80" placeholder="例如：线性代数、取快递" /></label>
+    <label>{{ classOnly ? '课程名' : '名称' }}<input v-model="form.title" type="text" maxlength="80" :placeholder="classOnly ? '例如：线性代数' : '例如：线性代数、取快递'" /></label>
     <label>地点
       <span v-if="form.place" class="picked"><Ico name="pin" />{{ placeLabel }}<button type="button" aria-label="清除地点" @click="form.place = ''; form.room = ''"><Ico name="close" /></button></span>
       <input v-model="q" type="search" :placeholder="form.place ? '换一个地点' : '搜楼名或教室号，如 SEM501、1A-108'" aria-label="搜索地点" />
@@ -78,7 +79,8 @@ function save() {
       <label>结束<input v-model="form.end" type="time" /></label>
     </div>
     <template v-if="form.kind === 'class'">
-      <label class="check"><input v-model="form.weekly" type="checkbox" />每周重复</label>
+      <label v-if="!classOnly" class="check"><input v-model="form.weekly" type="checkbox" />每周重复</label>
+      <span v-else class="days-label">每周上课的日子</span>
       <div v-if="form.weekly" class="weekdays" aria-label="上课的星期">
         <button v-for="(w, i) in WEEKDAYS" :key="w" type="button" :class="{ on: form.weekdays.includes(i + 1) }" :aria-pressed="form.weekdays.includes(i + 1)" @click="toggleDay(i + 1)">{{ w }}</button>
       </div>
@@ -108,5 +110,6 @@ function save() {
 .place-hits small { display: block; font-size: 11.5px; color: var(--ink-3); }
 .times { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .check { flex-direction: row !important; align-items: center; gap: 6px !important; }
+.days-label { margin-bottom: -4px; font-size: 12.5px; font-weight: 600; color: var(--ink-2); }
 .plan-form .actions { margin: 4px 0 0; }
 </style>

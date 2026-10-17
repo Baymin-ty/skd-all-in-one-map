@@ -4,12 +4,15 @@ import { community, communityApi as api, communityTime, preparePhoto, topicPath,
 import Ico from './Ico.vue'
 import ImagePreview from './ImagePreview.vue'
 import { account, openAccount } from '../lib/account'
+import { openProfile } from '../lib/profile'
 
 const props = defineProps<{ target: CommunityTarget }>()
 const path = topicPath(props.target)
 const dialog = ref<HTMLElement>()
+// 会话只用于浏览、点赞和收藏；公开署名用校园账号在「我的」里设置的昵称
 const me = ref<CommunityUser | null>(null)
-const nickname = ref(''), profileOpen = ref(false)
+const canPublish = computed(() => !!account.me?.nameSet)
+const publishHint = computed(() => !account.me ? '登录后' : '起个昵称后')
 const posts = ref<CommunityPost[]>([]), total = ref(0), hasMore = ref(false)
 const sort = ref('latest'), search = ref(''), query = ref('')
 const loading = ref(true), error = ref(''), busy = ref(false), uploading = ref(false)
@@ -58,19 +61,20 @@ async function loadSummary() {
 }
 async function init() {
   loading.value = true; error.value = ''
-  try { me.value = await api<CommunityUser>('/session', 'POST'); nickname.value = me.value.name; await Promise.all([loadFeed(), loadSummary()]) }
+  try { me.value = await api<CommunityUser>('/session', 'POST'); await Promise.all([loadFeed(), loadSummary()]) }
   catch (e) { error.value = message(e); loading.value = false }
 }
 watch([sort, query], () => { if (me.value) void loadFeed() })
-async function saveProfile() {
-  if (busy.value || !nickname.value.trim()) return
-  busy.value = true; error.value = ''
-  try {
-    me.value = await api<CommunityUser>('/profile', 'PATCH', { name: nickname.value }); profileOpen.value = false
-    for (const p of posts.value) if (p.mine) p.author.name = me.value.name
-    if (selected.value?.mine) selected.value.author.name = me.value.name
-    for (const c of comments.value) if (c.mine) c.author.name = me.value.name
-  } catch (e) { error.value = message(e) } finally { busy.value = false }
+/** 没登录先登录，登录了没昵称先起昵称（同一个登录框里完成） */
+function startCompose() {
+  if (!canPublish.value) { openAccount(); return }
+  view.value = 'compose'; error.value = ''
+}
+/** 昵称在「我的」里修改：关掉交流区再过去（有草稿会先确认） */
+function goProfile() {
+  if (!account.me?.nameSet) { openAccount(); return }
+  close()
+  if (!community.target) openProfile()
 }
 async function generateSummary() {
   if (aiBusy.value) return
@@ -150,7 +154,7 @@ async function removePhoto(image: { id: string; url: string }) {
   catch (e) { error.value = message(e) }
 }
 async function publish() {
-  if (!account.me) { openAccount(); return }
+  if (!canPublish.value) { openAccount(); return }
   if (busy.value || uploading.value || !title.value.trim() || !content.value.trim()) return
   busy.value = true; error.value = ''
   try {
@@ -181,7 +185,8 @@ function close() {
   community.target = null
 }
 function keydown(event: KeyboardEvent) {
-  if (gallery.value.length) return
+  // 登录框盖在上面时把键盘交给它
+  if (gallery.value.length || account.open) return
   if (event.key === 'Escape') { event.preventDefault(); close() }
   if (event.key !== 'Tab' || !dialog.value) return
   const focusable = [...dialog.value.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled):not([type=hidden]), textarea:not(:disabled), [tabindex="0"]')].filter(el => el.getClientRects().length)
@@ -200,15 +205,14 @@ onBeforeUnmount(() => { disposed = true; feedVersion++; document.removeEventList
       <section ref="dialog" class="community-dialog" role="dialog" aria-modal="true" aria-labelledby="community-title" tabindex="-1">
         <header class="community-topbar">
           <div class="community-wordmark"><span><Ico name="chat" /></span><b>科大 · 同频</b><small>在校园，分享每一种体验</small></div>
-          <div class="community-top-actions"><button v-if="me" type="button" class="community-profile" @click="profileOpen = !profileOpen"><span class="community-avatar" :style="{ background: avatarColor(me.id) }">{{ me.name.slice(0, 1) }}</span><span>{{ me.name }}</span></button><button type="button" class="close" aria-label="关闭交流区" :disabled="busy || uploading" @click="close"><Ico name="close" /></button></div>
+          <div class="community-top-actions"><button v-if="account.me" type="button" class="community-profile" :class="{ todo: !account.me.nameSet }" :title="account.me.nameSet ? '在「我的」里修改昵称' : '起个昵称才能发笔记和评论'" @click="goProfile"><span class="community-avatar" :style="{ background: avatarColor(account.me.id) }">{{ account.me.nameSet ? account.me.name.slice(0, 1) : '?' }}</span><span>{{ account.me.nameSet ? account.me.name : '起个昵称' }}</span></button><button v-else type="button" class="community-login" @click="openAccount()">登录</button><button type="button" class="close" aria-label="关闭交流区" :disabled="busy || uploading" @click="close"><Ico name="close" /></button></div>
         </header>
-        <form v-if="profileOpen" class="community-profile-form" @submit.prevent="saveProfile"><label for="community-nickname">交流昵称</label><input id="community-nickname" v-model="nickname" maxlength="24" required /><button class="act primary small" :disabled="busy">保存</button><small>此浏览器保留你的身份；清除 Cookie 后无法找回。</small></form>
         <div class="community-scroll">
           <div v-if="error" class="community-error" role="alert">{{ error }}<button v-if="!me" type="button" @click="init">重新连接</button><button v-else-if="view === 'feed'" type="button" @click="loadFeed()">重新加载</button></div>
           <template v-if="view === 'feed'">
             <section class="community-hero">
               <div><span class="community-eyebrow"><span />{{ COPY[target.type].eyebrow }}</span><h2 id="community-title">{{ target.name }}</h2><p>{{ target.subtitle || COPY[target.type].intro }}</p></div>
-              <button type="button" class="community-publish" @click="account.me ? (view = 'compose', error = '') : openAccount()"><Ico name="plus" />{{ account.me ? '发笔记' : '登录后发笔记' }}</button>
+              <button type="button" class="community-publish" @click="startCompose"><Ico name="plus" />{{ canPublish ? '发笔记' : `${publishHint}发笔记` }}</button>
             </section>
             <section class="community-ai" aria-label="AI 总结">
               <div class="community-ai-head"><span class="community-ai-symbol"><Ico name="sparkles" /></span><div><b>先看 AI 划重点</b><small>DeepSeek · {{ summary ? '资料与同学讨论摘要' : '帮你快速了解这里' }}</small></div><button type="button" :disabled="aiBusy || !me || (!aiAvailable && !aiError)" @click="generateSummary"><Ico :name="aiBusy ? 'refresh' : 'sparkles'" :class="{ spinning: aiBusy }" />{{ aiBusy ? '正在整理…' : summary ? summary.stale ? '更新总结' : '查看最新' : '生成总结' }}</button><button v-if="summary" type="button" class="ai-collapse" :aria-expanded="aiExpanded" aria-label="展开或收起总结" @click="aiExpanded = !aiExpanded">{{ aiExpanded ? '−' : '+' }}</button></div>
@@ -219,7 +223,7 @@ onBeforeUnmount(() => { disposed = true; feedVersion++; document.removeEventList
             <div class="community-feed-tools"><nav aria-label="笔记排序"><button v-for="option in [{ id: 'latest', name: '最新发现' }, { id: 'hot', name: '热门讨论' }, { id: 'saved', name: '我的收藏' }]" :key="option.id" type="button" :class="{ active: sort === option.id }" :aria-pressed="sort === option.id" @click="sort = option.id">{{ option.name }}</button></nav><form class="community-search" role="search" @submit.prevent="query = search.trim()"><Ico name="search" /><input v-model="search" type="search" aria-label="搜索当前交流区笔记" placeholder="搜一搜这里的笔记" @input="!search && (query = '')" /><button type="submit" aria-label="搜索笔记"><Ico name="chevron" /></button></form></div>
             <p class="community-count">{{ query ? `“${query}” · ` : '' }}{{ total }} 篇笔记 <span>每一种真实体验，都值得被看见</span></p>
             <div v-if="loading && !posts.length" class="community-skeletons" role="status" aria-label="正在加载笔记"><div v-for="i in 4" :key="i" /></div>
-            <div v-else-if="!posts.length && !error" class="community-empty"><span><Ico :name="sort === 'saved' ? 'bookmark' : 'chat'" /></span><h3>{{ query ? '还没有找到这篇笔记' : sort === 'saved' ? '喜欢的笔记，留着慢慢看' : '这里的第一篇，等你来写' }}</h3><p>{{ query ? '换个关键词，或看看其他同学的分享。' : sort === 'saved' ? '在笔记详情点一下收藏，就会出现在这里。' : COPY[target.type].empty }}</p><button v-if="!query && sort !== 'saved'" class="act primary" type="button" @click="account.me ? (view = 'compose') : openAccount()">{{ account.me ? '写下第一篇笔记' : '登录后写笔记' }}</button></div>
+            <div v-else-if="!posts.length && !error" class="community-empty"><span><Ico :name="sort === 'saved' ? 'bookmark' : 'chat'" /></span><h3>{{ query ? '还没有找到这篇笔记' : sort === 'saved' ? '喜欢的笔记，留着慢慢看' : '这里的第一篇，等你来写' }}</h3><p>{{ query ? '换个关键词，或看看其他同学的分享。' : sort === 'saved' ? '在笔记详情点一下收藏，就会出现在这里。' : COPY[target.type].empty }}</p><button v-if="!query && sort !== 'saved'" class="act primary" type="button" @click="startCompose">{{ canPublish ? '写下第一篇笔记' : `${publishHint}写笔记` }}</button></div>
             <div class="community-feed"><article v-for="p in posts" :key="p.id" class="community-note"><button type="button" class="community-note-main" @click="openPost(p)"><div v-if="p.images.length" class="community-note-cover"><img :src="p.images[0]" :alt="p.title" loading="lazy" /><span v-if="p.images.length > 1">{{ p.images.length }} 张</span></div><div v-else class="community-text-cover" :class="`tone-${p.tag}`"><span>{{ p.tag === '提问' ? '想问问大家' : p.tag === '约伴' ? '一起出发吧' : p.tag === '攻略' ? '我的校园小攻略' : '校园生活碎片' }}</span><p>{{ p.content }}</p><Ico :name="p.tag === '提问' ? 'chat' : 'book'" /></div><div class="community-note-copy"><span class="community-note-tag"># {{ p.tag }}</span><h3>{{ p.title }}</h3><p>{{ p.content }}</p></div></button><footer><span class="community-note-author"><span class="community-avatar" :style="{ background: avatarColor(p.author.id) }">{{ p.author.name.slice(0, 1) }}</span><span>{{ p.author.name }}</span><em v-if="p.attended" class="attended-badge">到场</em></span><button type="button" class="community-heart" :class="{ active: p.liked }" :aria-pressed="p.liked" :aria-label="`${p.liked ? '取消点赞' : '点赞'}：${p.title}`" @click="react(p, 'like')"><Ico name="heart" />{{ p.likes || '赞' }}</button></footer><small class="community-note-meta">{{ communityTime(p.createdAt) }} · {{ p.comments }} 条讨论</small></article></div>
             <button v-if="hasMore" class="more-button" type="button" :disabled="loading" @click="loadFeed(true)">{{ loading ? '加载中…' : '再看一些笔记' }}</button>
           </template>
@@ -233,14 +237,14 @@ onBeforeUnmount(() => { disposed = true; feedVersion++; document.removeEventList
               <label class="community-title-field"><span class="sr-only">笔记标题</span><input v-model="title" placeholder="一个标题，让你的发现被看见" maxlength="60" required :disabled="busy" /><small>{{ title.length }}/60</small></label>
               <label class="community-content-field"><span class="sr-only">笔记正文</span><textarea v-model="content" placeholder="聊聊真实体验，或者向大家提个问题…" maxlength="4000" rows="8" required :disabled="busy" /><small>{{ content.length }}/4000</small></label>
               <div class="community-tags"><span>给笔记选个话题</span><button v-for="t in tags" :key="t" type="button" :class="{ active: tag === t }" :aria-pressed="tag === t" @click="tag = t"># {{ t }}</button></div>
-              <div class="community-compose-footer"><p>友善交流，分享真实体验。<br /><small>笔记公开可见，请勿填写手机号等私人信息。</small></p><button class="community-publish" :disabled="busy || uploading || !title.trim() || !content.trim() || !account.me"><Ico name="edit" />{{ busy ? '发布中…' : '发布笔记' }}</button></div>
+              <div class="community-compose-footer"><p>友善交流，分享真实体验。<br /><small>笔记公开可见，请勿填写手机号等私人信息。</small></p><button class="community-publish" :disabled="busy || uploading || !title.trim() || !content.trim() || !canPublish"><Ico name="edit" />{{ busy ? '发布中…' : '发布笔记' }}</button></div>
             </form>
           </template>
 
           <template v-else-if="selected">
             <button type="button" class="text-back" @click="back"><Ico name="back" />返回交流区</button>
             <article class="community-post-detail"><div class="community-post-author"><span class="community-avatar" :style="{ background: avatarColor(selected.author.id) }">{{ selected.author.name.slice(0, 1) }}</span><div><b>{{ selected.author.name }}</b><small>{{ communityTime(selected.createdAt) }} · {{ target.name }}</small></div><button v-if="selected.mine" type="button" :disabled="busy" class="community-delete" @click="deletePost">删除笔记</button></div><div v-if="selected.images.length" class="community-post-gallery"><button v-for="(url, i) in selected.images" :key="url" type="button" :aria-label="`放大笔记图片 ${i + 1}`" @click="gallery = [url, ...selected.images.filter(p => p !== url)]"><img :src="url" :alt="`${selected.title} · 图片 ${i + 1}`" /></button></div><span class="community-note-tag"># {{ selected.tag }}</span><h2 id="community-title">{{ selected.title }}</h2><p class="community-post-content">{{ selected.content }}</p><div class="community-post-actions"><button type="button" :class="{ active: selected.liked }" :aria-pressed="selected.liked" @click="react(selected, 'like')"><Ico name="heart" />{{ selected.liked ? '已赞' : '点赞' }} {{ selected.likes || '' }}</button><button type="button" :class="{ active: selected.saved }" :aria-pressed="selected.saved" @click="react(selected, 'save')"><Ico name="bookmark" />{{ selected.saved ? '已收藏' : '收藏' }}</button><span><Ico name="chat" />{{ selected.comments }} 条讨论</span></div></article>
-            <section class="community-comments"><h3>一起聊聊 <span>{{ selected.comments }}</span></h3><form class="community-comment-form" @submit.prevent="sendComment"><div v-if="reply" class="community-reply-to">回复 {{ reply.author.name }}<button type="button" aria-label="取消回复" @click="reply = null"><Ico name="close" /></button></div><textarea ref="commentInput" v-model="comment" maxlength="1000" :disabled="busy || !account.me" rows="2" aria-label="评论内容" :placeholder="account.me ? '友善提问，认真分享…' : '登录校园账号后参与评论'" required /><div><small>{{ comment.length }}/1000</small><button class="act primary small" :disabled="busy || !comment.trim() || !account.me" @click="!account.me && openAccount()">{{ busy ? '处理中…' : account.me ? '发送评论' : '登录后评论' }}</button></div></form><p v-if="commentsLoading && !comments.length" class="empty" role="status">讨论加载中…</p><p v-else-if="!comments.length" class="community-no-comments">还没有评论，来开启这场对话吧。</p><article v-for="c in comments" :key="c.id" class="community-comment" :class="{ reply: c.parentId }"><span class="community-avatar" :style="{ background: avatarColor(c.author.id) }">{{ c.author.name.slice(0, 1) }}</span><div><b>{{ c.author.name }}<em v-if="c.author.id === selected.author.id">作者</em></b><p><span v-if="c.replyTo" class="community-reply-name">回复 {{ c.replyTo }}：</span>{{ c.content }}</p><footer><small>{{ communityTime(c.createdAt) }}</small><button type="button" @click="replyTo(c)">回复</button><button v-if="c.mine" type="button" :disabled="busy" @click="deleteComment(c)">删除</button></footer></div></article><button v-if="commentsMore" type="button" class="more-button" :disabled="commentsLoading" @click="loadComments(true)">{{ commentsLoading ? '加载中…' : '查看更多讨论' }}</button></section>
+            <section class="community-comments"><h3>一起聊聊 <span>{{ selected.comments }}</span></h3><form class="community-comment-form" @submit.prevent="sendComment"><div v-if="reply" class="community-reply-to">回复 {{ reply.author.name }}<button type="button" aria-label="取消回复" @click="reply = null"><Ico name="close" /></button></div><textarea ref="commentInput" v-model="comment" maxlength="1000" :disabled="busy || !canPublish" rows="2" aria-label="评论内容" :placeholder="canPublish ? '友善提问，认真分享…' : `${publishHint}参与评论`" required /><div><small>{{ comment.length }}/1000</small><button v-if="canPublish" class="act primary small" :disabled="busy || !comment.trim()">{{ busy ? '处理中…' : '发送评论' }}</button><button v-else type="button" class="act primary small" @click="openAccount()">{{ publishHint }}评论</button></div></form><p v-if="commentsLoading && !comments.length" class="empty" role="status">讨论加载中…</p><p v-else-if="!comments.length" class="community-no-comments">还没有评论，来开启这场对话吧。</p><article v-for="c in comments" :key="c.id" class="community-comment" :class="{ reply: c.parentId }"><span class="community-avatar" :style="{ background: avatarColor(c.author.id) }">{{ c.author.name.slice(0, 1) }}</span><div><b>{{ c.author.name }}<em v-if="c.author.id === selected.author.id">作者</em></b><p><span v-if="c.replyTo" class="community-reply-name">回复 {{ c.replyTo }}：</span>{{ c.content }}</p><footer><small>{{ communityTime(c.createdAt) }}</small><button type="button" @click="replyTo(c)">回复</button><button v-if="c.mine" type="button" :disabled="busy" @click="deleteComment(c)">删除</button></footer></div></article><button v-if="commentsMore" type="button" class="more-button" :disabled="commentsLoading" @click="loadComments(true)">{{ commentsLoading ? '加载中…' : '查看更多讨论' }}</button></section>
           </template>
           <footer class="community-bottom-note">上科大一图通 <span>·</span> 让每一个地点，多一点连接</footer>
         </div>

@@ -5,11 +5,12 @@ import { CROWD_LABELS, crowdAt } from '../lib/crowd'
 import { discovery } from '../lib/discoveryData'
 import { lateLegs, nextStep, suggestEvents, suggestMeals, type PlanContext } from '../lib/planner'
 import { navigateToPlace, openEvent, placeName, placeSelection, select, toast } from '../lib/store'
-import { addItem, endMin, fromMin, itemFromEvent, itemsOn, nowMinute, plan, PLAN_KINDS, removeItem, startMin, type PlanItem } from '../lib/today'
+import { addItem, endMin, fromMin, isWeeklyClass, itemFromEvent, itemsOn, nowMinute, plan, PLAN_KINDS, removeItem, startMin, type PlanItem } from '../lib/today'
 import { walkMinutes } from '../lib/walkTime'
+import { account } from '../lib/account'
+import { openProfile } from '../lib/profile'
 import Ico from './Ico.vue'
 import TodayItemForm from './TodayItemForm.vue'
-import ScheduleImport from './ScheduleImport.vue'
 
 const DAY = 86_400_000
 const days = computed(() => [0, 1, 2].map((n) => {
@@ -27,6 +28,7 @@ const meals = computed(() => suggestMeals(ctx.value))
 const mealCrowdLabel = computed(() => meals.value.some((s) => s.crowd.source === 'live') ? '含实时反馈' : '排队时间为估算')
 const freeEvents = computed(() => suggestEvents(ctx.value))
 const editing = ref<PlanItem | 'new' | null>(null)
+const classCount = computed(() => plan.items.filter(isWeeklyClass).length)
 
 const status = (i: PlanItem) => endMin(i) <= now.value ? 'past' : startMin(i) <= now.value ? 'now' : 'next'
 const where = (i: PlanItem) => {
@@ -68,7 +70,11 @@ const leaveText = computed(() => {
       <button v-for="d in days" :key="d.date" type="button" :class="{ on: plan.date === d.date }" :aria-pressed="plan.date === d.date" @click="plan.date = d.date">{{ d.label }}</button>
     </div>
     <p v-if="!plan.persisted" class="note warn">这个浏览器不允许保存数据，刷新页面后安排会丢失。</p>
-    <ScheduleImport />
+    <button type="button" class="schedule-link" @click="openProfile('schedule')">
+      <Ico name="academic" />
+      <span class="grow">{{ classCount ? `课表 ${classCount} 门课，按星期自动排进来` : '还没有课表：导入截图后每天自动排课' }}</span>
+      <span class="sl-go">{{ classCount ? '管理课表' : '去导入' }}<Ico name="chevron" /></span>
+    </button>
 
     <section v-if="step?.next" class="next-card" :class="{ late: (step.leaveIn ?? 0) < 0 }">
       <span class="nc-eyebrow"><Ico name="clock" />下一项 · {{ step.next.start }}</span>
@@ -143,12 +149,16 @@ const leaveText = computed(() => {
       </div>
     </section>
 
-    <p class="source-note">安排只保存在这台设备的浏览器里，不会上传。步行时间按校园路网估算。</p>
+    <p class="source-note">{{ account.me ? '安排已同步到校园账号。' : '安排只保存在这台设备的浏览器里，登录后可同步到账号。' }}步行时间按校园路网估算。</p>
   </div>
 </template>
 
 <style scoped>
 .note.warn { background: #fff4e5; color: #8a4b08; }
+.schedule-link { display: flex; align-items: center; gap: 8px; width: 100%; margin-top: 4px; padding: 9px 12px; border: 1px solid var(--line); border-radius: 12px; background: #fff; color: var(--ink-2); font-size: 12.5px; text-align: left; cursor: pointer; }
+.schedule-link > .svgi { flex: none; font-size: 16px; color: #6d4c9c; }
+.sl-go { flex: none; display: inline-flex; align-items: center; gap: 2px; color: var(--blue); font-weight: 600; }
+@media (hover: hover) { .schedule-link:hover { background: #f9f9fb; } }
 .next-card { position: relative; display: flex; flex-direction: column; gap: 3px; margin-top: 14px; padding: 13px 14px; border-radius: 14px; background: var(--brand-soft); border: 1.5px solid #ecc9cc; }
 .next-card.late { background: #fff4e5; border-color: #f2cf9f; }
 .nc-eyebrow { display: flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 650; color: var(--brand); }
