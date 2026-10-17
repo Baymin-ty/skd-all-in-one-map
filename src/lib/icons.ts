@@ -61,6 +61,7 @@ export const ICONS = {
   history: p('<path d="M3 12a9 9 0 1 0 2.6-6.4L3 8"/><path d="M3 3v5h5M12 7v5l3.5 2"/>'),
   expand: p('<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>'),
   shrink: p('<path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/>'),
+  rotate: p('<rect x="3" y="10" width="11" height="11" rx="2"/><path d="M9 5h4a6 6 0 0 1 6 6v2"/><path d="m16 10 3 3 3-3"/>'),
 }
 /** 地图钉外形（viewBox 0 0 32 42），钉尖在底边中点 */
 export const PIN_PATH = 'M16 1.5C8 1.5 1.5 7.9 1.5 15.9c0 10.2 12.7 23.2 13.6 24a1.3 1.3 0 0 0 1.8 0c.9-.8 13.6-13.8 13.6-24C30.5 7.9 24 1.5 16 1.5z'

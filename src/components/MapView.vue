@@ -589,12 +589,22 @@ function drawRoute() {
   if (!r) return
   const casing: L.PolylineOptions = { color: '#fff', weight: 10, opacity: 0.95, lineCap: 'round', lineJoin: 'round', interactive: false }
   for (const s of r.segments) L.polyline(s.path.map(toLatLng), casing).addTo(routeLayer)
-  for (const s of r.segments)
-    L.polyline(s.path.map(toLatLng), { color: s.covered ? WALKWAY_COLOR : '#2f6fd6', weight: 5.5, lineCap: 'round', lineJoin: 'round', interactive: false }).addTo(routeLayer)
+  for (const s of r.segments) {
+    const color = s.layer === 'underground' ? '#8156a8' : s.covered ? WALKWAY_COLOR : '#2f6fd6'
+    L.polyline(s.path.map(toLatLng), { color, weight: 5.5, dashArray: s.layer === 'underground' ? '10 7' : undefined, lineCap: 'round', lineJoin: 'round', interactive: false }).addTo(routeLayer)
+  }
   const first = r.segments[0].path[0]
   const last = r.segments.at(-1)!.path.at(-1)!
   L.circleMarker(toLatLng(first), { radius: 7, color: '#2f6fd6', weight: 3, fillColor: '#fff', fillOpacity: 1, interactive: false }).addTo(routeLayer)
   L.marker(toLatLng(last), { icon: L.divIcon({ className: '', html: `<div class="rend">${ICONS.pin}</div>`, iconSize: [0, 0] }), interactive: false, zIndexOffset: 1300 }).addTo(routeLayer)
+  for (const boundary of r.transitions) {
+    const entering = boundary.kind === 'enter'
+    L.circleMarker(toLatLng(boundary.pos), { radius: 7, color: '#e89a31', weight: 3, fillColor: entering ? '#fff7e8' : '#e89a31', fillOpacity: 1, interactive: false, bubblingMouseEvents: false }).addTo(routeLayer)
+    L.marker(toLatLng(boundary.pos), {
+      icon: L.divIcon({ className: '', html: `<span class="route-transition ${entering ? 'enter' : 'exit'}">${entering ? '↓' : '↑'}</span>`, iconSize: [22, 22], iconAnchor: [11, 11] }),
+      title: boundary.label, interactive: false, zIndexOffset: 1250,
+    }).addTo(routeLayer)
+  }
 }
 
 function drawCrowd() {
@@ -972,6 +982,8 @@ const toolsHidden = computed(() => tm.open || !ui.desktop && ui.sheet > ui.ancho
 .rend { position: absolute; transform: translate(-50%, -100%); color: #d93025; font-size: 34px; line-height: 0; filter: drop-shadow(0 2px 2px #0000004d); }
 .underground-rend { color: #8156a8; }
 .underground-connector { display: grid; place-items: center; width: 26px; height: 26px; border: 2px solid #fff; border-radius: 50%; background: var(--connector-color); box-shadow: 0 2px 5px #0006; color: #fff; font-size: 11px; font-weight: 800; }
+.route-transition { display: grid; place-items: center; width: 22px; height: 22px; border: 2px solid #e89a31; border-radius: 50%; background: #fff7e8; box-shadow: 0 1px 5px #0004; color: #9a621d; font-size: 15px; font-weight: 800; line-height: 1; }
+.route-transition.exit { background: #e89a31; color: #fff; }
 .rend svg { fill: #fff; }
 /* 从教室号搜索进来：选中的楼名后面跟房间号 */
 .blabel .room-code { margin-left: 1px; padding: 1px 6px; border-radius: 6px; background: #ffffff30; font-style: normal; font-variant-numeric: tabular-nums; }

@@ -7,6 +7,7 @@ import { favorites, HOME_ROLES, homePlace, openProfile, placeLabel } from '../li
 import { endFor, myAgenda, navigateToPlace, openEvent, openRoom, placeName, placeSelection, select, setEnd, setMapView, setMyScope, showPanel, state } from '../lib/store'
 import { endMin, fromMin, isWeeklyClass, plan, startMin, type PlanItem } from '../lib/today'
 import { walkMinutes } from '../lib/walkTime'
+import { openParcelStationMap } from '../lib/parcelStation'
 import Ico from './Ico.vue'
 
 // 我的地图的面板：最上面一张「接下来」卡片（手机收起时也看得到），下面是这一天或本周的安排，
@@ -144,6 +145,7 @@ const places = computed(() => [
     </p>
 
     <div class="my-actions">
+      <button type="button" class="act small parcel-action" @click="openParcelStationMap"><Ico name="grid" />快递站地图</button>
       <button type="button" class="act small" @click="showPanel('today')"><Ico name="clock" />日程与吃饭建议</button>
       <button type="button" class="act small" @click="openProfile('schedule')"><Ico name="academic" />{{ hasClasses ? '管理课表' : '导入课表' }}</button>
     </div>
@@ -209,6 +211,7 @@ const places = computed(() => [
 .ag.past .ag-main::before { background: #c3c6cd; }
 .day-empty { margin: 14px 0 4px; padding: 16px; border-radius: 12px; background: var(--bg-2); color: var(--ink-3); font-size: 13px; text-align: center; }
 .my-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.parcel-action { border-color: #e9c8cb; background: var(--brand-soft); color: var(--brand); }
 
 /* 常用地点 */
 .sec h3 { justify-content: space-between; }

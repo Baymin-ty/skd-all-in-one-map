@@ -56,7 +56,7 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', outside))
         </button>
       </div>
       <button type="button" role="switch" class="road-toggle" :aria-checked="state.showRoads" @click="state.showRoads = !state.showRoads"><Ico name="road" /><span class="grow">显示统一地面路网</span><span class="switch" :class="{ on: state.showRoads }" /></button>
-      <button v-if="state.underground" type="button" class="road-toggle underground-toggle" @click="setRouteNetwork('underground')"><Ico name="stairs" /><span class="grow">打开地下手绘窗口</span><Ico name="chevron" /></button>
+      <button v-if="state.underground" type="button" class="road-toggle underground-toggle" @click="setRouteNetwork('underground')"><Ico name="stairs" /><span class="grow">打开地下标注窗口</span><Ico name="chevron" /></button>
       <ul class="picker-notes">
         <li>颜色和图标与地图上的标签一致，可当图例看。</li>
         <li>隐藏的类型在选中、筛选或悬停时仍会显示。</li>

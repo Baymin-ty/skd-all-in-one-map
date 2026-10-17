@@ -127,9 +127,11 @@ function cleanUnderground(p) {
   const ids = new Set()
   const id = (value, prefix) => {
     const result = text(value, 120)
-    if (!result || ids.has(result)) throw new BadRequest('地下道路或连接点 id 重复或为空')
+    if (!result || ids.has(result)) throw new BadRequest('地下对象 id 重复或为空')
     ids.add(result); return result || prefix
   }
+  const nodes = Array.isArray(p.nodes) ? p.nodes.map((node) => ({ id: id(node?.id, 'ug-node'), pos: undergroundPoint(node?.pos) })) : []
+  const nodeIds = new Set(nodes.map((node) => node.id))
   const roads = Array.isArray(p.roads) ? p.roads.map((road) => {
     if (!Array.isArray(road?.path) || road.path.length < 2 || road.path.length > 1000) throw new BadRequest('地下道路至少需要两个点')
     if (!['car', 'walk'].includes(road.mode)) throw new BadRequest('地下道路模式不正确')
@@ -145,7 +147,16 @@ function cleanUnderground(p) {
     return { id: id(connector.id, 'ug-connector'), floorFrom, floorTo, kind: connector.kind, status: undergroundStatus(connector.status), pos: undergroundPoint(connector.pos),
       ...(connector.source ? { source: text(connector.source, 120) } : {}), ...(connector.linkedPoiId ? { linkedPoiId: text(connector.linkedPoiId, 120) } : {}), ...(connector.note ? { note: text(connector.note, 2000) } : {}) }
   }) : []
-  return { version: Number.isInteger(p.version) ? p.version : 1, floor, bounds, sources, roads, connectors }
+  const points = Array.isArray(p.points) ? p.points.map((point) => {
+    const pointId = id(point?.id, 'ug-point')
+    if (!nodeIds.has(point?.endpointId1) || !nodeIds.has(point?.endpointId2) || point.endpointId1 === point.endpointId2) throw new BadRequest('地下图片点端点不正确')
+    const weights = [point.endpointWeight1, point.endpointWeight2]
+    if (!weights.every((weight) => typeof weight === 'number' && Number.isFinite(weight) && weight >= 0 && weight <= 1) || Math.abs(weights[0] + weights[1] - 1) > 1e-6) throw new BadRequest('地下图片点权重不正确')
+    const imageId = text(point.imageId, 200)
+    if (!imageId) throw new BadRequest('地下图片点必须绑定图片 ID')
+    return { id: pointId, endpointId1: point.endpointId1, endpointWeight1: +weights[0].toFixed(6), endpointId2: point.endpointId2, endpointWeight2: +weights[1].toFixed(6), imageId }
+  }) : []
+  return { version: Number.isInteger(p.version) ? p.version : 1, floor, bounds, sources, nodes, roads, connectors, points }
 }
 function isAdmin(req) {
   const token = (req.get('authorization') ?? '').replace(/^Bearer /, '')
@@ -161,6 +172,8 @@ app.disable('x-powered-by')
 app.enable('strict routing')
 installCommunity(app, db, root)
 installAccount(app, db)
+// 课表截图使用独立的 6 MB JSON 限制，必须先于通用 256 KB 解析器挂载。
+installSchedule(app)
 app.use(express.json({ limit: '256kb' }))
 installCrowd(app, db)
 // 官网同步由活动数据管道统一定时运行；/api/events/sync 仍保留给旧的手动入口。
@@ -169,7 +182,6 @@ const eventSync = installEventSync(app, db, root, { authorize: requireAdmin, res
 const eventPipeline = installEventPipeline(app, db, { authorize: requireAdmin, eventSync, resolver: venueResolver })
 installCheckin(app, db, root, { isAdmin })
 installOrganizer(app, db, { isAdmin })
-installSchedule(app)
 app.use('/api', (_req, res, next) => { res.set('Cache-Control', 'no-store'); next() })
 app.get('/api/places', (_req, res) => res.json({ categories: seed.categories, buildings: list('buildings'), pois: list('pois') }))
 app.post('/api/auth', requireAdmin, (_req, res) => res.json({ ok: true }))

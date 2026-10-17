@@ -4,15 +4,15 @@ import { PLACE_COLORS, POI_CATS } from '../lib/catalog'
 import type { IconName } from '../lib/icons'
 import { DEFAULT_MAP_SETTINGS, validMapSettings } from '../lib/mapSettings'
 import {
-  addNode, connect, graphFromMap, graphToMap, importSketch, mergeNodes, moveNode, removeEdge, removeNode, roundPos, splitEdge, ugId,
-  type UgEdge, type UgEdgeProps, type UndergroundGraph,
+  addNode, autoBindEntrances, bindEntrance, connect, createRoadPoint, graphFromMap, graphToMap, importSketch, mergeNodes, moveNode, removeEdge, removeNode,
+  roundPos, splitEdge, ugId, unbindEntrance, type UgEdge, type UgEdgeProps, type UgRoadPoint, type UndergroundGraph,
 } from '../lib/undergroundGraph'
 export type Kind = 'building' | 'poi'
 export type View = 'overview' | 'underground' | 'appearance' | 'data' | 'events'
 export type Asset = { kind: Kind; data: Building | Poi }
-export type UndergroundSelection = { kind: 'node' | 'edge' | 'entrance'; id: string }
+export type UndergroundSelection = { kind: 'node' | 'edge' | 'entrance' | 'point'; id: string }
 /** 选择/拖动、画道路、放出入口、点哪删哪 */
-export type UndergroundTool = 'select' | 'road' | 'entrance' | 'erase'
+export type UndergroundTool = 'select' | 'road' | 'entrance' | 'point' | 'erase'
 interface UndergroundHistory { graph: UndergroundGraph; active: string | null }
 export const admin = reactive({
   ready: false, loading: false, error: '', offline: false, loggedIn: false, token: '',
@@ -190,7 +190,7 @@ export function changeUnderground(change: (g: UndergroundGraph) => void) {
     admin.undergroundFuture = []; admin.undergroundError = ''
   }
   const sel = admin.undergroundSelected
-  if (sel && !(sel.kind === 'node' ? g.nodes : sel.kind === 'edge' ? g.edges : g.entrances).some((item) => item.id === sel.id)) admin.undergroundSelected = null
+  if (sel && !(sel.kind === 'node' ? g.nodes : sel.kind === 'edge' ? g.edges : sel.kind === 'entrance' ? g.entrances : g.points).some((item) => item.id === sel.id)) admin.undergroundSelected = null
   if (admin.undergroundActive && !g.nodes.some((n) => n.id === admin.undergroundActive)) admin.undergroundActive = null
   admin.undergroundVersion++
 }
@@ -245,34 +245,99 @@ export function drawUndergroundOnEdge(edgeId: string, pos: LngLat) {
 export function insertUndergroundNode(edgeId: string, pos: LngLat) {
   changeUnderground((g) => { const id = splitEdge(g, edgeId, pos); if (id) admin.undergroundSelected = { kind: 'node', id } })
 }
-export function addUndergroundEntrance(pos: LngLat) {
-  if (!inCampus(pos)) return
+/** 在线段上创建图片点；位置会被投影回线段，保存时只写端点和插值权重。 */
+export function addUndergroundRoadPoint(edgeId: string, pos: LngLat, imageId?: string) {
+  let point: UgRoadPoint | null = null
+  changeUnderground((g) => {
+    point = createRoadPoint(g, edgeId, pos, imageId)
+    if (point) admin.undergroundSelected = { kind: 'point', id: point.id }
+  })
+  return point
+}
+export function updateUndergroundRoadPoint(id: string, imageId: string) {
+  changeUnderground((g) => {
+    const point = g.points.find((item) => item.id === id)
+    if (point) point.imageId = imageId.trim()
+  })
+}
+/** 拖动或放置时吸附到的目标：节点、路段上的一点，或还没绑定的出入口 */
+export type UndergroundSnap = { node: string } | { edge: string; pos: LngLat } | { entrance: string }
+/** 吸附目标对应的节点；落在路段上时先在路段上插一个节点 */
+function snapNode(g: UndergroundGraph, snap?: UndergroundSnap) {
+  if (!snap || 'entrance' in snap) return null
+  return 'node' in snap ? snap.node : splitEdge(g, snap.edge, snap.pos)
+}
+/** 画路画到出入口上：已绑定就接到它的节点，没绑定就在出入口处落点并绑上 */
+export function drawUndergroundToEntrance(entranceId: string) {
+  const entrance = admin.undergroundGraph?.entrances.find((e) => e.id === entranceId)
+  if (!entrance) return
+  if (entrance.node) return drawUndergroundToNode(entrance.node)
+  drawTo((g) => { const id = addNode(g, entrance.pos); bindEntrance(g, entranceId, id); return id })
+}
+/** 放置出入口；点在节点或路段上时直接绑定到路网 */
+export function addUndergroundEntrance(pos: LngLat, snap?: UndergroundSnap) {
+  if (!snap && !inCampus(pos)) return
   const id = ugId('ug-entrance')
   changeUnderground((g) => {
     g.entrances.push({ id, floorFrom: 0, floorTo: admin.underground?.floor ?? -1, kind: admin.undergroundEntranceKind, status: 'confirmed', pos: roundPos(pos), source: 'admin' })
+    const target = snapNode(g, snap)
+    if (target) bindEntrance(g, id, target)
     admin.undergroundSelected = { kind: 'entrance', id }
   })
 }
-/** 拖动节点；松手时落在另一个节点上就把两个点合成一个路口。 */
-export function moveUndergroundNode(id: string, pos: LngLat, mergeInto?: string) {
-  if (!mergeInto && !inCampus(pos)) return changeUnderground(() => {})
+/** 把节点挪到 pos：落在别的节点或路段上就合成路口，落在没绑定的出入口上就把它绑上。返回挪完后的节点 id。 */
+function relocateNode(g: UndergroundGraph, id: string, pos: LngLat, snap?: UndergroundSnap) {
+  if (snap && 'entrance' in snap) {
+    const entrance = g.entrances.find((e) => e.id === snap.entrance)
+    if (entrance && !entrance.node) { moveNode(g, id, entrance.pos); bindEntrance(g, entrance.id, id); return id }
+  }
+  const target = snapNode(g, snap)
+  if (target && target !== id) { mergeNodes(g, id, target); return target }
+  moveNode(g, id, pos); return id
+}
+/** 拖动节点；绑定在上面的出入口一起走。 */
+export function moveUndergroundNode(id: string, pos: LngLat, snap?: UndergroundSnap) {
+  if (!snap && !inCampus(pos)) return changeUnderground(() => {})
   changeUnderground((g) => {
-    if (mergeInto) {
-      mergeNodes(g, id, mergeInto)
-      if (admin.undergroundActive === id) admin.undergroundActive = mergeInto
-      admin.undergroundSelected = { kind: 'node', id: mergeInto }
-    } else { moveNode(g, id, pos); admin.undergroundSelected = { kind: 'node', id } }
+    const result = relocateNode(g, id, pos, snap)
+    if (admin.undergroundActive === id) admin.undergroundActive = result
+    admin.undergroundSelected = { kind: 'node', id: result }
   })
 }
-export function moveUndergroundEntrance(id: string, pos: LngLat) {
-  if (!inCampus(pos)) return changeUnderground(() => {})
-  changeUnderground((g) => { const item = g.entrances.find((e) => e.id === id); if (item) item.pos = roundPos(pos) })
+/**
+ * 拖动出入口：已绑定时连同节点和相连的路一起移动（detach 为真时先拆开再单独移动）；
+ * 没绑定时落到节点或路段上就绑上。
+ */
+export function moveUndergroundEntrance(id: string, pos: LngLat, snap?: UndergroundSnap, detach = false) {
+  if (!snap && !inCampus(pos)) return changeUnderground(() => {})
+  changeUnderground((g) => {
+    const entrance = g.entrances.find((e) => e.id === id); if (!entrance) return
+    if (detach) unbindEntrance(g, id)
+    const bound = entrance.node
+    if (bound) {
+      const result = relocateNode(g, bound, pos, snap && !('entrance' in snap) ? snap : undefined)
+      if (admin.undergroundActive === bound) admin.undergroundActive = result
+    } else {
+      const target = snapNode(g, snap)
+      if (target) bindEntrance(g, id, target)
+      else entrance.pos = roundPos(pos)
+    }
+    admin.undergroundSelected = { kind: 'entrance', id }
+  })
+}
+/** 把还没绑定的出入口接到 maxMeters 内最近的道路上；不传 ids 就处理全部。 */
+export function bindUndergroundEntrances(maxMeters: number, ids?: string[]) {
+  let count = 0
+  changeUnderground((g) => { count = autoBindEntrances(g, maxMeters, ids) })
+  notify(count ? `已把 ${count} 个出入口绑定到道路` : `${maxMeters} 米内没有可以绑定的道路`, count ? 'ok' : 'error')
+  return count
 }
 export function deleteUnderground(target: UndergroundSelection) {
   changeUnderground((g) => {
     if (target.kind === 'node') removeNode(g, target.id)
     else if (target.kind === 'edge') removeEdge(g, target.id)
-    else g.entrances = g.entrances.filter((e) => e.id !== target.id)
+    else if (target.kind === 'entrance') g.entrances = g.entrances.filter((e) => e.id !== target.id)
+    else g.points = g.points.filter((point) => point.id !== target.id)
   })
 }
 export function deleteUndergroundSelection() {

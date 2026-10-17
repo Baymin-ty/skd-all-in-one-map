@@ -48,4 +48,15 @@ describe('步行导航', () => {
     const doors = byName('学生公寓11号楼').entrances!.map((e) => e.pos)
     expect(doors).toContainEqual(r.segments.at(-1)!.path.at(-1))
   })
+
+  it('建筑边缘缓冲会把附近地面格标为有遮挡', () => {
+    const shelter: [number, number][] = [
+      [121.6002, 31.1842], [121.6006, 31.1842], [121.6006, 31.1846], [121.6002, 31.1846],
+    ]
+    initRouting(campus, [], [shelter])
+    const nearby = walkableCells().filter((cell) =>
+      Math.abs(cell.pos[0] - 121.6004) < 0.0004 && Math.abs(cell.pos[1] - 31.1844) < 0.0004)
+    expect(nearby.some((cell) => cell.covered)).toBe(true)
+    initRouting(campus, places.buildings.filter((b) => b.walkway).map((b) => b.poly))
+  })
 })

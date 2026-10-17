@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { defineAsyncComponent, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import CommunityDialog from './components/CommunityDialog.vue'
 import { community } from './lib/community'
 import BottomSheet from './components/BottomSheet.vue'
@@ -23,6 +23,10 @@ import NavTabs from './components/NavTabs.vue'
 import { loadAccount } from './lib/account'
 import { loadUserData } from './lib/userData'
 import { applyMapPrefs, presetMapMode } from './lib/profile'
+import { parcel } from './lib/parcelStation'
+
+// 快递站货架平面图用得少，点开时再加载
+const ParcelPlan = defineAsyncComponent(() => import('./components/ParcelPlan.vue'))
 
 let clock = 0
 let crowdClock = 0
@@ -107,7 +111,7 @@ function shareSite() {
 </script>
 
 <template>
-  <div class="app" :class="{ desktop: ui.desktop, 'resizing-side': ui.resizingSide }" :style="{ '--side-w': ui.sideW + 'px' }" :inert="!!community.target">
+  <div class="app" :class="{ desktop: ui.desktop, 'resizing-side': ui.resizingSide }" :style="{ '--side-w': ui.sideW + 'px' }" :inert="!!community.target || parcel.open">
     <MapView v-if="state.ready" />
     <div v-else class="boot">
       <p v-if="state.error" class="muted">{{ state.error }}</p>
@@ -159,9 +163,10 @@ function shareSite() {
     <ShareDialog v-if="share.target" :key="share.target.title" />
     <CommunityDialog v-if="community.target" :key="community.target.type + community.target.id" :target="community.target" />
     <AccountDialog />
+    <ParcelPlan v-if="parcel.open" />
 
     <div v-if="state.route.picking" class="pick-hint" role="status" :style="ui.desktop ? undefined : { top: ui.topH + 4 + 'px' }">
-      {{ state.route.network === 'underground' ? '地下手绘模式：在窗口中点击“开始手绘”，再在地图上逐点标记道路' : `点地图上的楼、点位或任意位置作为${state.route.picking === 'from' ? '起点' : '终点'}` }}
+      {{ state.route.network === 'underground' ? '地下标注模式：在窗口中逐点标记道路或上下连接点' : `点地图上的楼、点位或任意位置作为${state.route.picking === 'from' ? '起点' : '终点'}` }}
       <button type="button" @click="cancelPick">取消</button>
     </div>
     <div v-if="demoClockEnabled && !hideDemoClock" class="demo-clock" role="status" :style="ui.desktop ? undefined : { top: ui.topH + 'px' }">演示时间 {{ clockText(nowTick) }}</div>

@@ -87,6 +87,7 @@ function choose(h: SearchHit) {
 .hits .none { color: var(--ink-3); cursor: default; }
 .hic { flex: none; width: 26px; height: 26px; border-radius: 8px; display: grid; place-items: center; background: var(--bg-2); color: var(--ink-2); font-size: 15px; }
 .hic.group { background: var(--ink); color: #fff; }
+.hic.parcel { background: var(--brand-soft); color: var(--brand); }
 .chip-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .map-mode { flex: none; display: flex; padding: 3px; border-radius: 999px; background: #fff; box-shadow: 0 1px 5px #00000029; }
 .map-mode button { display: inline-flex; align-items: center; gap: 4px; height: 28px; padding: 0 11px 0 9px; border: 0; border-radius: 999px; background: none; color: var(--ink-2); font-size: 13px; font-weight: 650; cursor: pointer; transition: background-color .15s, color .15s; }

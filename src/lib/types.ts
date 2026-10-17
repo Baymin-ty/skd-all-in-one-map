@@ -105,11 +105,29 @@ export interface UndergroundConnector {
   note?: string
 }
 
+/** 在线段上标注的图片点：位置由两个路网端点和插值权重唯一确定。 */
+export interface UndergroundRoadPoint {
+  id: string
+  endpointId1: string
+  endpointWeight1: number
+  endpointId2: string
+  endpointWeight2: number
+  imageId: string
+}
+
+/** 后台编辑器保存的路网节点 ID，保证图片点在重新载入后仍能找到端点。 */
+export interface UndergroundNode {
+  id: string
+  pos: LngLat
+}
+
 export interface UndergroundMap {
   version: number
   floor: number
   bounds: [LngLat, LngLat]
   sources: UndergroundSource[]
+  nodes?: UndergroundNode[]
   roads: UndergroundRoad[]
   connectors: UndergroundConnector[]
+  points?: UndergroundRoadPoint[]
 }

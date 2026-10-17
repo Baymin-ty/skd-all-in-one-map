@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import type { LngLat, UndergroundMap } from './types'
 import {
-  addNode, components, connect, degree, graphFromMap, graphIssues, graphToMap, graphToRoads, importSketch,
-  mergeNodes, removeEdge, removeNode, splitEdge, type UndergroundGraph, type UgEdgeProps,
+  addNode, autoBindEntrances, bindEntrance, components, connect, createRoadPoint, degree, graphFromMap, graphIssues, graphToMap, graphToRoads, importSketch, roadPointPosition,
+  mergeNodes, moveNode, removeEdge, removeNode, splitEdge, unbindEntrance, type UndergroundGraph, type UgEdgeProps,
 } from './undergroundGraph'
 
 const props: UgEdgeProps = { status: 'confirmed', mode: 'car' }
@@ -87,7 +87,7 @@ describe('地下路网', () => {
     expect(graphIssues(g).looseEnds).toEqual([])
   })
 
-  it('检查孤立片段、没接上的端点和够不到路网的出入口', () => {
+  it('检查孤立片段、没接上的端点和没绑定的出入口', () => {
     const g = empty()
     const [a, b] = [A, C].map((p) => addNode(g, p)); connect(g, a, b, props)
     const loose = addNode(g, [121.601, 31.18005]), far = addNode(g, [121.601, 31.1805]); connect(g, loose, far, props)
@@ -95,7 +95,7 @@ describe('地下路网', () => {
     const issues = graphIssues(g)
     expect(issues.islands).toHaveLength(1)
     expect(issues.looseEnds).toEqual([loose])
-    expect(issues.farEntrances).toEqual(['x'])
+    expect(issues.unboundEntrances).toEqual(['x'])
   })
 
   it('保存时保留地图其他字段，出入口原样写回', () => {
@@ -105,5 +105,87 @@ describe('地下路网', () => {
     const map = graphToMap(g, { ...base, version: 3 })
     expect(map).toMatchObject({ version: 3, floor: -1, connectors: [expect.objectContaining({ id: 'e1', note: '北侧' })] })
     expect(map.roads).toHaveLength(1)
+  })
+
+  it('出入口落在节点上视为绑定，保存时去掉绑定字段、坐标与节点一致', () => {
+    const g = graphFromMap({ ...base, roads: [road('r1', [A, B])], connectors: [
+      { id: 'on', floorFrom: 0, floorTo: -1, kind: 'ramp', status: 'confirmed', pos: B },
+      { id: 'off', floorFrom: 0, floorTo: -1, kind: 'stairs', status: 'confirmed', pos: D },
+    ] })
+    const b = g.nodes.find((n) => n.pos[0] === B[0])!.id
+    expect(g.entrances.map((e) => e.node)).toEqual([b, undefined])
+    moveNode(g, b, [121.6012, 31.1803])
+    const saved = graphToMap(g, base)
+    expect(saved.connectors[0]).toEqual({ id: 'on', floorFrom: 0, floorTo: -1, kind: 'ramp', status: 'confirmed', pos: [121.6012, 31.1803] })
+    expect(saved.connectors[1].pos).toEqual(D)
+    expect(graphFromMap(saved).entrances[0].node).toBeDefined()
+  })
+
+  it('合并节点时绑定跟过去，删掉节点或解绑后出入口留在原地', () => {
+    const g = empty()
+    const [a, b, c] = [A, B, C].map((p) => addNode(g, p))
+    connect(g, a, b, props); connect(g, b, c, props)
+    g.entrances.push({ id: 'x', floorFrom: 0, floorTo: -1, kind: 'elevator', status: 'confirmed', pos: D })
+    bindEntrance(g, 'x', c)
+    expect(g.entrances[0].pos).toEqual(C)
+    mergeNodes(g, c, b)
+    expect(g.entrances[0]).toMatchObject({ node: b, pos: B })
+    removeNode(g, b)
+    expect(g.entrances[0].node).toBeUndefined()
+    expect(g.entrances[0].pos).toEqual(B)
+    bindEntrance(g, 'x', a); unbindEntrance(g, 'x')
+    expect(graphIssues(g).unboundEntrances).toEqual(['x'])
+  })
+
+  it('一键绑定：附近有节点就接节点，只有路段就在路段上插点', () => {
+    const g = empty()
+    connect(g, addNode(g, A), addNode(g, C), props)
+    g.entrances.push(
+      { id: 'near-node', floorFrom: 0, floorTo: -1, kind: 'ramp', status: 'confirmed', pos: [121.60001, 31.18002] },
+      { id: 'near-edge', floorFrom: 0, floorTo: -1, kind: 'stairs', status: 'confirmed', pos: [121.601, 31.18003] },
+      { id: 'far', floorFrom: 0, floorTo: -1, kind: 'stairs', status: 'confirmed', pos: [121.601, 31.181] },
+    )
+    expect(autoBindEntrances(g, 10)).toBe(2)
+    expect(g.entrances[0].pos).toEqual(A)
+    expect(g.entrances[1].pos).toEqual([121.601, 31.18])
+    expect(g.nodes).toHaveLength(3)
+    expect(graphIssues(g).unboundEntrances).toEqual(['far'])
+  })
+
+  it('在线段上创建图片点，保存两个端点的插值权重并能重算位置', () => {
+    const g = empty()
+    const [a, b] = [A, C].map((p) => addNode(g, p))
+    const edge = connect(g, a, b, props)!
+    const point = createRoadPoint(g, edge, [121.6015, 31.18], 'photo-garage-1')
+    expect(point).toMatchObject({
+      endpointId1: a, endpointId2: b, endpointWeight1: 0.25, endpointWeight2: 0.75, imageId: 'photo-garage-1',
+    })
+    expect(point.id).toMatch(/^ug-point-/)
+    expect(roadPointPosition(g, point)).toEqual([121.6015, 31.18])
+  })
+
+  it('保存并重新载入时保留路网节点 ID 与图片点绑定', () => {
+    const g = empty()
+    const [a, b] = [A, C].map((p) => addNode(g, p))
+    const edge = connect(g, a, b, props)!
+    const point = createRoadPoint(g, edge, [121.6015, 31.18])
+    const saved = graphToMap(g, base)
+    expect(saved.nodes).toEqual(expect.arrayContaining([{ id: a, pos: A }, { id: b, pos: C }]))
+    expect(saved.points).toEqual([point])
+    const loaded = graphFromMap(saved)
+    expect(loaded.points).toEqual([point])
+    expect(roadPointPosition(loaded, loaded.points![0])).toEqual([121.6015, 31.18])
+  })
+
+  it('端点合并时更新图片点绑定，端点删除时清理失效图片点', () => {
+    const g = empty()
+    const [a, b, c] = [A, B, C].map((p) => addNode(g, p))
+    const edge = connect(g, a, b, props)!
+    const point = createRoadPoint(g, edge, [121.6005, 31.18])!
+    mergeNodes(g, b, c)
+    expect(g.points[0]).toMatchObject({ endpointId1: a, endpointId2: c })
+    removeNode(g, c)
+    expect(g.points).toEqual([])
+    expect(point.id).toMatch(/^ug-point-/)
   })
 })

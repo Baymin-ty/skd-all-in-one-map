@@ -14,18 +14,43 @@ export interface Target {
   entrances?: LngLat[]
 }
 
+export type RouteLayer = 'surface' | 'underground'
+export type RouteTransitionKind = 'enter' | 'exit'
+export interface RouteTransition {
+  connectorId: string
+  kind: RouteTransitionKind
+  connectorKind: string
+  pos: LngLat
+  label: string
+}
+export interface RouteSegment {
+  path: LngLat[]
+  covered: boolean
+  layer: RouteLayer
+}
+
 export interface RouteResult {
-  /** 首尾相接的路段，covered = 在风雨长廊下 */
-  segments: { path: LngLat[]; covered: boolean }[]
+  /** 首尾相接的路段，covered = 在风雨长廊或地下 */
+  segments: RouteSegment[]
   meters: number
   coveredMeters: number
   minutes: number
+  /** 地下段实际长度；纯地面路线为 0。 */
+  undergroundMeters: number
+  /** 进入地下、回到地面的顺序化提示点。 */
+  transitions: RouteTransition[]
+  /** 雨天比较路线时使用的代价，不等同于实际距离。 */
+  routingCost: number
 }
 
 /** 露天路段在雨天的代价倍数：沿着长廊走时，愿意为每 2 m 长廊多绕 1 m 露天路 */
 export const RAIN_PENALTY = 2
+/** 连续十米以内的露天段允许直接走地面，只有超出的部分产生雨天代价。 */
+export const SHORT_EXPOSURE_METERS = 10
 /** 2.5D 手绘图里长廊顶棚画得比地面偏北，轮廓外这么多米内的格子也算在长廊下 */
 const COVER_RADIUS = 6
+/** 建筑边缘的挡雨缓冲，覆盖宿舍相邻通道和食堂两侧等贴楼步行线。 */
+const SHELTER_RADIUS = 8
 const WALK_SPEED = 75 // m/min
 
 let W = 0
@@ -40,7 +65,7 @@ const cellOf = (p: LngLat) => [Math.floor((g.y0 - p[1]) / g.dy), Math.floor((p[0
 export const posOf = (c: number): LngLat => [g.x0 + ((c % W) + 0.5) * g.dx, g.y0 - (Math.floor(c / W) + 0.5) * g.dy]
 const inGrid = (i: number, j: number) => i >= 0 && j >= 0 && i < H && j < W
 
-export function initRouting(campus: Campus, walkways: LngLat[][]) {
+export function initRouting(campus: Campus, walkways: LngLat[][], shelterPolys: LngLat[][] = []) {
   g = campus.grid
   H = g.rows.length
   W = g.rows[0].length
@@ -54,6 +79,7 @@ export function initRouting(campus: Campus, walkways: LngLat[][]) {
       walk[i * W + j] = ch === '0' || ch === '2' ? 1 : 0
     }
   for (const poly of walkways) for (const c of cellsNear(poly, COVER_RADIUS)) covered[c] = 1
+  for (const poly of shelterPolys) for (const c of cellsNear(poly, SHELTER_RADIUS)) covered[c] = 1
 }
 
 /** 所有可走格子，画路网用 */
@@ -206,7 +232,7 @@ export function findRoute(from: Target, to: Target, rain = false): RouteResult |
     while (b + 1 < cells.length && covered[cells[b + 1]] === covered[cells[a]]) b++
     const path = smooth(cells.slice(a, b + 1)).map(posOf)
     if (b + 1 < cells.length) path.push(posOf(cells[b + 1]))
-    segments.push({ path, covered: !!covered[cells[a]] })
+    segments.push({ path, covered: !!covered[cells[a]], layer: 'surface' })
     a = b + 1
   }
   const head = starts.get(cells[0])
@@ -222,7 +248,28 @@ export function findRoute(from: Target, to: Target, rain = false): RouteResult |
     total += m
     if (s.covered) under += m
   }
-  return { segments, meters: Math.round(total), coveredMeters: Math.round(under), minutes: Math.max(1, Math.round(total / WALK_SPEED)) }
+  const result: RouteResult = {
+    segments,
+    meters: Math.round(total),
+    coveredMeters: Math.round(under),
+    minutes: Math.max(1, Math.round(total / WALK_SPEED)),
+    undergroundMeters: 0,
+    transitions: [],
+    routingCost: routeWeatherCost(segments),
+  }
+  return result
+}
+
+/** 计算路线在雨天的比较代价；短露天段只按实际距离，长露天段才加价。 */
+export function routeWeatherCost(segments: Pick<RouteSegment, 'path' | 'covered' | 'layer'>[], shortExposureMeters = SHORT_EXPOSURE_METERS) {
+  let cost = 0
+  for (const segment of segments) {
+    let length = 0
+    for (let i = 1; i < segment.path.length; i++) length += meters(segment.path[i - 1], segment.path[i])
+    if (segment.layer === 'underground' || segment.covered) cost += length
+    else cost += length + Math.max(0, length - shortExposureMeters) * (RAIN_PENALTY - 1)
+  }
+  return cost
 }
 
 /** 去掉中间格子，只要两个保留点之间的直线还压在同类（可走、同样有没有顶棚）的格子上 */

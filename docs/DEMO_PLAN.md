@@ -14,7 +14,7 @@
 - 登录使用校内邮箱验证码，仅接受 `@shanghaitech.edu.cn`（演示模式额外接受 `@demo.test`）；验证码由服务器通过环境变量配置的 SMTP 发送，演示模式打印到后端日志。
 - 地图、活动、菜单和交流区浏览无需登录；发布笔记、评论、图片和签到需要先完成校园账号登录。
 - 主办方入口位于 `/admin/` 的「活动」页，使用校园账号和 `organizer` / `admin` 角色鉴权；原有管理口令继续用于地图维护。
-- 课表截图识别使用 DeepSeek V4.1，服务端从 `SCHEDULE_VISION_API_KEY`（兼容 `DEEPSEEK_API_KEY`）读取密钥，默认模型为 `deepseek-v4.1`；接口地址可用 `SCHEDULE_VISION_BASE_URL` 覆盖。
+- 课表截图识别使用 DeepSeek Flash，服务端从 `SCHEDULE_VISION_API_KEY`（兼容 `DEEPSEEK_API_KEY`）读取密钥，默认模型为 `deepseek-flash`；接口地址可用 `SCHEDULE_VISION_BASE_URL` 覆盖。
 
 ## 范围与分工
 
@@ -46,7 +46,7 @@
 1. **登录方式**：已确定为校内邮箱验证码（`@shanghaitech.edu.cn`），需要一个能发信的 SMTP 账号。学校统一身份认证（CAS / OAuth）最正规，但要信息中心配合，放到以后。
 2. **未登录能不能发帖**：未登录可以浏览，发布笔记、评论和图片必须完成校园账号登录；登录用户显示「已认证」，签到过的显示「到场」。
 3. **主办方入口放在哪**：已放在 `/admin/` 新增的「活动」页，用校园账号登录（角色是主办方），不用管理口令。这样会把 PLAN.md P2 的「账号权限」提前做掉一部分（见 ⑪）。
-4. **课表识别用哪家视觉模型**：已确定为 DeepSeek V4.1，默认模型名 `deepseek-v4.1`。
+4. **课表识别用哪家视觉模型**：已确定为 DeepSeek Flash，默认模型名 `deepseek-flash`。
 
 ---
 

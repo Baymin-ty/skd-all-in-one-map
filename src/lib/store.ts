@@ -1,7 +1,8 @@
 import { computed, reactive } from 'vue'
 import type { IconName } from './icons'
 import { groupBuildings, type BuildingGroup } from './groups'
-import { findRoute, initRouting, type RouteResult, type Target } from './route'
+import { initRouting, type RouteResult, type Target } from './route'
+import { findIntegratedRoute } from './integratedRoute'
 import type { UndergroundRouteResult } from './undergroundRoute'
 import { openSheet, ui } from './ui'
 import type { Building, Campus, I18nText, LngLat, PlaceCat, Places, Poi } from './types'
@@ -23,6 +24,7 @@ import { plan } from './today'
 import { agendaEntries, agendaStops, myMap, weekDates } from './myMap'
 import { validateUndergroundMap, type UndergroundMap } from './underground'
 import { mergeUndergroundSketch } from './undergroundSketch'
+import { isParcelStation, openParcelPlan, parcelSearchHint } from './parcelStation'
 export { POI_CATS, PLACE_COLORS, WALKWAY_COLOR } from './catalog'
 /** 顶部分类条：每个分类对应哪些楼、哪些点位 */
 export type Chip = 'dining' | 'academic' | 'housing' | 'sports' | 'service' | 'gate' | 'walkway' | 'parking'
@@ -226,7 +228,9 @@ export async function loadData() {
       state.readonly = true
     }
     state.groups = groupBuildings(state.buildings)
-    initRouting(campus, state.buildings.filter((b) => b.walkway).map((b) => b.poly))
+    const walkwayPolys = state.buildings.filter((b) => b.walkway).flatMap((b) => [b.poly, ...(b.parts ?? [])])
+    const shelterPolys = state.buildings.flatMap((b) => [b.poly, ...(b.parts ?? [])])
+    initRouting(campus, walkwayPolys, shelterPolys)
     state.ready = true
   } catch (e) {
     state.error = `地图数据加载失败：${(e as Error).message}`
@@ -303,6 +307,8 @@ export function setChip(c: Chip | null) {
 // ---------- 搜索：名称、简称、别名里包含关键字就算；楼群排最前 ----------
 export type SearchTarget = Selection | { kind: 'event'; id: string } | { kind: 'dish'; id: string; outlet: string } | { kind: 'dishGroup'; query: string } | { kind: 'canteen'; id: string; outlet?: string; stall?: string }
   | { kind: 'room'; id: string; room: RoomHit }
+  /** 取件码 / 货架号：打开快递站的货架平面图 */
+  | { kind: 'parcel'; id: string; query: string }
 const roomIndex = computed(() => buildRoomIndex(state.buildings, state.groups, discovery.events))
 const ROOM_HINT = { exact: '', rule: ' · 按房间号推测', history: ' · 按往期活动推测' }
 export type SearchHit = { sel: SearchTarget; name: string; sub: string; icon: IconName }
@@ -353,7 +359,10 @@ export function search(q: string): SearchHit[] {
     const diningPlaces = new Set(dining.filter((hit) => hit.sel.kind === 'canteen').map((hit) => discovery.canteens.find((c) => c.id === targetId(hit.sel))?.place))
     places = places.filter((hit) => !diningPlaces.has(targetId(hit.sel)))
   }
-  return [...rooms, ...places, ...events, ...dining.slice(0, 5), ...distribution, ...dishes]
+  const station = state.pois.find(isParcelStation)
+  const shelf = station && parcelSearchHint(q)
+  const parcel: SearchHit[] = shelf ? [{ sel: { kind: 'parcel', id: station.id, query: q.trim() }, name: shelf.name, sub: shelf.sub, icon: 'grid' }] : []
+  return [...parcel, ...rooms, ...places, ...events, ...dining.slice(0, 5), ...distribution, ...dishes]
 }
 
 /** 打开某栋楼并定位到房间（分享链接的 room 参数） */
@@ -505,6 +514,13 @@ export function chooseSearch(hit: SearchHit) {
     else {
       select({ kind: 'building', id: sel.id })
       state.room = sel.room
+    }
+  } else if (sel.kind === 'parcel') {
+    const end = state.route.picking && endFor({ kind: 'poi', id: sel.id })
+    if (end) setEnd(state.route.picking!, end)
+    else {
+      select({ kind: 'poi', id: sel.id })
+      openParcelPlan(sel.query, sel.id)
     }
   } else {
     const end = state.route.picking && endFor(sel)
@@ -659,7 +675,7 @@ export function computeRoute(fit = true) {
     r.failed = false
     return
   }
-  r.result = findRoute(r.from, r.to, r.rain)
+  r.result = findIntegratedRoute(r.from, r.to, state.underground, { rain: r.rain, allowCandidate: true })
   r.failed = !r.result
   if (r.result && fit) mapApi.fit(r.result.segments.flatMap((s) => s.path), 19)
 }

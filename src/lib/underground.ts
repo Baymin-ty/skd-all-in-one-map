@@ -1,6 +1,6 @@
 import type { Campus, LngLat, UndergroundMap } from './types'
 
-export type { UndergroundConnector, UndergroundMap, UndergroundMode, UndergroundRoad, UndergroundSource, UndergroundStatus } from './types'
+export type { UndergroundConnector, UndergroundMap, UndergroundMode, UndergroundNode, UndergroundRoad, UndergroundRoadPoint, UndergroundSource, UndergroundStatus } from './types'
 
 const VALID_STATUS = new Set(['candidate', 'confirmed', 'rejected'])
 const VALID_KINDS = new Set(['ramp', 'stairs', 'elevator', 'unknown'])
@@ -26,8 +26,14 @@ function duplicateIds(ids: string[]) {
 export function validateUndergroundMap(map: UndergroundMap, campus: Campus): string[] {
   const errors: string[] = []
   const bounds = campus.bounds
-  const ids = [...map.roads.map((r) => r.id), ...map.connectors.map((c) => c.id)]
+  const ids = [...(map.nodes ?? []).map((n) => n.id), ...map.roads.map((r) => r.id), ...map.connectors.map((c) => c.id), ...(map.points ?? []).map((p) => p.id)]
   for (const id of duplicateIds(ids)) errors.push(`重复 id: ${id}`)
+  const nodeIds = new Set<string>()
+  for (const networkNode of map.nodes ?? []) {
+    if (!networkNode.id) errors.push('路网节点缺少 id')
+    nodeIds.add(networkNode.id)
+    if (!inBounds(networkNode.pos, bounds)) errors.push(`路网节点超出校园范围: ${networkNode.id}`)
+  }
   for (const source of map.sources) {
     if (!source.id || !source.image) errors.push(`来源缺少 id 或 image: ${source.id || '(空)'}`)
     if (source.anchors.length < 2) errors.push(`来源锚点不足: ${source.id}`)
@@ -46,6 +52,12 @@ export function validateUndergroundMap(map: UndergroundMap, campus: Campus): str
     if (!VALID_KINDS.has(connector.kind)) errors.push(`连接点 kind 无效: ${connector.id}`)
     if (!inBounds(connector.pos, bounds)) errors.push(`连接点超出校园范围: ${connector.id}`)
     if (connector.floorFrom === connector.floorTo) errors.push(`连接点楼层不能相同: ${connector.id}`)
+  }
+  for (const point of map.points ?? []) {
+    if (!point.imageId?.trim()) errors.push(`图片点缺少图片 ID: ${point.id}`)
+    if (!nodeIds.has(point.endpointId1) || !nodeIds.has(point.endpointId2) || point.endpointId1 === point.endpointId2) errors.push(`图片点端点无效: ${point.id}`)
+    const weightsValid = [point.endpointWeight1, point.endpointWeight2].every((weight) => Number.isFinite(weight) && weight >= 0 && weight <= 1)
+    if (!weightsValid || Math.abs(point.endpointWeight1 + point.endpointWeight2 - 1) > 1e-6) errors.push(`图片点权重无效: ${point.id}`)
   }
   return errors
 }

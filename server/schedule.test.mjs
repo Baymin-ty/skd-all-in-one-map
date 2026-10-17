@@ -8,7 +8,8 @@ describe('schedule vision parser', () => {
   it('sends a bounded image and validates the structured class response', async () => {
     const fetcher = vi.fn(async (_url, init) => {
       const request = JSON.parse(init.body)
-      expect(request.model).toBe('deepseek-v4.1')
+      expect(request.model).toBe('deepseek-flash')
+      expect(request.response_format).toEqual({ type: 'json_object' })
       expect(request.messages[0].content[1].image_url.url).toBe(image)
       return response(JSON.stringify({ classes: [{ title: '算法导论', weekday: 2, start: '08:00', end: '09:40', room: '1A-108', weeks: [1, 2], teacher: '李老师' }], warnings: [] }))
     })
@@ -16,6 +17,13 @@ describe('schedule vision parser', () => {
       classes: [{ title: '算法导论', weekday: 2, start: '08:00', end: '09:40', room: '1A-108', weeks: [1, 2], teacher: '李老师' }], warnings: [],
     })
     expect(fetcher).toHaveBeenCalledOnce()
+  })
+
+  it('extracts JSON when the model wraps it in explanatory text or a code fence', async () => {
+    const content = '识别结果如下：\n```json\n{"classes":[{"title":"人工智能","weekday":1,"start":"08:15","end":"09:00","room":"1D106"}],"warnings":[]}\n```\n以上。'
+    await expect(parseScheduleImage(image, { apiKey: 'test-key', fetcher: async () => response(content) })).resolves.toEqual({
+      classes: [{ title: '人工智能', weekday: 1, start: '08:15', end: '09:00', room: '1D106', weeks: undefined, teacher: undefined }], warnings: [],
+    })
   })
 
   it('rejects missing keys, oversized images and malformed model JSON', async () => {

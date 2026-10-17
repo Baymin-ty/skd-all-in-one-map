@@ -5,13 +5,15 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { once } from 'node:events'
 import { DatabaseSync } from 'node:sqlite'
-import { addNode, connect, graphFromMap, graphToMap } from '../src/lib/undergroundGraph.ts'
+import { addNode, connect, createRoadPoint, graphFromMap, graphToMap } from '../src/lib/undergroundGraph.ts'
 
 const directory = mkdtempSync(join(tmpdir(), 'campus-admin-test-'))
 const dbPath = join(directory, 'map.db')
 const password = 'local-integration-test'
 const seed = JSON.parse(readFileSync(resolve('public/data/places.json'), 'utf8'))
 const undergroundSeed = JSON.parse(readFileSync(resolve('public/data/underground.json'), 'utf8'))
+// 种子数据已清空，测试用旧版候选路网当样本
+const undergroundSample = JSON.parse(readFileSync(resolve('data/underground-sketch-backup-20261017.json'), 'utf8'))
 let server, base
 async function start() {
   server = spawn(process.execPath, ['server/index.mjs'], {
@@ -40,6 +42,12 @@ beforeAll(start)
 afterAll(async () => { await stop(); rmSync(directory, { recursive: true, force: true }) })
 
 describe('campus management API', () => {
+  test('accepts schedule requests larger than the general JSON limit', async () => {
+    const response = await call('/api/schedule/parse', 'POST', { padding: 'x'.repeat(300_000) }, false)
+    expect(response.status).toBe(400)
+    expect(await response.json()).toEqual({ error: '请上传课表图片' })
+  })
+
   test('地下手绘需要管理员保存，并在重启后保留道路和连接点', async () => {
     const initial = await (await call('/api/underground', 'GET', undefined, false)).json()
     expect(initial.roads).toHaveLength(undergroundSeed.roads.length)
@@ -47,8 +55,8 @@ describe('campus management API', () => {
     expect((await call('/api/underground', 'PUT', initial, false)).status).toBe(401)
     const changed = {
       ...initial,
-      roads: [{ ...initial.roads[0], path: [[121.5963, 31.1832], [121.5964, 31.1837]] }],
-      connectors: [{ ...initial.connectors[0], kind: 'ramp', note: '后台保存测试' }],
+      roads: [{ ...undergroundSample.roads[0], path: [[121.5963, 31.1832], [121.5964, 31.1837]] }],
+      connectors: [{ ...undergroundSample.connectors[0], kind: 'ramp', note: '后台保存测试' }],
     }
     const saved = await (await call('/api/underground', 'PUT', changed)).json()
     expect(saved.roads[0].path).toEqual(changed.roads[0].path)
@@ -59,23 +67,29 @@ describe('campus management API', () => {
   })
 
   test('后台路网标注拆成的道路能通过校验，重新载入后路口不丢', async () => {
-    const graph = graphFromMap(undergroundSeed)
+    const graph = graphFromMap(undergroundSample)
     const junction = graph.nodes[1].id
     const branch = addNode(graph, [121.5975, 31.1835])
     connect(graph, junction, branch, { status: 'confirmed', mode: 'car', source: 'admin' })
+    const point = createRoadPoint(graph, graph.edges[0].id, [121.59635, 31.18345], 'garage-sign-1')
     graph.entrances.push({ id: 'ug-entrance-test', floorFrom: 0, floorTo: -1, kind: 'stairs', status: 'confirmed', pos: [121.5975, 31.1835], source: 'admin' })
     const response = await call('/api/underground', 'PUT', graphToMap(graph, undergroundSeed))
     expect(response.status).toBe(200)
-    const reloaded = graphFromMap(await response.json())
+    const saved = await response.json()
+    const reloaded = graphFromMap(saved)
     expect(reloaded.nodes).toHaveLength(graph.nodes.length)
     expect(reloaded.edges).toHaveLength(graph.edges.length)
+    expect(saved.points).toEqual([point])
+    const reloadedResponse = await (await call('/api/underground')).json()
+    expect(reloadedResponse.points).toEqual([point])
     expect(reloaded.entrances.at(-1)).toMatchObject({ id: 'ug-entrance-test', kind: 'stairs' })
     await call('/api/underground', 'PUT', undergroundSeed)
   })
 
   test('地下手绘拒绝越界和不完整道路', async () => {
     const initial = await (await call('/api/underground')).json()
-    for (const roads of [[{ ...initial.roads[0], path: [[121.6, 31.184]] }], [{ ...initial.roads[0], path: [[0, 0], [121.6, 31.184]] }]]) {
+    const road = undergroundSample.roads[0]
+    for (const roads of [[{ ...road, path: [[121.6, 31.184]] }], [{ ...road, path: [[0, 0], [121.6, 31.184]] }]]) {
       expect((await call('/api/underground', 'PUT', { ...initial, roads })).status).toBe(400)
     }
   })

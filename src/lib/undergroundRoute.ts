@@ -25,6 +25,11 @@ export interface UndergroundRouteOptions {
 interface Edge { to: number; cost: number }
 interface Node { pos: LngLat; edges: Edge[] }
 
+interface RoadNodes {
+  road: UndergroundRouteMap['roads'][number]
+  ids: number[]
+}
+
 class Heap {
   keys: number[] = []
   values: number[] = []
@@ -86,9 +91,29 @@ function connectNearby(nodes: Node[], a: number, b: number, maxMeters: number) {
   }
 }
 
+/** 点在线段上的投影，使用米制近似避免经纬度比例影响吸附位置。 */
+function projectOnSegment(p: LngLat, a: LngLat, b: LngLat) {
+  const k = Math.cos((p[1] * Math.PI) / 180)
+  const dx = (b[0] - a[0]) * k
+  const dy = b[1] - a[1]
+  const px = (p[0] - a[0]) * k
+  const py = p[1] - a[1]
+  const t = Math.max(0, Math.min(1, (px * dx + py * dy) / (dx * dx + dy * dy || 1)))
+  const pos: LngLat = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]
+  return { pos, t, meters: meters(p, pos) }
+}
+
+function connectProjection(nodes: Node[], road: RoadNodes, segment: number, projection: number) {
+  const a = road.ids[segment], b = road.ids[segment + 1]
+  const forward = road.road.direction !== 'out'
+  const reverse = road.road.direction !== 'in'
+  if (forward) { addEdge(nodes, a, projection, meters(nodes[a].pos, nodes[projection].pos)); addEdge(nodes, projection, b, meters(nodes[projection].pos, nodes[b].pos)) }
+  if (reverse) { addEdge(nodes, b, projection, meters(nodes[b].pos, nodes[projection].pos)); addEdge(nodes, projection, a, meters(nodes[projection].pos, nodes[a].pos)) }
+}
+
 /**
  * 在一个地下楼层的候选路网中寻路。候选道路参与计算，rejected 道路和连接点完全排除。
- * 地面↕地下的跨层连接暂时只作为 B1 端点，等现场确认后再接入地面寻路。
+ * 连接点会投影到最近的地下路段，返回的首尾路径包含这段短连接，供地上地下寻路器拼接。
  */
 export function findUndergroundRoute(map: UndergroundRouteMap | UndergroundMap, fromId: string, toId: string, options: UndergroundRouteOptions = {}): UndergroundRouteResult | null {
   const mode = options.mode ?? 'car'
@@ -100,23 +125,32 @@ export function findUndergroundRoute(map: UndergroundRouteMap | UndergroundMap, 
 
   const nodes: Node[] = []
   const roadNodeIds: number[] = []
+  const roadNodes: RoadNodes[] = []
   const addNode = (pos: LngLat) => { const id = nodes.length; nodes.push({ pos, edges: [] }); return id }
   for (const road of map.roads) {
     if (road.floor !== map.floor || road.mode !== mode || road.status === 'rejected' || road.path.length < 2) continue
     const ids = road.path.map(addNode)
+    roadNodes.push({ road, ids })
     roadNodeIds.push(...ids)
     addRoadEdges(nodes, road, ids)
   }
   const fromNode = addNode(from.pos)
   const toNode = addNode(to.pos)
   for (const connectorNode of [fromNode, toNode]) {
-    let nearest = -1, nearestDistance = Infinity
-    for (const roadNode of roadNodeIds) {
-      const distance = meters(nodes[connectorNode].pos, nodes[roadNode].pos)
-      if (distance < nearestDistance) nearest = roadNode, nearestDistance = distance
+    let nearestRoad: RoadNodes | undefined
+    let nearestSegment = -1
+    let nearestProjection: ReturnType<typeof projectOnSegment> | undefined
+    for (const road of roadNodes) for (let i = 0; i < road.ids.length - 1; i++) {
+      const projection = projectOnSegment(nodes[connectorNode].pos, nodes[road.ids[i]].pos, nodes[road.ids[i + 1]].pos)
+      if (!nearestProjection || projection.meters < nearestProjection.meters) {
+        nearestRoad = road; nearestSegment = i; nearestProjection = projection
+      }
     }
-    if (nearest < 0 || nearestDistance > connectorSnapMeters) return null
-    connectNearby(nodes, connectorNode, nearest, connectorSnapMeters)
+    if (!nearestRoad || nearestSegment < 0 || !nearestProjection || nearestProjection.meters > connectorSnapMeters) return null
+    const projectionNode = addNode(nearestProjection.pos)
+    roadNodeIds.push(projectionNode)
+    connectProjection(nodes, nearestRoad, nearestSegment, projectionNode)
+    connectNearby(nodes, connectorNode, projectionNode, connectorSnapMeters)
   }
   for (let i = 0; i < roadNodeIds.length; i++)
     for (let j = i + 1; j < roadNodeIds.length; j++)

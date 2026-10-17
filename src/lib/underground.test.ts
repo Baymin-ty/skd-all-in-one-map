@@ -28,12 +28,13 @@ const valid: UndergroundMap = {
 }
 
 describe('地下图层数据校验', () => {
-  it('当前导入的地下图纸和候选线全部落在地上校园范围内', () => {
+  it('种子地下数据有效：保留参考图纸，道路和出入口由后台重新标注', () => {
     const map = JSON.parse(readFileSync(new URL('../../public/data/underground.json', import.meta.url), 'utf8')) as UndergroundMap
     expect(validateUndergroundMap(map, JSON.parse(readFileSync(new URL('../../public/data/campus.json', import.meta.url), 'utf8')))).toEqual([])
     expect(map.sources).toHaveLength(6)
-    expect(map.roads.length).toBeGreaterThan(10)
-    expect(map.connectors.length).toBeGreaterThan(10)
+    expect(map.roads).toHaveLength(18)
+    expect(map.connectors).toHaveLength(16)
+    expect(map.roads.every((road) => road.status === 'candidate')).toBe(true)
   })
 
   it('接受带来源、道路和候选上下点的地下图', () => {
@@ -48,5 +49,18 @@ describe('地下图层数据校验', () => {
   it('拒绝没有候选或确认状态的上下点', () => {
     const errors = validateUndergroundMap({ ...valid, connectors: [{ ...valid.connectors[0], status: 'draft' as never }] }, campus)
     expect(errors.some((e) => e.includes('c-1') && e.includes('status'))).toBe(true)
+  })
+
+  it('校验路网上图片点的端点、权重和图片 ID', () => {
+    const map: UndergroundMap = {
+      ...valid,
+      nodes: [{ id: 'n-a', pos: [121.6, 31.185] }, { id: 'n-b', pos: [121.601, 31.185] }],
+      points: [{ id: 'p-1', endpointId1: 'n-a', endpointWeight1: 0.25, endpointId2: 'n-b', endpointWeight2: 0.75, imageId: 'photo-1' }],
+    }
+    expect(validateUndergroundMap(map, campus)).toEqual([])
+    const errors = validateUndergroundMap({ ...map, points: [{ ...map.points![0], endpointId2: 'missing', endpointWeight1: 0.2, imageId: '' }] }, campus)
+    expect(errors.some((e) => e.includes('p-1') && e.includes('端点'))).toBe(true)
+    expect(errors.some((e) => e.includes('p-1') && e.includes('权重'))).toBe(true)
+    expect(errors.some((e) => e.includes('p-1') && e.includes('图片'))).toBe(true)
   })
 })

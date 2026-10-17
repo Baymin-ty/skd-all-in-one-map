@@ -14,6 +14,8 @@ import { POI_KINDS, poiKindLabel } from '../lib/catalog'
 import { buildLink, openShare } from '../lib/deepLink'
 import { homePlace, isFavorite, openProfile, setHomePlace, toggleFavorite } from '../lib/profile'
 import { displayText, t } from '../lib/i18n'
+import { isParcelStation, openParcelPlan, parcel } from '../lib/parcelStation'
+import { planSvg } from '../lib/parcelPlanSvg'
 
 const b = computed(() => (state.selected?.kind === 'building' ? buildingById(state.selected.id) : undefined))
 const poi = computed(() => (state.selected?.kind === 'poi' ? poiById(state.selected.id) : undefined))
@@ -27,6 +29,12 @@ const hours = computed(() => b.value?.hours?.zh || poi.value?.hours?.zh)
 const room = computed(() => b.value && state.room?.building === b.value.id ? state.room : null)
 const canteen = computed(() => discovery.canteens.find((c) => c.place === place.value?.id))
 const events = computed(() => place.value ? eventsIn('upcoming', 'all', place.value.id) : [])
+/** 快递站：卡片里放货架平面图的缩略图和取件码输入框 */
+const parcelStation = computed(() => !!poi.value && isParcelStation(poi.value))
+const parcelThumb = planSvg(false)
+function openShelves() {
+  if (poi.value) openParcelPlan(parcel.query, poi.value.id)
+}
 const category = computed(() => CHIPS.find((c) => c.id === (b.value?.walkway ? 'walkway' : b.value?.cat || (poi.value?.cat === 'life' ? 'service' : poi.value?.cat))))
 
 function sharePlace() {
@@ -87,6 +95,7 @@ function favorite() {
 
     <div class="actions">
       <button type="button" class="act primary" @click="routeHere('to')"><Ico name="walk" />{{ t('event.navigate') }}</button>
+      <button v-if="parcelStation" type="button" class="act" @click="openShelves"><Ico name="grid" />快递站地图</button>
       <button type="button" class="act" @click="routeHere('from')">从这出发</button>
       <button v-if="canteen" type="button" class="act" @click="openCanteen(canteen.id)"><Ico name="book" />食堂与菜单</button>
       <button v-if="b?.cat === 'housing'" type="button" class="act" :class="{ saved: isDorm }" @click="setDorm"><Ico :name="isDorm ? 'check' : 'housing'" />{{ isDorm ? '我的寝室' : '设为我的寝室' }}</button>
@@ -94,6 +103,18 @@ function favorite() {
       <button type="button" class="act" @click="sharePlace"><Ico name="external" />分享</button>
     </div>
 
+    <section v-if="parcelStation" class="sec parcel">
+      <h3>快递站地图 <small>输入取件码，对应货架标红</small></h3>
+      <form class="parcel-find" role="search" @submit.prevent="openShelves">
+        <Ico name="search" />
+        <input v-model="parcel.query" type="search" placeholder="取件码或货架号，如 15-3-2045" aria-label="取件码或货架号" enterkeyhint="search" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" />
+        <button type="submit" class="act primary small">找货架</button>
+      </form>
+      <button type="button" class="parcel-thumb" aria-label="打开快递站地图" @click="openShelves">
+        <span class="parcel-art" v-html="parcelThumb" />
+        <span class="parcel-open"><Ico name="expand" />打开快递站地图</span>
+      </button>
+    </section>
     <section v-if="canteen" class="sec"><h3>在这里吃</h3><CanteenRow :canteen="canteen" /></section>
     <CommunityEntry v-else-if="!b?.walkway && b?.cat !== 'gate'" :target="{ type: 'place', id: place.id, name: place.name.zh, subtitle: kind ? `${kind} · 来过的同学怎么说` : undefined }" />
 
@@ -148,4 +169,15 @@ function favorite() {
 .room-banner b { margin-right: 8px; font-size: 18px; font-variant-numeric: tabular-nums; color: var(--brand); }
 .room-banner span { font-size: 13px; font-weight: 600; color: var(--ink); }
 .room-banner small { display: block; margin-top: 2px; font-size: 11.5px; color: var(--ink-2); }
+.parcel h3 small { color: var(--ink-3); font-size: 12.5px; font-weight: 500; }
+.parcel-find { display: flex; align-items: center; gap: 8px; height: 44px; padding: 0 4px 0 14px; border-radius: 999px; background: var(--bg-2); color: var(--ink-2); font-size: 17px; }
+.parcel-find:focus-within { background: #fff; box-shadow: 0 0 0 2px var(--blue); }
+/* 16px：iOS 聚焦输入框时不自动放大页面 */
+.parcel-find input { flex: 1; min-width: 0; height: 100%; border: 0; outline: none; background: none; font-size: 16px; color: var(--ink); }
+.parcel-find input::-webkit-search-cancel-button { display: none; }
+.parcel-find .act { height: 36px; padding: 0 14px; font-size: 14px; }
+.parcel-thumb { position: relative; display: block; width: 100%; margin-top: 10px; padding: 10px; border: 1px solid var(--line); border-radius: 14px; background: #f3f4f7; cursor: pointer; }
+.parcel-art { display: block; aspect-ratio: 1980 / 378; pointer-events: none; }
+.parcel-open { position: absolute; right: 8px; bottom: 8px; display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; border-radius: 999px; background: #fffffff0; box-shadow: 0 1px 6px #0000001f; color: var(--ink); font-size: 12.5px; font-weight: 650; }
+@media (hover: hover) { .parcel-thumb:hover { border-color: #d6d6de; } }
 </style>

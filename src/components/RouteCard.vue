@@ -1,14 +1,10 @@
 <script setup lang="ts">
-import { closeRoute, computeRoute, finishUndergroundSketch, persistUndergroundSketchNow, setEnd, setRouteNetwork, startUndergroundSketch, state, undoUndergroundSketch } from '../lib/store'
+import { closeRoute, computeRoute, finishUndergroundSketch, persistUndergroundSketchNow, setEnd, startUndergroundSketch, state, undoUndergroundSketch } from '../lib/store'
 import { locator, myLocationEnd, simulateWalk, startLocating } from '../lib/locate'
 import Ico from './Ico.vue'
 import { isEnglish, t } from '../lib/i18n'
 
 const r = state.route
-function chooseNetwork(network: 'surface' | 'underground') {
-  if (network === r.network) return
-  setRouteNetwork(network)
-}
 function swap() {
   ;[r.from, r.to] = [r.to, r.from]
   computeRoute()
@@ -32,10 +28,6 @@ function fromMe() {
       <button type="button" class="close" :aria-label="isEnglish ? 'Close directions' : '关闭导航'" @click="closeRoute"><Ico name="close" /></button>
     </div>
 
-    <div class="route-network" role="tablist" aria-label="导航楼层">
-      <button type="button" :class="{ on: r.network === 'surface' }" role="tab" :aria-selected="r.network === 'surface'" @click="chooseNetwork('surface')">地面</button>
-      <button v-if="state.underground" type="button" :class="{ on: r.network === 'underground' }" role="tab" :aria-selected="r.network === 'underground'" @click="chooseNetwork('underground')">地下手绘</button>
-    </div>
     <div v-if="r.network === 'underground'" class="sketch-panel">
       <p class="sketch-note">地下道路和车辆出入口、电梯、楼梯点统一在后台维护。当前手绘草稿会保存在本机，进入后台后可继续编辑并保存。</p>
       <div class="sketch-actions">
@@ -70,9 +62,13 @@ function fromMe() {
 
     <div v-if="r.result" class="result">
       <p class="big">{{ r.result.minutes }} {{ isEnglish ? 'min' : '分钟' }} <span>· {{ r.result.meters }} {{ isEnglish ? 'm' : '米' }}</span></p>
-      <p v-if="r.result.coveredMeters" class="covered"><Ico name="walkway" /> {{ r.result.coveredMeters }} {{ isEnglish ? 'm covered' : '米在风雨长廊下' }}</p>
-      <p v-else-if="r.rain" class="muted">{{ isEnglish ? 'No covered walkway on this route' : '这条路线附近没有风雨长廊' }}</p>
-      <p class="legend"><i class="open" />{{ isEnglish ? 'Open air' : '露天' }} <i class="cov" />{{ isEnglish ? 'Covered' : '长廊下' }}</p>
+      <p v-if="Math.max(0, r.result.coveredMeters - r.result.undergroundMeters)" class="covered"><Ico name="walkway" /> {{ Math.max(0, r.result.coveredMeters - r.result.undergroundMeters) }} {{ isEnglish ? 'm under surface cover' : '米在地面遮挡下' }}</p>
+      <p v-if="r.result.undergroundMeters" class="under"><Ico name="stairs" /> {{ r.result.undergroundMeters }} {{ isEnglish ? 'm underground · rain safe' : '米在地下 · 不淋雨' }}</p>
+      <p v-if="r.rain && !r.result.coveredMeters" class="muted">{{ isEnglish ? 'No covered surface or underground segment on this route' : '这条路线没有地面遮挡或地下路段' }}</p>
+      <div v-if="r.result.transitions.length" class="transitions" aria-label="地上地下分界点">
+        <span v-for="transition in r.result.transitions" :key="`${transition.connectorId}-${transition.kind}`"><i :class="transition.kind" />{{ transition.label }}</span>
+      </div>
+      <p class="legend"><i class="open" />{{ isEnglish ? 'Open air' : '地上露天' }} <i class="cov" />{{ isEnglish ? 'Surface cover' : '地面有遮挡' }} <i v-if="r.result.undergroundMeters" class="ug" />{{ r.result.undergroundMeters ? (isEnglish ? 'Underground' : '地下不淋雨') : '' }}</p>
     </div>
     <div v-else-if="r.undergroundResult" class="result underground-result">
       <p class="big">B1 <span>· {{ r.undergroundResult.meters }} {{ isEnglish ? 'm' : '米' }}</span></p>
@@ -85,9 +81,6 @@ function fromMe() {
 </template>
 
 <style scoped>
-.route-network { display: flex; gap: 6px; margin-top: 10px; padding: 3px; border-radius: 12px; background: var(--bg-2); }
-.route-network button { flex: 1; padding: 8px 6px; border: 0; border-radius: 9px; background: transparent; color: var(--ink-2); font-size: 12px; cursor: pointer; }
-.route-network button.on { background: #fff; color: var(--brand); box-shadow: 0 1px 4px #00000012; font-weight: 700; }
 .sketch-panel { margin-top: 12px; padding: 12px; border: 1px dashed #c89adb; border-radius: 14px; background: #fcf7ff; }
 .sketch-note { margin: 0; color: #6d5378; font-size: 12px; line-height: 1.55; }
 .sketch-actions { display: grid; grid-template-columns: 1.4fr 1fr 1fr 1fr; gap: 6px; margin-top: 12px; }
@@ -119,11 +112,17 @@ function fromMe() {
 .big { margin: 0; font-size: 24px; font-weight: 750; }
 .big span { font-size: 15px; font-weight: 500; color: var(--ink-2); }
 .covered { display: flex; align-items: center; gap: 6px; margin: 4px 0 0; color: var(--walkway); font-weight: 600; font-size: 14px; }
+.under { display: flex; align-items: center; gap: 6px; margin: 4px 0 0; color: #8156a8; font-weight: 650; font-size: 14px; }
+.transitions { display: grid; gap: 4px; margin-top: 8px; color: #9a621d; font-size: 12px; }
+.transitions span { display: flex; align-items: center; gap: 6px; }
+.transitions i { display: inline-block; width: 9px; height: 9px; border: 2px solid #e89a31; border-radius: 50%; background: #fff7e8; }
+.transitions i.exit { background: #e89a31; }
 .legend { display: flex; align-items: center; gap: 6px; margin: 8px 0 0; font-size: 12px; color: var(--ink-3); }
 .legend i { width: 18px; height: 5px; border-radius: 3px; }
 .legend i + i, .legend i:not(:first-child) { margin-left: 8px; }
 .legend .open { background: var(--blue); }
 .legend .cov { background: var(--walkway); }
+.legend .ug { background: #8156a8; background-image: linear-gradient(90deg, transparent 0 45%, #fff 45% 60%, transparent 60%); }
 .legend .underground-line { background: #8156a8; background-image: linear-gradient(90deg, transparent 0 45%, #fff 45% 60%, transparent 60%); }
 .hint { margin-top: 12px; }
 .me-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 6px; }

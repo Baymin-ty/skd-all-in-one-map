@@ -6,6 +6,7 @@ import { CROWD_LABELS, crowdAt, crowdRevision } from '../lib/crowd'
 import { dateKey, nowTick } from '../lib/campusTime'
 import { endMin, fromMin, itemsOn, nowMinute, plan, startMin } from '../lib/today'
 import { homePlace, openProfile } from '../lib/profile'
+import { openParcelStationMap } from '../lib/parcelStation'
 import EventCard from './EventCard.vue'
 import Ico from './Ico.vue'
 
@@ -47,6 +48,7 @@ const todayCount = computed(() => itemsOn(plan.items, dateKey(nowTick.value)).le
     <!-- 第一排就是最常用的几件事，手机收起面板时也露在外面 -->
     <div class="quick">
       <button type="button" class="q-go" @click="openRoute()"><Ico name="walk" /><b>步行导航</b></button>
+      <button type="button" class="q-parcel" @click="openParcelStationMap"><Ico name="grid" /><b>快递站地图</b></button>
       <button type="button" class="q-rain" @click="openRoute(true)"><Ico name="rain" /><b>雨天路线</b></button>
       <button v-if="dorm" type="button" class="q-me" @click="goPersonal(dorm)"><Ico name="housing" /><b>回寝室</b></button>
       <button v-else type="button" class="q-me" @click="openProfile('places')"><Ico name="housing" /><b>设寝室</b></button>
@@ -108,6 +110,7 @@ const todayCount = computed(() => itemsOn(plan.items, dateKey(nowTick.value)).le
 .quick .q-go { border-color: var(--brand); background: var(--brand); color: #fff; }
 .quick .q-go .svgi { background: #ffffff26; }
 .quick .q-rain .svgi { background: #e6f5f8; color: var(--walkway); }
+.quick .q-parcel .svgi { background: var(--brand-soft); color: var(--brand); }
 .quick .q-me .svgi { background: #f3eefb; color: #6d4c9c; }
 .quick .q-mine .svgi { background: #e9effb; color: #2f5fc4; }
 @media (hover: hover) { .quick button:not(.q-go):hover { background: #f9f9fb; } .quick .q-go:hover { background: #941f25; } }
