@@ -48,7 +48,12 @@ function fromMe() {
     </div>
 
     <div v-if="r.network === 'surface'" class="rain-row">
-      <label class="rain-toggle"><input type="checkbox" :checked="state.rainMode" :disabled="!state.rainAvailable" @change="setRainMode(($event.target as HTMLInputElement).checked)" /><span>我要避雨！</span><small>{{ state.rainAvailable ? '使用避雨路网' : '暂无避雨版本' }}</small></label>
+      <label class="rain-toggle" :class="{ disabled: !state.rainAvailable }">
+        <input type="checkbox" :checked="state.rainMode" :disabled="!state.rainAvailable" @change="setRainMode(($event.target as HTMLInputElement).checked)" />
+        <span class="switch" aria-hidden="true"><span class="knob"></span></span>
+        <span class="label-text">我要避雨！</span>
+        <small>{{ state.rainAvailable ? '使用避雨路网' : '暂无避雨版本' }}</small>
+      </label>
     </div>
     <div v-if="r.network === 'surface'" class="me-row">
       <button v-if="!r.from?.live" type="button" class="text-link" @click="fromMe"><Ico name="target" />{{ locator.status === 'locating' ? (isEnglish ? 'Locating…' : '正在定位…') : t('route.myLocation') }}</button>
@@ -107,8 +112,13 @@ function fromMe() {
 .legend .underground-line { background: #8156a8; background-image: linear-gradient(90deg, transparent 0 45%, #fff 45% 60%, transparent 60%); }
 .hint { margin-top: 12px; }
 .rain-row { margin-top: 10px; padding: 9px 11px; border-radius: 10px; background: #eef8ff; }
-.rain-toggle { display: flex; align-items: center; gap: 8px; color: #17628d; font-weight: 700; font-size: 13px; cursor: pointer; }
-.rain-toggle input { accent-color: #168bd0; }
+.rain-toggle { display: flex; align-items: center; gap: 10px; color: #17628d; font-weight: 700; font-size: 13px; cursor: pointer; }
+.rain-toggle input { position: absolute; opacity: 0; width: 0; height: 0; }
+.rain-toggle .switch { position: relative; width: 38px; height: 22px; border-radius: 11px; background: #c8d8e4; transition: background 0.2s; flex-shrink: 0; }
+.rain-toggle input:checked + .switch { background: #168bd0; }
+.rain-toggle .knob { position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: #fff; transition: transform 0.2s; box-shadow: 0 1px 3px rgba(0,0,0,0.2); }
+.rain-toggle input:checked + .switch .knob { transform: translateX(16px); }
+.rain-toggle.disabled { opacity: 0.6; cursor: not-allowed; }
 .rain-toggle small { margin-left: auto; color: #6b8798; font-weight: 400; font-size: 11px; }
 .me-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 6px; }
 .me-row .text-link, .live-note { display: inline-flex; align-items: center; gap: 4px; }
