@@ -1,3 +1,4 @@
+import type { RouteEdgeStep } from './streetViewOrder'
 import type { Campus, LngLat } from './types'
 import { meters, polyDist } from './measure'
 
@@ -25,6 +26,8 @@ export interface RouteTransition {
 export interface RouteSegment {
   path: LngLat[]
   layer: RouteLayer
+  /** 地下段经过的有向路网边序列（用于街景点排序）。 */
+  edges?: RouteEdgeStep[]
 }
 
 export interface RouteResult {

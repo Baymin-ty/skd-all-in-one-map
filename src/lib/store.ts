@@ -1,3 +1,4 @@
+import { orderStreetViewPoints } from './streetViewOrder'
 import { computed, reactive } from 'vue'
 import type { IconName } from './icons'
 import { groupBuildings, type BuildingGroup } from './groups'
@@ -27,7 +28,6 @@ import { validateUndergroundMap, type UndergroundMap } from './underground'
 import { mergeUndergroundSketch } from './undergroundSketch'
 import { streetViewPointPosition } from './undergroundGraph'
 import { streetViewUrl } from './streetview'
-import { meters } from './measure'
 
 /** 当前地下地图中连通地面的车辆坡道（ramp）位置；在“我要避雨！”强制走地下时，把这些位置也视为地面可走，以便步行导航能走到车辆出入口。 */
 function rampConnectorPositions(underground: UndergroundMap | null): LngLat[] {
@@ -209,39 +209,16 @@ export const mapApi = {
 }
 
 let toastTimer = 0
-function projectOnPath(p: LngLat, path: LngLat[]) {
-  let travelled = 0
-  let best = { distance: Infinity, along: 0 }
-  for (let i = 1; i < path.length; i++) {
-    const a = path[i - 1], b = path[i]
-    const k = Math.cos(((a[1] + b[1] + p[1]) / 3) * Math.PI / 180)
-    const dx = (b[0] - a[0]) * k, dy = b[1] - a[1]
-    const px = (p[0] - a[0]) * k, py = p[1] - a[1]
-    const t = Math.max(0, Math.min(1, (px * dx + py * dy) / (dx * dx + dy * dy || 1)))
-    const projected: LngLat = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]
-    const distance = meters(p, projected)
-    if (distance < best.distance) best = { distance, along: travelled + meters(a, b) * t }
-    travelled += meters(a, b)
-  }
-  return best
-}
-
 function streetViewPointsForRoute() {
   const map = state.underground
-  const result = state.route.result
-  // 只取地下段；segment.path 已经是从当前起点到终点的有向路径，
-  // 因而按它的累计距离排序天然支持反向导航。
-  const segment = result?.segments.find((s) => s.layer === 'underground')
-  if (!map?.points?.length || !segment?.path.length) return []
+  // 只取地下段；按路线实际经过的有向边序列排序，天然支持反向导航，且不会混入平行/旁路边上的点。
+  const segment = state.route.result?.segments.find((s) => s.layer === 'underground')
+  if (!map?.points?.length || !segment?.edges?.length) return []
   const graph = { nodes: map.nodes, edges: map.edges, points: map.points, entrances: map.connectors }
-  return map.points.map((point) => {
+  return orderStreetViewPoints(segment.edges, map.points).flatMap((point) => {
     const pos = streetViewPointPosition(graph, point)
-    if (!pos) return null
-    const projection = projectOnPath(pos, segment.path)
-    return { id: point.id, pos, imageUrl: streetViewUrl(point.imageId), ...projection }
-  }).filter((point): point is { id: string; pos: LngLat; imageUrl: string; distance: number; along: number } => !!point && point.distance <= 30)
-    .sort((a, b) => a.along - b.along)
-    .map(({ id, pos, imageUrl }) => ({ id, pos, imageUrl }))
+    return pos ? [{ id: point.id, pos, imageUrl: streetViewUrl(point.imageId) }] : []
+  })
 }
 export function openUndergroundStreetView() {
   const points = streetViewPointsForRoute()
@@ -265,8 +242,7 @@ export function stopStreetViewNavigation() {
   s.active = false
   s.open = false
   s.pending = false
-  const path = state.route.result?.segments.flatMap((x) => x.path) || []
-  if (path.length) mapApi.fit(path, 19)
+  // 不在这里 fit：此时地图仍是街景小窗尺寸；MapView 在容器恢复全尺寸后再适配整条路线。
 }
 export function nextStreetViewPoint() {
   const s = state.route.streetView

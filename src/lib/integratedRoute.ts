@@ -83,7 +83,7 @@ export function findIntegratedRoute(from: Target, to: Target, map: UndergroundMa
     if (!underground) return null
     return routeMetrics([
       ...start.segments,
-      { path: underground.path, layer: 'underground' },
+      { path: underground.path, layer: 'underground', edges: underground.edges },
       ...finish.segments,
     ], [transition(connectors[enterIdx], 'enter'), transition(connectors[exitIdx], 'exit')])
   }  if (options.forceUnderground) {
@@ -102,7 +102,7 @@ export function findIntegratedRoute(from: Target, to: Target, map: UndergroundMa
       if (underground) {
         const segments: RouteSegment[] = [
           ...start.segments,
-          { path: underground.path, layer: 'underground' },
+          { path: underground.path, layer: 'underground', edges: underground.edges },
           ...finish.segments,
         ]
         const transitions = [transition(connectors[enterIdx], 'enter'), transition(connectors[exitIdx], 'exit')]
@@ -126,7 +126,7 @@ export function findIntegratedRoute(from: Target, to: Target, map: UndergroundMa
       if (!underground) continue
       const segments: RouteSegment[] = [
         ...start.segments,
-        { path: underground.path, layer: 'underground' },
+        { path: underground.path, layer: 'underground', edges: underground.edges },
         ...finish.segments,
       ]
       const transitions = [transition(connectors[i], 'enter'), transition(connectors[j], 'exit')]

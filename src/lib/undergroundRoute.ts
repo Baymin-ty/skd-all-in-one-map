@@ -1,4 +1,5 @@
 import { meters } from './measure'
+import type { RouteEdgeStep } from './streetViewOrder'
 import type { LngLat, UndergroundConnector, UndergroundMap } from './types'
 
 export type UndergroundRouteMap = Pick<UndergroundMap, 'floor' | 'nodes' | 'edges'> & {
@@ -9,6 +10,8 @@ export interface UndergroundRouteResult {
   connectorIds: [string, string]
   path: LngLat[]
   meters: number
+  /** 路线依次经过的原始路网边（含起止投影造成的部分边）。 */
+  edges: RouteEdgeStep[]
 }
 export interface UndergroundRouteOptions { connectorSnapMeters?: number }
 
@@ -37,8 +40,9 @@ export function findUndergroundRoute(map: UndergroundRouteMap, fromId: string, t
   }
   const segments = map.edges.flatMap((e) => {
     const a = index.get(e.a), b = index.get(e.b)
-    return a === undefined || b === undefined ? [] : [{ a, b, splits: [{ t: 0, id: a }, { t: 1, id: b }] }]
+    return a === undefined || b === undefined ? [] : [{ a, b, edge: e, splits: [{ t: 0, id: a }, { t: 1, id: b }] }]
   })
+  const splitOf = new Map<number, { segment: typeof segments[number]; t: number }>()
   const attach = (connector: typeof from) => {
     const id = add(connector.pos)
     if (connector.node) {
@@ -54,6 +58,7 @@ export function findUndergroundRoute(map: UndergroundRouteMap, fromId: string, t
     if (!best || best.projection.distance > (options.connectorSnapMeters ?? 45)) return null
     const projected = add(best.projection.pos)
     best.segment.splits.push({ t: best.projection.t, id: projected })
+    splitOf.set(projected, { segment: best.segment, t: best.projection.t })
     link(id, projected)
     return id
   }
@@ -75,8 +80,24 @@ export function findUndergroundRoute(map: UndergroundRouteMap, fromId: string, t
       dist[edge.to] = dist[current] + edge.cost; prev[edge.to] = current
     }
   }
-  const path: LngLat[] = []
-  for (let i = end; i >= 0; i = prev[i]) path.push([...positions[i]])
-  path.reverse()
-  return { floor: map.floor, connectorIds: [fromId, toId], path, meters: Math.round(dist[end]) }
+  const path: LngLat[] = [], ids: number[] = []
+  for (let i = end; i >= 0; i = prev[i]) { path.push([...positions[i]]); ids.push(i) }
+  path.reverse(); ids.reverse()
+  const edges: RouteEdgeStep[] = []
+  const paramOn = (segment: typeof segments[number], id: number) =>
+    splitOf.get(id)?.segment === segment ? splitOf.get(id)!.t : id === segment.a ? 0 : id === segment.b ? 1 : null
+  for (let k = 1; k < ids.length; k++) {
+    const u = ids[k - 1], v = ids[k]
+    const candidates = [splitOf.get(u)?.segment, splitOf.get(v)?.segment].filter((x): x is typeof segments[number] => !!x)
+    if (!candidates.length) candidates.push(...segments.filter((s) => (s.a === u && s.b === v) || (s.a === v && s.b === u)))
+    for (const segment of candidates) {
+      const from = paramOn(segment, u), to = paramOn(segment, v)
+      if (from === null || to === null || from === to) continue
+      const last = edges[edges.length - 1]
+      if (last && last.a === segment.edge.a && last.b === segment.edge.b && last.to === from) last.to = to
+      else edges.push({ a: segment.edge.a, b: segment.edge.b, from, to })
+      break
+    }
+  }
+  return { floor: map.floor, connectorIds: [fromId, toId], path, meters: Math.round(dist[end]), edges }
 }

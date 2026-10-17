@@ -597,7 +597,6 @@ function drawCurrentStreetViewPoint() {
   const current = state.route.streetView.open ? state.route.streetView.points[state.route.streetView.index] : null
   if (!current) return
   L.circleMarker(toLatLng(current.pos), { pane: 'streetview-current-pane', radius: 9, color: '#fff', weight: 3, fillColor: '#f5c542', fillOpacity: 1, interactive: false, bubblingMouseEvents: false }).addTo(streetViewCurrentLayer)
-  L.circleMarker(toLatLng(current.pos), { pane: 'streetview-current-pane', radius: 18, color: '#f5c542', weight: 2.5, fillOpacity: 0, className: 'streetview-current-pulse', interactive: false, bubblingMouseEvents: false }).addTo(streetViewCurrentLayer)
   streetViewCurrentLayer.eachLayer((layer) => {
     const bringToFront = (layer as L.Layer & { bringToFront?: () => void }).bringToFront
     bringToFront?.call(layer)
@@ -657,7 +656,7 @@ function drawRoute() {
   L.marker(toLatLng(last), { icon: L.divIcon({ className: '', html: `<div class="rend">${ICONS.pin}</div>`, iconSize: [0, 0] }), interactive: false, zIndexOffset: 1300 }).addTo(routeLayer)
   for (const boundary of r.transitions) {
     const entering = boundary.kind === 'enter'
-    L.circleMarker(toLatLng(boundary.pos), { radius: 7, color: '#e89a31', weight: 3, fillColor: entering ? '#fff7e8' : '#e89a31', fillOpacity: 1, interactive: false, bubblingMouseEvents: false }).addTo(routeLayer)
+    L.circleMarker(toLatLng(boundary.pos), { radius: 7, color: '#fff', weight: 3, fillColor: '#e89a31', fillOpacity: 1, interactive: false, bubblingMouseEvents: false }).addTo(routeLayer)
     L.marker(toLatLng(boundary.pos), {
       icon: L.divIcon({ className: '', html: `<span class="route-transition ${entering ? 'enter' : 'exit'}">${entering ? '↓' : '↑'}</span>`, iconSize: [22, 22], iconAnchor: [11, 11] }),
       title: boundary.label, interactive: entering, zIndexOffset: 1250,
@@ -702,13 +701,47 @@ function fitStreetView(pts: LngLat[], animate = true) {
 }
 
 let streetViewFocusToken = 0
+/** 地图容器在全屏/街景小窗之间切换（带 CSS transition）期间为 true。 */
+let mapResizePending = false
+let pendingStreetViewFocus: LngLat | null = null
+let mapResizeCleanup: (() => void) | null = null
+/** 等地图容器尺寸过渡结束（transitionend 或 350ms 兜底）后执行一次。 */
+function afterMapResize(cb: () => void) {
+  mapResizeCleanup?.()
+  const node = el.value
+  let done = false
+  const finish = () => {
+    if (done) return
+    done = true
+    cleanup()
+    cb()
+  }
+  const onEnd = (e: TransitionEvent) => { if (e.target === node) finish() }
+  const timer = window.setTimeout(finish, 350)
+  const cleanup = () => {
+    clearTimeout(timer)
+    node?.removeEventListener('transitionend', onEnd)
+    if (mapResizeCleanup === cleanup) mapResizeCleanup = null
+  }
+  mapResizeCleanup = cleanup
+  node?.addEventListener('transitionend', onEnd)
+}
+function applyStreetViewFocus(p: LngLat) {
+  if (!state.route.streetView.open || !map) return
+  map.invalidateSize({ pan: false })
+  // 切换图片和地图位置必须是同一个原子步骤；不用 flyTo，避免快速点击时图片已经变了而地图还在飞向上一个点。
+  map.setView(toLatLng(p), Math.max(map.getZoom(), 19), { animate: false })
+}
 function focusStreetView(p: LngLat) {
   const token = ++streetViewFocusToken
+  // 刚进入街景时容器仍在缩成小窗：先记下目标，等尺寸稳定后再定位。
+  if (mapResizePending || !el.value?.classList.contains('streetview-map')) {
+    pendingStreetViewFocus = p
+    return
+  }
   requestAnimationFrame(() => {
-    if (token !== streetViewFocusToken || !state.route.streetView.open || !map) return
-    map.invalidateSize({ pan: false })
-    // 切换图片和地图位置必须是同一个原子步骤；不用 flyTo，避免快速点击时图片已经变了而地图还在飞向上一个点。
-    map.setView(toLatLng(p), Math.max(map.getZoom(), 19), { animate: false })
+    if (token !== streetViewFocusToken) return
+    applyStreetViewFocus(p)
   })
 }
 
@@ -725,6 +758,14 @@ function restoreFullMapAfterStreetView() {
   drawCrowd()
   drawUnderground()
   drawUndergroundSketch()
+  // 容器恢复全尺寸之后再适配整条路线；期间若又进入街景则放弃。
+  afterMapResize(() => {
+    mapResizePending = false
+    if (state.route.streetView.open || !map) return
+    map.invalidateSize({ pan: false })
+    const path = state.route.result?.segments.flatMap((x) => x.path) || []
+    if (path.length) fit(path, 19)
+  })
 }
 
 function drawCrowd() {
@@ -953,6 +994,7 @@ onMounted(() => {
   if (import.meta.env.DEV) (window as unknown as { __map: L.Map }).__map = map
 })
 onBeforeUnmount(() => {
+  mapResizeCleanup?.()
   clearTimeout(sheetTimer)
   cancelAnimationFrame(declutterFrame)
   labelInteraction?.destroy()
@@ -976,9 +1018,21 @@ watch(() => state.pois, () => { drawPoiTargets(); drawPois() }, { deep: true })
 watch(() => [state.route.result, state.route.undergroundResult, state.route.streetView.open, state.route.streetView.index], drawRoute)
 watch(() => state.route.streetView.open, (open) => {
   el.value?.classList.toggle('streetview-map', open)
-  if (open) drawStreetViewLayers(true)
-  else restoreFullMapAfterStreetView()
-  requestAnimationFrame(() => map?.invalidateSize({ pan: false }))
+  mapResizePending = true
+  if (open) {
+    drawStreetViewLayers(true)
+    afterMapResize(() => {
+      mapResizePending = false
+      if (!state.route.streetView.open || !map) return
+      map.invalidateSize({ pan: false })
+      const p = pendingStreetViewFocus
+      pendingStreetViewFocus = null
+      if (p) applyStreetViewFocus(p)
+    })
+  } else {
+    pendingStreetViewFocus = null
+    restoreFullMapAfterStreetView()
+  }
 })
 watch(() => [state.entranceBuilding, state.route.open, state.route.result, state.route.from, state.route.to], () => { drawEntrances(); drawLabels(); drawPois() })
 watch(() => [state.panel, state.eventId, state.radar.range, state.radar.cat, state.radar.place, state.route.open, discovery.events, nowTick.value, tm.open], drawEvents)
@@ -1048,9 +1102,7 @@ const toolsHidden = computed(() => tm.open || parcel.open || !ui.desktop && ui.s
 <style>
 .map { position: absolute; inset: 0; background: #fbfaf7; isolation: isolate; transition: inset .25s, width .25s, height .25s, border-radius .25s; }
 .map.streetview-map { z-index: 3001; top: 18px; right: 18px; left: auto; bottom: auto; width: min(34vw, 420px); height: min(30vh, 260px); border: 3px solid #fff; border-radius: 16px; box-shadow: 0 8px 28px #0008; overflow: hidden; }
-.streetview-current-pulse { animation: streetview-pulse 1.5s ease-out infinite; }
-.streetview-point-marker { display: block; width: 10px; height: 10px; border: 2px solid #fff; border-radius: 2px; background: #f5c542; box-shadow: 0 1px 4px #0008; }
-@keyframes streetview-pulse { 0% { opacity: .9; transform: scale(.7); } 100% { opacity: 0; transform: scale(1.6); } }
+ .streetview-point-marker { display: block; width: 10px; height: 10px; border: 2px solid #fff; border-radius: 2px; background: #f5c542; box-shadow: 0 1px 4px #0008; }
 .map.leaflet-container { font: inherit; }
 .map-opacity-cutout { transition: fill 240ms ease-in-out; }
 .building-outline { transition: stroke 240ms ease-in-out, stroke-opacity 240ms ease-in-out, stroke-width 240ms ease-in-out, fill-opacity 240ms ease-in-out; }
@@ -1112,7 +1164,7 @@ const toolsHidden = computed(() => tm.open || parcel.open || !ui.desktop && ui.s
 .rend { position: absolute; transform: translate(-50%, -100%); color: #d93025; font-size: 34px; line-height: 0; filter: drop-shadow(0 2px 2px #0000004d); }
 .underground-rend { color: #8156a8; }
 .underground-connector { display: grid; place-items: center; width: 26px; height: 26px; border: 2px solid #fff; border-radius: 50%; background: var(--connector-color); box-shadow: 0 2px 5px #0006; color: #fff; font-size: 11px; font-weight: 800; }
-.route-transition { display: grid; place-items: center; width: 22px; height: 22px; border: 2px solid #e89a31; border-radius: 50%; background: #fff7e8; box-shadow: 0 1px 5px #0004; color: #9a621d; font-size: 15px; font-weight: 800; line-height: 1; }
+.route-transition { display: grid; place-items: center; width: 22px; height: 22px; border: 2px solid #fff; border-radius: 50%; background: #e89a31; box-shadow: 0 1px 5px #0004; color: #fff; font-size: 15px; font-weight: 800; line-height: 1; }
 .route-transition.exit { background: #e89a31; color: #fff; }
 .rend svg { fill: #fff; }
 /* 从教室号搜索进来：选中的楼名后面跟房间号 */
