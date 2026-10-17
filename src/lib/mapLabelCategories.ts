@@ -1,4 +1,4 @@
-import { PLACE_COLORS, WALKWAY_COLOR } from './catalog'
+import { PLACE_COLORS } from './catalog'
 import type { IconName } from './icons'
 import type { Building, Poi } from './types'
 
@@ -9,7 +9,6 @@ export const MAP_LABEL_CATEGORIES = [
   { id: 'sports', name: '运动', icon: 'sports', color: PLACE_COLORS.sports },
   { id: 'service', name: '生活服务', icon: 'service', color: PLACE_COLORS.service },
   { id: 'gate', name: '校门', icon: 'gate', color: PLACE_COLORS.gate },
-  { id: 'walkway', name: '风雨长廊', icon: 'walkway', color: WALKWAY_COLOR },
   { id: 'transport', name: '交通停车', icon: 'parking', color: '#6e7b94' },
   { id: 'events', name: '活动', icon: 'calendar', color: '#a86581' },
 ] as const satisfies ReadonlyArray<{ id: string; name: string; icon: IconName; color: string }>
@@ -26,8 +25,8 @@ export function defaultMapLabels(): MapLabelVisibility {
   return { ...allMapLabels(true), transport: false }
 }
 
-export function buildingLabelCategory(b: Pick<Building, 'cat' | 'walkway'>): MapLabelCategory {
-  return b.walkway ? 'walkway' : b.cat
+export function buildingLabelCategory(b: Pick<Building, 'cat'>): MapLabelCategory {
+  return b.cat
 }
 
 export function poiLabelCategory(p: Pick<Poi, 'cat'>): MapLabelCategory {

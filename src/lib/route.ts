@@ -4,7 +4,6 @@ import { meters, polyDist } from './measure'
 /**
  * 步行导航：在数据包的统一步行栅格（250×172 格，每格约 5.4 m）上跑 8 邻接 Dijkstra。
  * 构建阶段的手绘路和 OSM 补充路已经合并；运行时只关心「可走 / 不可走」，不再按来源改变路线。
- * 雨天模式下露天的格子更贵，路线主要绕向风雨长廊和地下；宿舍/食堂楼边只提供很小的挡雨收益。
  */
 export interface Target {
   point: LngLat
@@ -25,36 +24,20 @@ export interface RouteTransition {
 }
 export interface RouteSegment {
   path: LngLat[]
-  covered: boolean
-  /** 建筑边缘的少量挡雨；它的雨天代价高于风雨长廊和地下。 */
-  sheltered?: boolean
   layer: RouteLayer
 }
 
 export interface RouteResult {
-  /** 首尾相接的路段，covered = 在风雨长廊或地下，sheltered = 建筑边缘的局部挡雨 */
+  /** 首尾相接的路段。 */
   segments: RouteSegment[]
   meters: number
-  coveredMeters: number
   minutes: number
   /** 地下段实际长度；纯地面路线为 0。 */
   undergroundMeters: number
   /** 进入地下、回到地面的顺序化提示点。 */
   transitions: RouteTransition[]
-  /** 雨天比较路线时使用的代价，不等同于实际距离。 */
-  routingCost: number
 }
 
-/** 露天路段在雨天的代价倍数：沿着长廊走时，愿意为每 2 m 长廊多绕 1 m 露天路 */
-export const RAIN_PENALTY = 2
-/** 宿舍/食堂楼边的局部挡雨只提供轻微收益，避免压过地下车库和风雨长廊。 */
-export const SHELTER_PENALTY = 1.25
-/** 连续十米以内的露天段允许直接走地面，只有超出的部分产生雨天代价。 */
-export const SHORT_EXPOSURE_METERS = 10
-/** 2.5D 手绘图里长廊顶棚画得比地面偏北，轮廓外这么多米内的格子也算在长廊下 */
-const COVER_RADIUS = 6
-/** 建筑边缘只有贴楼的一小圈算作轻微挡雨，学院建筑不会传入这类多边形。 */
-const SHELTER_RADIUS = 3
 const WALK_SPEED = 75 // m/min
 
 let W = 0
@@ -63,35 +46,29 @@ let g: Campus['grid']
 let mx = 5.4
 let my = 5.4
 let walk = new Uint8Array(0) // 0 不能走，1 统一路网
-let covered = new Uint8Array(0)
-let sheltered = new Uint8Array(0)
 
 const cellOf = (p: LngLat) => [Math.floor((g.y0 - p[1]) / g.dy), Math.floor((p[0] - g.x0) / g.dx)] as const
 export const posOf = (c: number): LngLat => [g.x0 + ((c % W) + 0.5) * g.dx, g.y0 - (Math.floor(c / W) + 0.5) * g.dy]
 const inGrid = (i: number, j: number) => i >= 0 && j >= 0 && i < H && j < W
 
-export function initRouting(campus: Campus, walkways: LngLat[][], shelterPolys: LngLat[][] = []) {
+export function initRouting(campus: Campus) {
   g = campus.grid
   H = g.rows.length
   W = g.rows[0].length
   mx = g.dx * 111320 * Math.cos((g.y0 * Math.PI) / 180)
   my = g.dy * 110574
   walk = new Uint8Array(W * H)
-  covered = new Uint8Array(W * H)
-  sheltered = new Uint8Array(W * H)
   for (let i = 0; i < H; i++)
     for (let j = 0; j < W; j++) {
       const ch = g.rows[i][j]
       walk[i * W + j] = ch === '0' || ch === '2' ? 1 : 0
     }
-  for (const poly of walkways) for (const c of cellsNear(poly, COVER_RADIUS)) covered[c] = 1
-  for (const poly of shelterPolys) for (const c of cellsNear(poly, SHELTER_RADIUS)) sheltered[c] = 1
 }
 
-/** 所有可走格子，画路网用 */
+/** 所有可走格子的中心坐标。 */
 export function walkableCells() {
-  const out: { pos: LngLat; covered: boolean; sheltered: boolean }[] = []
-  for (let c = 0; c < walk.length; c++) if (walk[c]) out.push({ pos: posOf(c), covered: !!covered[c], sheltered: !covered[c] && !!sheltered[c] })
+  const out: { pos: LngLat }[] = []
+  for (let c = 0; c < walk.length; c++) if (walk[c]) out.push({ pos: posOf(c) })
   return out
 }
 
@@ -194,7 +171,30 @@ class Heap {
 
 const DIRS: [number, number][] = [[-1, 0], [1, 0], [0, -1], [0, 1], [-1, -1], [-1, 1], [1, -1], [1, 1]]
 
-export function findRoute(from: Target, to: Target, rain = false): RouteResult | null {
+/**
+ * 统一地面路网的实际八邻接边，不是道路中线，也不做寻路路径的平滑。
+ * 每个无向方向只取正向，从连续可走格的起点遍历，恰好展示每条边一次。
+ * 仅合并同方向连续边，保留各格中心；斜边与 DIRS 一致，不额外禁止切角。
+ */
+export function walkablePaths(): LngLat[][] {
+  const paths: LngLat[][] = []
+  for (const [di, dj] of DIRS) {
+    if (di < 0 || (di === 0 && dj < 0)) continue
+    for (let i = 0; i < H; i++)
+      for (let j = 0; j < W; j++) {
+        if (!walk[i * W + j]) continue
+        // 有同方向前驱的格子由前驱所在的连续段负责，避免重复边。
+        if (inGrid(i - di, j - dj) && walk[(i - di) * W + j - dj]) continue
+        const path = [posOf(i * W + j)]
+        for (let ni = i + di, nj = j + dj; inGrid(ni, nj) && walk[ni * W + nj]; ni += di, nj += dj)
+          path.push(posOf(ni * W + nj))
+        if (path.length > 1) paths.push(path)
+      }
+  }
+  return paths
+}
+
+export function findRoute(from: Target, to: Target): RouteResult | null {
   if (!walk.length) return null
   const starts = anchors(from)
   const goals = anchors(to)
@@ -217,8 +217,7 @@ export function findRoute(from: Target, to: Target, rain = false): RouteResult |
       const j = uj + dj
       const v = i * W + j
       if (!inGrid(i, j) || !walk[v]) continue
-      let step = Math.hypot(di * my, dj * mx)
-      if (rain && !covered[v]) step *= sheltered[v] ? SHELTER_PENALTY : RAIN_PENALTY
+      const step = Math.hypot(di * my, dj * mx)
       if (dist[u] + step < dist[v]) {
         dist[v] = dist[u] + step
         prev[v] = u
@@ -231,64 +230,29 @@ export function findRoute(from: Target, to: Target, rain = false): RouteResult |
   for (let c = end; c >= 0; c = prev[c]) cells.push(c)
   cells.reverse()
 
-  // 按「在不在长廊下」切成几段，每段各自拉直，再首尾相接
-  const segments: RouteResult['segments'] = []
-  for (let a = 0; a < cells.length; ) {
-    let b = a
-    const segmentState = covered[cells[a]] ? 2 : sheltered[cells[a]] ? 1 : 0
-    while (b + 1 < cells.length) {
-      const nextState = covered[cells[b + 1]] ? 2 : sheltered[cells[b + 1]] ? 1 : 0
-      if (nextState !== segmentState) break
-      b++
-    }
-    const segmentCovered = segmentState === 2
-    const segmentSheltered = segmentState === 1
-    const path = smooth(cells.slice(a, b + 1)).map(posOf)
-    if (b + 1 < cells.length) path.push(posOf(cells[b + 1]))
-    segments.push({ path, covered: segmentCovered, sheltered: segmentSheltered, layer: 'surface' })
-    a = b + 1
-  }
+  const segments: RouteSegment[] = [{ path: smooth(cells).map(posOf), layer: 'surface' }]
   const head = starts.get(cells[0])
   const tail = goals.get(end)
   if (head) segments[0].path.unshift(head)
   if (tail) segments[segments.length - 1].path.push(tail)
 
   let total = 0
-  let under = 0
   for (const s of segments) {
     let m = 0
     for (let i = 1; i < s.path.length; i++) m += meters(s.path[i - 1], s.path[i])
     total += m
-    if (s.covered) under += m
   }
   const result: RouteResult = {
     segments,
     meters: Math.round(total),
-    coveredMeters: Math.round(under),
     minutes: Math.max(1, Math.round(total / WALK_SPEED)),
     undergroundMeters: 0,
     transitions: [],
-    routingCost: routeWeatherCost(segments),
   }
   return result
 }
 
-/** 计算路线在雨天的比较代价；短露天段只按实际距离，长露天段才加价。 */
-export function routeWeatherCost(segments: Pick<RouteSegment, 'path' | 'covered' | 'sheltered' | 'layer'>[], shortExposureMeters = SHORT_EXPOSURE_METERS) {
-  let cost = 0
-  for (const segment of segments) {
-    let length = 0
-    for (let i = 1; i < segment.path.length; i++) length += meters(segment.path[i - 1], segment.path[i])
-    if (segment.layer === 'underground' || segment.covered) cost += length
-    else {
-      const penalty = segment.sheltered ? SHELTER_PENALTY : RAIN_PENALTY
-      cost += length + Math.max(0, length - shortExposureMeters) * (penalty - 1)
-    }
-  }
-  return cost
-}
-
-/** 去掉中间格子，只要两个保留点之间的直线还压在同类（可走、同样有没有顶棚）的格子上 */
+/** 去掉中间格子，只要两个保留点之间的直线还压在可走格子上。 */
 function smooth(cells: number[]) {
   if (cells.length < 3) return cells
   const out = [cells[0]]
@@ -304,8 +268,6 @@ function smooth(cells: number[]) {
 }
 
 function lineClear(a: number, b: number) {
-  const cov = covered[a]
-  const shelter = !cov && sheltered[a]
   let [i0, j0] = [Math.floor(a / W), a % W]
   const [i1, j1] = [Math.floor(b / W), b % W]
   const di = Math.abs(i1 - i0)
@@ -315,7 +277,7 @@ function lineClear(a: number, b: number) {
   let err = dj - di
   for (;;) {
     const c = i0 * W + j0
-    if (!walk[c] || covered[c] !== cov || (!cov && sheltered[c] !== shelter)) return false
+    if (!walk[c]) return false
     if (i0 === i1 && j0 === j1) return true
     const e2 = 2 * err
     if (e2 > -di) (err -= di), (j0 += sj)

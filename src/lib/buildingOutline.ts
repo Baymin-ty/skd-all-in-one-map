@@ -1,13 +1,5 @@
 import type { PathOptions, PolylineOptions } from 'leaflet'
 import type { MapSettings } from './mapSettings'
-import { WALKWAY_COLOR } from './catalog'
-
-export function walkwayOutline(strong = false): PathOptions {
-  return {
-    stroke: true, color: WALKWAY_COLOR, weight: strong ? 3 : 2,
-    opacity: strong ? 0.75 : 0.5, dashArray: strong ? undefined : '6 4', fillOpacity: 0,
-  }
-}
 
 export const constructionOutline: PolylineOptions = {
   smoothFactor: 0, color: '#e0891f', weight: 1.5, dashArray: '5 4', fillColor: '#e0891f', fillOpacity: 0.05,

@@ -22,7 +22,7 @@ const poi = computed(() => (state.selected?.kind === 'poi' ? poiById(state.selec
 const group = computed(() => (b.value ? groupOf(b.value.id) : undefined))
 const place = computed(() => b.value ?? poi.value)
 const kind = computed(() => {
-  if (b.value) return b.value.walkway ? '风雨长廊' : state.categories[b.value.cat]?.zh
+  if (b.value) return state.categories[b.value.cat]?.zh
   return poi.value && poiKindLabel(poi.value)
 })
 const hours = computed(() => b.value?.hours?.zh || poi.value?.hours?.zh)
@@ -35,7 +35,7 @@ const parcelThumb = planSvg(false)
 function openShelves() {
   if (place.value) openParcelPlan(parcel.query, place.value.id)
 }
-const category = computed(() => CHIPS.find((c) => c.id === (b.value?.walkway ? 'walkway' : b.value?.cat || (poi.value?.cat === 'life' ? 'service' : poi.value?.cat))))
+const category = computed(() => CHIPS.find((c) => c.id === (b.value?.cat || (poi.value?.cat === 'life' ? 'service' : poi.value?.cat))))
 
 function sharePlace() {
   if (!place.value) return
@@ -76,7 +76,7 @@ function favorite() {
     <button v-else-if="category" type="button" class="crumb" @click="setChip(category.id)"><Ico name="back" />返回{{ category.zh }}</button>
     <div class="head">
       <div class="row kick">
-        <span class="pill" :class="{ walkway: b?.walkway }">{{ kind }}</span>
+        <span class="pill">{{ kind }}</span>
         <span v-if="b?.isNew" class="pill new">新楼</span>
       </div>
       <button type="button" class="close" aria-label="关闭" @click="select(null)"><Ico name="close" /></button>
@@ -116,7 +116,7 @@ function favorite() {
       </button>
     </section>
     <section v-if="canteen" class="sec"><h3>在这里吃</h3><CanteenRow :canteen="canteen" /></section>
-    <CommunityEntry v-else-if="!b?.walkway && b?.cat !== 'gate'" :target="{ type: 'place', id: place.id, name: place.name.zh, subtitle: kind ? `${kind} · 来过的同学怎么说` : undefined }" />
+    <CommunityEntry v-else-if="b?.cat !== 'gate'" :target="{ type: 'place', id: place.id, name: place.name.zh, subtitle: kind ? `${kind} · 来过的同学怎么说` : undefined }" />
 
     <section v-if="events.length" class="sec">
       <h3>这里的活动 <button type="button" class="text-link" @click="state.radar.range = 'upcoming'; state.radar.cat = 'all'; showEventsAt(place.id)">查看 {{ events.length }} 场</button></h3>
@@ -128,14 +128,13 @@ function favorite() {
       <div class="v"><small>开放时间</small>{{ hours }}</div>
     </div>
 
-    <section v-if="b?.entrances?.length && b.cat !== 'gate' && !b.walkway" class="ents">
+    <section v-if="b?.entrances?.length && b.cat !== 'gate'" class="ents">
       <button type="button" class="text-link" :aria-expanded="state.entranceBuilding === b.id" @click="state.entranceBuilding === b.id ? state.entranceBuilding = '' : showEntrances(b.id)"><Ico name="entrance" />{{ state.entranceBuilding === b.id ? '收起出入口' : `查看 ${b.entrances.length} 个出入口` }}</button>
       <div v-if="state.entranceBuilding === b.id" class="tags">
         <button v-for="(e, i) in b.entrances" :key="i" type="button" class="echip" @click="showEntrances(b.id, e.pos)">{{ e.zh || '入口' }}</button>
       </div>
     </section>
 
-    <p v-if="b?.walkway" class="note rain"><Ico name="rain" /> 下雨天打开导航里的「雨天模式」，路线会优先从长廊下面走。</p>
     <p v-if="b?.info" class="note">{{ b.info.zh }}</p>
     <p v-if="b?.note" class="note">{{ b.note.zh }}</p>
     <p v-if="poi?.kind" class="note"><Ico :name="POI_KINDS[poi.kind].icon" /> {{ POI_KINDS[poi.kind].hint }}</p>
@@ -160,9 +159,7 @@ function favorite() {
 .ents { margin-top: 14px; }
 .ents h4 { display: flex; align-items: center; gap: 6px; margin: 0 0 6px; font-size: 13.5px; color: var(--ink-2); }
 .echip { border: 1px solid #bfe5cf; background: #eefaf3; color: #146c3c; border-radius: 999px; padding: 4px 10px; font-size: 13px; font-weight: 600; cursor: pointer; }
-.pill.walkway { background: var(--walkway); color: #fff; }
 .act.saved { border-color: #ecc9cc; background: var(--brand-soft); color: var(--brand); }
-.note.rain { background: #eaf6f9; color: #0b6577; display: flex; gap: 6px; align-items: flex-start; }
 .top { margin-top: 10px; }
 .room-banner { display: flex; gap: 12px; align-items: center; margin: 12px 0 4px; padding: 12px 14px; border: 1.5px solid #e9c8cb; border-radius: 14px; background: var(--brand-soft); }
 .rb-icon { flex: none; display: grid; place-items: center; width: 40px; height: 40px; border-radius: 11px; background: var(--brand); color: #fff; font-size: 20px; }

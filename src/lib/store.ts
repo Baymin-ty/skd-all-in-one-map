@@ -25,22 +25,20 @@ import { agendaEntries, agendaStops, myMap, weekDates } from './myMap'
 import { validateUndergroundMap, type UndergroundMap } from './underground'
 import { mergeUndergroundSketch } from './undergroundSketch'
 import { isParcelStation, openParcelPlan, parcelSearchHint } from './parcelStation'
-export { POI_CATS, PLACE_COLORS, WALKWAY_COLOR } from './catalog'
+export { POI_CATS, PLACE_COLORS } from './catalog'
 /** 顶部分类条：每个分类对应哪些楼、哪些点位 */
-export type Chip = 'dining' | 'academic' | 'housing' | 'sports' | 'service' | 'gate' | 'walkway' | 'parking'
+export type Chip = 'dining' | 'academic' | 'housing' | 'sports' | 'service' | 'gate' | 'parking'
 export const CHIPS: { id: Chip; zh: string; icon: IconName }[] = [
   { id: 'dining', zh: '食堂', icon: 'dining' },
   { id: 'academic', zh: '教学科研', icon: 'academic' },
   { id: 'housing', zh: '住宿', icon: 'housing' },
-  { id: 'walkway', zh: '风雨长廊', icon: 'walkway' },
   { id: 'sports', zh: '运动', icon: 'sports' },
   { id: 'service', zh: '服务', icon: 'service' },
   { id: 'gate', zh: '校门', icon: 'gate' },
   { id: 'parking', zh: '停车', icon: 'parking' },
 ]
 export function chipHasBuilding(c: Chip, b: Building) {
-  if (c === 'walkway') return !!b.walkway
-  return !b.walkway && b.cat === c
+  return b.cat === c
 }
 export function chipHasPoi(c: Chip, p: Poi) {
   if (c === 'service') return p.cat === 'life'
@@ -100,7 +98,6 @@ export const state = reactive({
     network: 'surface' as 'surface' | 'underground',
     from: null as RouteEnd | null,
     to: null as RouteEnd | null,
-    rain: false,
     /** 下一次点地图 = 设起点/终点 */
     picking: null as 'from' | 'to' | null,
     result: null as RouteResult | null,
@@ -228,12 +225,7 @@ export async function loadData() {
       state.readonly = true
     }
     state.groups = groupBuildings(state.buildings)
-    const walkwayPolys = state.buildings.filter((b) => b.walkway).flatMap((b) => [b.poly, ...(b.parts ?? [])])
-    // 只有宿舍及此前约定的食堂两侧建筑边缘提供少量挡雨；学院建筑不算遮挡。
-    const shelterPolys = state.buildings
-      .filter((b) => b.cat === 'housing' || b.cat === 'dining')
-      .flatMap((b) => [b.poly, ...(b.parts ?? [])])
-    initRouting(campus, walkwayPolys, shelterPolys)
+    initRouting(campus)
     state.ready = true
   } catch (e) {
     state.error = `地图数据加载失败：${(e as Error).message}`
@@ -328,8 +320,8 @@ export function search(q: string): SearchHit[] {
       hits.push({
         sel: { kind: 'building', id: b.id },
         name: b.name.zh,
-        sub: b.walkway ? '风雨长廊' : state.categories[b.cat]?.zh ?? '',
-        icon: b.walkway ? 'walkway' : b.cat,
+        sub: state.categories[b.cat]?.zh ?? '',
+        icon: b.cat,
       })
   for (const p of state.pois)
     if (has(p.name.zh, p.name.en, p.desc?.zh, ...p.kind ? [poiKindLabel(p), '地下车库', '地库'] : [], ...(p.aliases ?? [])))
@@ -641,12 +633,11 @@ export function clearUndergroundSketch() {
   persistUndergroundSketch()
 }
 
-export function openRoute(rain = false) {
+export function openRoute() {
   state.panel = 'home'
   state.route.open = true
   state.route.network = 'surface'
   state.route.undergroundResult = null
-  if (rain) state.route.rain = true
   if (!state.route.from) state.route.picking = 'from'
   else if (!state.route.to) state.route.picking = 'to'
   openSheet(1)
@@ -680,7 +671,7 @@ export function computeRoute(fit = true) {
     r.failed = false
     return
   }
-  r.result = findIntegratedRoute(r.from, r.to, state.underground, { rain: r.rain })
+  r.result = findIntegratedRoute(r.from, r.to, state.underground)
   r.failed = !r.result
   if (r.result && fit) mapApi.fit(r.result.segments.flatMap((s) => s.path), 19)
 }

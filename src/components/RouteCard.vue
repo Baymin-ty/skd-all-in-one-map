@@ -53,26 +53,17 @@ function fromMe() {
       <button v-if="locator.mock && r.from?.live && r.result" type="button" class="text-link" :disabled="locator.simulating" @click="simulateWalk">{{ locator.simulating ? (isEnglish ? 'Simulating…' : '模拟行走中…') : (isEnglish ? 'Simulate walk' : '模拟走一遍') }}</button>
     </div>
 
-    <label v-if="r.network === 'surface'" class="switch" :class="{ on: r.rain }">
-      <input v-model="r.rain" type="checkbox" @change="computeRoute()" />
-      <Ico name="rain" />
-      <span class="grow">{{ isEnglish ? 'Rain mode' : '雨天模式' }}<small>{{ isEnglish ? 'Prefer covered walkways' : '优先走风雨长廊' }}</small></span>
-      <i class="knob" />
-    </label>
-
     <div v-if="r.result" class="result">
       <p class="big">{{ r.result.minutes }} {{ isEnglish ? 'min' : '分钟' }} <span>· {{ r.result.meters }} {{ isEnglish ? 'm' : '米' }}</span></p>
-      <p v-if="Math.max(0, r.result.coveredMeters - r.result.undergroundMeters)" class="covered"><Ico name="walkway" /> {{ Math.max(0, r.result.coveredMeters - r.result.undergroundMeters) }} {{ isEnglish ? 'm under surface cover' : '米在地面遮挡下' }}</p>
-      <p v-if="r.result.undergroundMeters" class="under"><Ico name="stairs" /> {{ r.result.undergroundMeters }} {{ isEnglish ? 'm underground · rain safe' : '米在地下 · 不淋雨' }}</p>
-      <p v-if="r.rain && !r.result.coveredMeters" class="muted">{{ isEnglish ? 'No covered surface or underground segment on this route' : '这条路线没有地面遮挡或地下路段' }}</p>
+      <p v-if="r.result.undergroundMeters" class="under"><Ico name="stairs" /> {{ r.result.undergroundMeters }} {{ isEnglish ? 'm underground' : '米在地下' }}</p>
       <div v-if="r.result.transitions.length" class="transitions" aria-label="地上地下分界点">
         <span v-for="transition in r.result.transitions" :key="`${transition.connectorId}-${transition.kind}`"><i :class="transition.kind" />{{ transition.label }}</span>
       </div>
-      <p class="legend"><i class="open" />{{ isEnglish ? 'Open air' : '地上露天' }} <i class="cov" />{{ isEnglish ? 'Surface cover' : '地面有遮挡' }} <i v-if="r.result.undergroundMeters" class="ug" />{{ r.result.undergroundMeters ? (isEnglish ? 'Underground' : '地下不淋雨') : '' }}</p>
+      <p class="legend"><i class="open" />{{ isEnglish ? 'Surface' : '地面' }} <i v-if="r.result.undergroundMeters" class="ug" />{{ r.result.undergroundMeters ? (isEnglish ? 'Underground' : '地下') : '' }}</p>
     </div>
     <div v-else-if="r.undergroundResult" class="result underground-result">
       <p class="big">B1 <span>· {{ r.undergroundResult.meters }} {{ isEnglish ? 'm' : '米' }}</span></p>
-      <p class="covered"><Ico name="road" /> 候选车行路线 · {{ r.undergroundResult.connectorIds.length }} 个上下点</p>
+      <p class="under"><Ico name="road" /> 候选车行路线 · {{ r.undergroundResult.connectorIds.length }} 个上下点</p>
       <p class="legend"><i class="underground-line" />地下候选路线</p>
     </div>
     <p v-else-if="r.failed" class="note warn">{{ isEnglish ? 'No walking route found. Try another starting point.' : '没找到这两个地方之间的步行路线，换个起点试试。' }}</p>
@@ -97,21 +88,9 @@ function fromMe() {
 .dot { flex: none; width: 12px; height: 12px; border-radius: 50%; border: 3px solid var(--blue); background: #fff; }
 .dot.to { border-color: #d93025; background: #d93025; }
 .swap { position: absolute; right: 0; top: 50%; transform: translateY(-50%); width: 36px; height: 36px; border: 0; border-radius: 50%; background: var(--bg-2); display: grid; place-items: center; font-size: 18px; cursor: pointer; }
-.switch { display: flex; align-items: center; gap: 10px; margin-top: 12px; padding: 10px 12px; border-radius: 12px; background: var(--bg-2); cursor: pointer; font-size: 15px; font-weight: 600; }
-.switch input { position: absolute; opacity: 0; pointer-events: none; }
-.switch > .svgi { font-size: 20px; color: var(--ink-3); }
-.switch small { display: block; font-size: 12px; font-weight: 500; color: var(--ink-3); }
-.switch.on { background: #e6f4f7; }
-.switch.on > .svgi { color: var(--walkway); }
-.knob { flex: none; position: relative; width: 40px; height: 24px; border-radius: 12px; background: #d6d6db; transition: background 0.2s; }
-.knob::after { content: ''; position: absolute; top: 2px; left: 2px; width: 20px; height: 20px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px #0000004d; transition: transform 0.2s; }
-.switch.on .knob { background: var(--walkway); }
-.switch.on .knob::after { transform: translateX(16px); }
-.switch:focus-within { outline: 2px solid var(--blue); outline-offset: 2px; }
 .result { margin-top: 14px; }
 .big { margin: 0; font-size: 24px; font-weight: 750; }
 .big span { font-size: 15px; font-weight: 500; color: var(--ink-2); }
-.covered { display: flex; align-items: center; gap: 6px; margin: 4px 0 0; color: var(--walkway); font-weight: 600; font-size: 14px; }
 .under { display: flex; align-items: center; gap: 6px; margin: 4px 0 0; color: #8156a8; font-weight: 650; font-size: 14px; }
 .transitions { display: grid; gap: 4px; margin-top: 8px; color: #9a621d; font-size: 12px; }
 .transitions span { display: flex; align-items: center; gap: 6px; }
@@ -121,7 +100,6 @@ function fromMe() {
 .legend i { width: 18px; height: 5px; border-radius: 3px; }
 .legend i + i, .legend i:not(:first-child) { margin-left: 8px; }
 .legend .open { background: var(--blue); }
-.legend .cov { background: var(--walkway); }
 .legend .ug { background: #8156a8; background-image: linear-gradient(90deg, transparent 0 45%, #fff 45% 60%, transparent 60%); }
 .legend .underground-line { background: #8156a8; background-image: linear-gradient(90deg, transparent 0 45%, #fff 45% 60%, transparent 60%); }
 .hint { margin-top: 12px; }

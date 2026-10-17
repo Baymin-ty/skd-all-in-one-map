@@ -41,7 +41,7 @@ describe('分类在地图中批量选中', () => {
   it('切换分类替换整个集合，楼群内的每栋楼都选中，退出分类后清空', () => {
     setChip('dining')
     setChip('academic')
-    expect([...mapHighlights.value].sort()).toEqual(places.buildings.filter((b) => b.cat === 'academic' && !b.walkway).map((b) => b.id).sort())
+    expect([...mapHighlights.value].sort()).toEqual(places.buildings.filter((b) => b.cat === 'academic').map((b) => b.id).sort())
     setChip('academic')
     expect(mapHighlights.value.size).toBe(0)
     setChip('housing')

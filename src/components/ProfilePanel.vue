@@ -38,7 +38,7 @@ async function logout() {
 }
 
 // ---------- 常用地点 ----------
-const pickable = computed(() => state.buildings.filter((b) => !b.walkway && b.cat !== 'gate'))
+const pickable = computed(() => state.buildings.filter((b) => b.cat !== 'gate'))
 const byName = (a: { name: { zh: string } }, b: { name: { zh: string } }) => a.name.zh.localeCompare(b.name.zh, 'zh-Hans-CN', { numeric: true })
 /** 寝室只列住宿楼；实验室、办公室按分类分组，教学科研排最前 */
 function optionGroups(role: HomeRole) {

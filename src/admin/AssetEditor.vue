@@ -111,7 +111,7 @@ function focus() { mapControl.focus(d.value) }
             <label>英文简称<input v-model="b.short.en" maxlength="60" /></label>
             <label>入驻单位<input v-model="orgs" placeholder="多个单位用顿号分隔" /></label>
             <label>备注<textarea v-model="b.note!.zh" rows="2" maxlength="2000" /></label>
-            <div class="check-row"><label><input v-model="b.walkway" type="checkbox" />风雨长廊</label><label><input v-model="b.isNew" type="checkbox" />新建建筑</label></div>
+            <div class="check-row"><label><input v-model="b.isNew" type="checkbox" />新建建筑</label></div>
           </template>
           <label v-else>数据来源<input v-model="p!.source" maxlength="100" /></label>
         </details>

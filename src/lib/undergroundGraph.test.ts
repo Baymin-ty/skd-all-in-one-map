@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { LngLat, UndergroundMap } from './types'
-import { addNode, connect, graphFromMap, graphToMap, moveNode, bindEntrance, unbindEntrance, splitEdge, removeNode, removeEdge, mergeNodes, createStreetViewPoint, streetViewPointPosition, interpolateStreetViewPoints, importSketch, components, graphIssues, autoBindEntrances, type UndergroundGraph } from './undergroundGraph'
+import { addNode, connect, graphFromMap, graphToMap, moveNode, bindEntrance, unbindEntrance, splitEdge, removeNode, removeEdge, mergeNodes, createStreetViewPoint, streetViewPointPosition, planStreetViewPathInterpolation, importSketch, components, graphIssues, autoBindEntrances, type UndergroundGraph } from './undergroundGraph'
 
 const A: LngLat = [121.6, 31.18], B: LngLat = [121.601, 31.18], C: LngLat = [121.602, 31.18], D: LngLat = [121.601, 31.181]
 const base: UndergroundMap = { version: 2, floor: -1, bounds: [A, D], sources: [], nodes: [], edges: [], connectors: [] }
@@ -59,20 +59,18 @@ describe('地下节点与边编辑器', () => {
     removeNode(g, b)
     expect(g.points).toEqual([])
   })
-  it('同一路段上的两个街景点之间按数量均匀插值，跨路段拒绝', () => {
+  it('沿按顺序连接的节点折线按里程均匀插值，跨路段未连接时拒绝', () => {
     const g = empty(), [a, b, c] = [A, B, C].map((p) => addNode(g, p))
-    const edge = connect(g, a, b)!, another = connect(g, b, c)!
-    const first = createStreetViewPoint(g, edge, [121.6002, 31.18])!
-    const second = createStreetViewPoint(g, edge, [121.6008, 31.18])!
-    const result = interpolateStreetViewPoints(g, first.id, second.id, 3)
+    connect(g, a, b); connect(g, b, c)
+    const result = planStreetViewPathInterpolation(g, [a, b, c], 5)
     expect(result.error).toBeUndefined()
-    expect(result.points.map((point) => point.endpointWeight2)).toEqual([0.35, 0.5, 0.65])
-    expect(result.points.every((point) => point.endpointId1 === first.endpointId1 && point.endpointId2 === first.endpointId2)).toBe(true)
-    expect(new Set([first, second, ...result.points].map((point) => point.id)).size).toBe(5)
+    expect(result.points.map((point) => streetViewPointPosition(g, point))).toEqual([
+      [121.600333, 31.18], [121.600667, 31.18], [121.601, 31.18], [121.601333, 31.18], [121.601667, 31.18],
+    ])
     expect(result.points.every((point) => /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(point.imageId))).toBe(true)
-    const elsewhere = createStreetViewPoint(g, another, [121.6015, 31.18])!
-    expect(interpolateStreetViewPoints(g, first.id, elsewhere.id, 2)).toMatchObject({ points: [], error: '两个街景点不在同一条路段上' })
-    expect(interpolateStreetViewPoints(g, first.id, second.id, 0)).toMatchObject({ points: [], error: '插值数量必须是 1–50 的整数' })
+    expect(planStreetViewPathInterpolation(g, [a, c], 2)).toMatchObject({ points: [], error: '第 1 个和第 2 个节点之间没有路段，请按道路顺序选择' })
+    expect(planStreetViewPathInterpolation(g, [a, a], 2)).toMatchObject({ points: [], error: '节点不能重复' })
+    expect(planStreetViewPathInterpolation(g, [a, b], 0)).toMatchObject({ points: [], error: '插值数量必须是 1–50 的整数' })
   })
   it('删除边清理街景点并解除失效绑定', () => {
     const g = empty(), a = addNode(g, A), b = addNode(g, B), edge = connect(g, a, b)!

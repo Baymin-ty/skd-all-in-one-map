@@ -19,5 +19,4 @@ export const poiIcon = (p: Poi): IconName => p.kind ? POI_KINDS[p.kind].icon : P
 export const PLACE_COLORS: Record<PlaceCat, string> = {
   academic: '#527da3', dining: '#bd8046', housing: '#64937a', sports: '#b86b67', service: '#528f92', gate: '#8c7ba5',
 }
-export const WALKWAY_COLOR = '#0e8fa8'
 

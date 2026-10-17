@@ -1,16 +1,11 @@
-import { findRoute, routeWeatherCost, SHORT_EXPOSURE_METERS, type RouteResult, type RouteSegment, type RouteTransition, type Target } from './route'
+import { findRoute, type RouteResult, type RouteSegment, type RouteTransition, type Target } from './route'
+import { meters as distance } from './measure'
 import { findUndergroundRoute } from './undergroundRoute'
 import type { LngLat, UndergroundConnector, UndergroundMap } from './types'
 
-const DEFAULT_TRANSITION_PENALTY = 20
 const DEFAULT_CONNECTOR_SNAP = 45
 
 export interface IntegratedRouteOptions {
-  rain?: boolean
-  /** 每次进出地下额外增加的比较代价，避免为很短的露天段绕行。 */
-  transitionPenaltyMeters?: number
-  /** 连续露天不超过此长度时按实际距离计算。 */
-  shortExposureMeters?: number
   connectorSnapMeters?: number
 }
 
@@ -28,52 +23,44 @@ function transition(connector: Connector, kind: 'enter' | 'exit'): RouteTransiti
 function lengthOf(path: LngLat[]) {
   let total = 0
   for (let i = 1; i < path.length; i++) {
-    const dx = (path[i][0] - path[i - 1][0]) * 111320 * Math.cos((path[i][1] * Math.PI) / 180)
-    const dy = (path[i][1] - path[i - 1][1]) * 110574
-    total += Math.hypot(dx, dy)
+    total += distance(path[i - 1], path[i])
   }
   return total
 }
 
-function routeMetrics(segments: RouteSegment[], transitions: RouteTransition[], shortExposureMeters: number): RouteResult {
-  let meters = 0, coveredMeters = 0, undergroundMeters = 0
+function routeMetrics(segments: RouteSegment[], transitions: RouteTransition[]): RouteResult {
+  let meters = 0, undergroundMeters = 0
   for (const segment of segments) {
     const length = lengthOf(segment.path)
     meters += length
-    if (segment.covered || segment.layer === 'underground') coveredMeters += length
     if (segment.layer === 'underground') undergroundMeters += length
   }
   return {
     segments,
     meters: Math.round(meters),
-    coveredMeters: Math.round(coveredMeters),
     undergroundMeters: Math.round(undergroundMeters),
     minutes: Math.max(1, Math.round(meters / 75)),
     transitions,
-    routingCost: routeWeatherCost(segments, shortExposureMeters),
   }
 }
 
 /**
- * 晴天只跑地面子图；雨天额外比较「地面 → 地下 → 地面」的一次地下绕行。
+ * 按实际距离比较地面与「地面 → 地下 → 地面」的一次地下通行候选。
+ * 保留现有枚举架构，不支持一次路线多次进出地下。
  * 每个连接点都先通过地下路网最近路段投影吸附，无法接入的点自动跳过。
  */
 export function findIntegratedRoute(from: Target, to: Target, map: UndergroundMap | null, options: IntegratedRouteOptions = {}): RouteResult | null {
-  const rain = options.rain ?? false
-  const direct = findRoute(from, to, rain)
-  if (!rain || !map) return direct
-
-  const transitionPenaltyMeters = options.transitionPenaltyMeters ?? DEFAULT_TRANSITION_PENALTY
-  const shortExposureMeters = options.shortExposureMeters ?? SHORT_EXPOSURE_METERS
+  const direct = findRoute(from, to)
+  if (!map) return direct
   const connectorSnapMeters = options.connectorSnapMeters ?? DEFAULT_CONNECTOR_SNAP
   const network = map
   const connectors = network.connectors.filter((c) => (c.floorFrom === 0 && c.floorTo === network.floor) || (c.floorTo === 0 && c.floorFrom === network.floor))
   if (connectors.length < 2) return direct
 
-  const fromRoutes = connectors.map((connector) => findRoute(from, { point: connector.pos }, true))
-  const toRoutes = connectors.map((connector) => findRoute({ point: connector.pos }, to, true))
+  const fromRoutes = connectors.map((connector) => findRoute(from, { point: connector.pos }))
+  const toRoutes = connectors.map((connector) => findRoute({ point: connector.pos }, to))
   let best = direct
-  let bestCost = direct ? routeWeatherCost(direct.segments, shortExposureMeters) : Infinity
+  let bestCost = direct ? direct.segments.reduce((sum, segment) => sum + lengthOf(segment.path), 0) : Infinity
 
   for (let i = 0; i < connectors.length; i++) {
     const start = fromRoutes[i]
@@ -86,14 +73,14 @@ export function findIntegratedRoute(from: Target, to: Target, map: UndergroundMa
       if (!underground) continue
       const segments: RouteSegment[] = [
         ...start.segments,
-        { path: underground.path, covered: true, layer: 'underground' },
+        { path: underground.path, layer: 'underground' },
         ...finish.segments,
       ]
       const transitions = [transition(connectors[i], 'enter'), transition(connectors[j], 'exit')]
-      const candidate = routeMetrics(segments, transitions, shortExposureMeters)
-      const cost = candidate.routingCost + transitionPenaltyMeters * transitions.length
+      const candidate = routeMetrics(segments, transitions)
+      const cost = segments.reduce((sum, segment) => sum + lengthOf(segment.path), 0)
       if (cost + 1e-6 < bestCost) {
-        best = { ...candidate, routingCost: cost }
+        best = candidate
         bestCost = cost
       }
     }

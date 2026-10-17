@@ -25,6 +25,6 @@ describe('楼群', () => {
 
   it('风雨长廊和单独的楼不进组', () => {
     const grouped = new Set(groups.flatMap((g) => g.members))
-    for (const b of places.buildings.filter((b) => b.walkway || b.cat === 'gate')) expect(grouped.has(b.id)).toBe(false)
+    for (const b of places.buildings.filter((b) => b.cat === 'gate')) expect(grouped.has(b.id)).toBe(false)
   })
 })

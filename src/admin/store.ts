@@ -97,7 +97,7 @@ export const assets = computed<Asset[]>(() => [
 export function category(a: Asset) {
   if (a.kind === 'poi') { const c = POI_CATS[(a.data as Poi).cat]; return { ...c, key: `poi:${a.data.cat}` } }
   const b = a.data as Building
-  return { zh: b.walkway ? '风雨长廊' : admin.places.categories[b.cat]?.zh || b.cat, color: b.walkway ? '#0e8fa8' : PLACE_COLORS[b.cat], icon: (b.walkway ? 'walkway' : b.cat) as IconName, key: b.walkway ? 'walkway' : `building:${b.cat}` }
+  return { zh: admin.places.categories[b.cat]?.zh || b.cat, color: PLACE_COLORS[b.cat], icon: b.cat as IconName, key: `building:${b.cat}` }
 }
 export const filtered = computed(() => assets.value.filter((a) => {
   if (admin.kind && a.kind !== admin.kind) return false
@@ -110,7 +110,7 @@ export const categoryOptions = computed(() => {
   return [...new Map(all.map((a) => { const c = category(a); return [c.key, c] })).values()]
 })
 export const entrances = computed(() => admin.places.buildings.reduce((n, b) => n + (b.entrances?.length || 0), 0))
-export const missingEntrances = computed(() => admin.places.buildings.filter((b) => !b.walkway && b.cat !== 'gate' && !b.entrances?.length))
+export const missingEntrances = computed(() => admin.places.buildings.filter((b) => b.cat !== 'gate' && !b.entrances?.length))
 export const mapControl = { focus: (_a: Asset) => {}, home: () => {} }
 let timer = 0
 export function notify(message: string, tone: 'ok' | 'error' = 'ok') { admin.notice = message; admin.noticeTone = tone; clearTimeout(timer); timer = window.setTimeout(() => admin.notice = '', tone === 'error' ? 6000 : 3800) }

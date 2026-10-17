@@ -5,7 +5,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { clampToOutline, fillZoom, fromLatLng, limitPan, PAINTED_OUTLINE, toLatLng } from '../lib/geo'
 import { createCampusMap } from '../lib/campusMap'
 import { createMapOpacity } from '../lib/mapOpacity'
-import { buildingOutline, constructionOutline, walkwayOutline } from '../lib/buildingOutline'
+import { buildingOutline, constructionOutline } from '../lib/buildingOutline'
 import { groupBuildings } from '../lib/groups'
 import { buildingLabelCategory, mapLabelColor, poiLabelCategory } from '../lib/mapLabelCategories'
 import { labelFits, labelsOverlap, type LabelRect } from '../lib/mapLabels'
@@ -24,8 +24,6 @@ let map: L.Map, resize: ResizeObserver, opacity: ReturnType<typeof createMapOpac
 let keepInside = () => {}, hovered = '', layoutFrame = 0
 const polygons = new Map<string, L.Polygon>()
 function styleFor(id: string) {
-  const b = admin.places.buildings.find((b) => b.id === id)
-  if (b?.walkway && !isSelected(id) && hovered !== id) return walkwayOutline()
   return buildingOutline(isSelected(id), hovered === id, admin.mapSettings)
 }
 const expandedGroups = new Set<string>()

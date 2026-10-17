@@ -30,8 +30,6 @@ export interface Building {
   note?: I18nText | null
   entrances?: Entrance[]
   isNew?: boolean
-  /** 风雨长廊：雨天导航优先走它下面 */
-  walkway?: boolean
 }
 
 export interface Poi {

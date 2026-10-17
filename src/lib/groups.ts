@@ -23,7 +23,7 @@ export function groupBuildings(buildings: Building[]): BuildingGroup[] {
   const byPrefix = new Map<string, { n: number; b: Building }[]>()
   for (const b of buildings) {
     const m = NUMBERED.exec(b.name.zh)
-    if (!m || b.walkway) continue
+    if (!m) continue
     byPrefix.set(m[1], [...(byPrefix.get(m[1]) ?? []), { n: Number(m[2]), b }])
   }
   const groups: BuildingGroup[] = []

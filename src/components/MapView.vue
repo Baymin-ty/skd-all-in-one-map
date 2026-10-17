@@ -6,7 +6,7 @@ import { createCampusMap } from '../lib/campusMap'
 import { clampToOutline, fillZoom, fromLatLng, limitPan, PAINTED_OUTLINE, toLatLng } from '../lib/geo'
 import type { BuildingGroup } from '../lib/groups'
 import { ICONS } from '../lib/icons'
-import { buildingOutline, constructionOutline, walkwayOutline } from '../lib/buildingOutline'
+import { buildingOutline, constructionOutline } from '../lib/buildingOutline'
 import { outlineLatLngs } from '../lib/outlineGeometry'
 import { createMapOpacity } from '../lib/mapOpacity'
 import {
@@ -22,10 +22,10 @@ import { buildingLabelCategory, mapLabelColor, poiLabelCategory } from '../lib/m
 import { discovery, eventsAhead, eventsIn } from '../lib/discoveryData'
 import { clockText, dateKey, dayName, dayStart, eventStatus, evStart, nowTick, STATUS_LABELS, timeRange } from '../lib/campusTime'
 import type { CampusEvent } from '../lib/discoveryTypes'
-import { walkableCells } from '../lib/route'
+import { walkablePaths } from '../lib/route'
 import {
   buildingById, endFor, expandedGroups, fitToday, groupById, groupOf, mapApi, mapHighlights, mineFocus,
-  addUndergroundSketchPoint, openEvent, undergroundEndFor, PLACE_COLORS, select, setEnd, showEventsAt, state, toast, WALKWAY_COLOR, type Selection,
+  addUndergroundSketchPoint, openEvent, undergroundEndFor, PLACE_COLORS, select, setEnd, showEventsAt, state, toast, type Selection,
 } from '../lib/store'
 import type { Building, LngLat } from '../lib/types'
 import { covered, ui } from '../lib/ui'
@@ -112,7 +112,6 @@ function styleFor(b: Building): L.PathOptions {
   if (selected) return { ...buildingOutline(true, isHovered, state.mapSettings), weight: 3.5, fillColor: '#a8242b', fillOpacity: 0.16 * state.mapSettings.selected }
   if (matching) return { ...batchStyle(), weight: isHovered ? 4 : 3 }
   if (isHovered) return buildingOutline(false, true, state.mapSettings)
-  if (b.walkway) return walkwayOutline(state.route.rain || state.chip === 'walkway')
   const g = groupOf(b.id)
   if (g && expandedGroups().has(g.id) && state.selected) return memberStyle(PLACE_COLORS[b.cat])
   return buildingOutline(false, false, state.mapSettings)
@@ -165,7 +164,6 @@ function prioOf(b: Building, inGroup: boolean, focused: boolean) {
   if (state.selected?.kind === 'building' && state.selected.id === b.id) return 140
   if (focused) return 100 // 点开的楼群：各栋名字优先
   if (mapHighlights.value.has(b.id)) return 98 // 批量选中的建筑名称优先
-  if (b.walkway) return state.route.rain ? 90 : 55
   if (b.cat === 'gate') return 92
   if (landmark(b.id)) return 90
   if (b.cat === 'dining') return 78
@@ -280,7 +278,7 @@ function updateHoverLabel() {
       const pos = b ? b.center : p ? p.pos : g ? g.center : undefined
       if (pos) {
         const category = b ? buildingLabelCategory(b) : p ? poiLabelCategory(p) : g!.cat
-        const icon = b ? b.walkway ? 'walkway' : b.cat : p ? poiIcon(p) : g!.cat
+        const icon = b ? b.cat : p ? poiIcon(p) : g!.cat
         const name = b ? b.short.zh : p ? p.name.zh : g!.name.zh
         const html = node?.innerHTML || (p ? `<i>${ICONS[icon]}</i><span>${escapeHtml(name)}</span>`
           : `${ICONS[icon]}<span>${escapeHtml(name)}</span>${g ? `<em>${g.members.length} 栋</em>` : ''}`)
@@ -326,9 +324,9 @@ function drawLabels() {
     const viaGroup = !!g && !all && !expanded.has(g.id) && !sel && !matching
     if (viaGroup && !ev) continue
     if (labelPresentation({ kind: 'building', zoom: map.getZoom(), detailed: false,
-      emphasized: sel || matching || focused || routeEnd || !!ev || !!b.walkway && state.route.rain, overview: !b.walkway }) === 'hidden') continue
-    const cls = ['blabel', b.walkway && 'walkway', sel && 'sel', focused && 'focused', matching && 'matching', g && 'member', ev && `has-ev ev-${ev.tier}`].filter(Boolean).join(' ')
-    const icon = ICONS[b.walkway ? 'walkway' : b.cat]
+      emphasized: sel || matching || focused || routeEnd || !!ev, overview: true }) === 'hidden') continue
+    const cls = ['blabel', sel && 'sel', focused && 'focused', matching && 'matching', g && 'member', ev && `has-ev ev-${ev.tier}`].filter(Boolean).join(' ')
+    const icon = ICONS[b.cat]
     const prio = ev && !sel ? Math.max(prioOf(b, !!g, focused), EVENT_PRIO[ev.tier]) : prioOf(b, !!g, focused)
     visible.add(`building:${b.id}`)
     if (!viaGroup) shownChildren.add(b.id)
@@ -590,7 +588,7 @@ function drawRoute() {
   const casing: L.PolylineOptions = { color: '#fff', weight: 10, opacity: 0.95, lineCap: 'round', lineJoin: 'round', interactive: false }
   for (const s of r.segments) L.polyline(s.path.map(toLatLng), casing).addTo(routeLayer)
   for (const s of r.segments) {
-    const color = s.layer === 'underground' ? '#8156a8' : s.covered ? WALKWAY_COLOR : '#2f6fd6'
+    const color = s.layer === 'underground' ? '#8156a8' : '#2f6fd6'
     L.polyline(s.path.map(toLatLng), { color, weight: 5.5, dashArray: s.layer === 'underground' ? '10 7' : undefined, lineCap: 'round', lineJoin: 'round', interactive: false }).addTo(routeLayer)
   }
   const first = r.segments[0].path[0]
@@ -626,7 +624,7 @@ function drawCrowd() {
   }
 }
 
-/** 统一步行路网：蓝色 = 可走，青色 = 风雨长廊下；来源只在构建数据里保留。 */
+/** 统一蓝色展示地面栅格的实际八邻接连接，不区分来源和遮挡属性。 */
 function toggleRoads(on: boolean) {
   if (!on) {
     roadLayer?.remove()
@@ -635,10 +633,10 @@ function toggleRoads(on: boolean) {
   if (!roadLayer) {
     const renderer = L.canvas({ padding: 0.3 })
     roadLayer = L.layerGroup()
-    for (const c of walkableCells())
-      L.circleMarker(toLatLng(c.pos), {
-        renderer, radius: c.covered ? 2.6 : 1.8, stroke: false, fillOpacity: 0.85, interactive: false,
-        fillColor: c.covered ? WALKWAY_COLOR : '#4f8bff',
+    for (const path of walkablePaths())
+      L.polyline(path.map(toLatLng), {
+        renderer, color: '#4f8bff', weight: 1.8, opacity: 0.85, interactive: false,
+        smoothFactor: 0,
       }).addTo(roadLayer)
   }
   roadLayer.addTo(map)
@@ -866,8 +864,6 @@ watch(() => [tm.open, ui.overlay?.t, ui.overlay?.r, ui.overlay?.b], ([open], [wa
   }
   declutter()
 }, { flush: 'post' })
-watch(() => state.route.rain, restyle)
-watch(() => state.route.rain, drawLabels)
 watch(() => state.labelVisibility, () => {
   hover(null)
   drawLabels()

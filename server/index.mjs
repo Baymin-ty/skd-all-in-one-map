@@ -96,7 +96,7 @@ function clean(table, p) {
     rooms: Array.isArray(p.rooms) ? p.rooms.slice(0, 1000) : [],
     info: i18n(p.info, 2000), note: i18n(p.note, 2000), hours: i18n(p.hours, 120),
     entrances: (p.entrances ?? []).map((e) => ({ pos: position(e?.pos), zh: text(e?.zh, 60), en: text(e?.en, 100) })),
-    walkway: !!p.walkway, isNew: !!p.isNew,
+    isNew: !!p.isNew,
   }
 }
 function undergroundPoint(value) { return position(value) }

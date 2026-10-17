@@ -32,35 +32,44 @@ function underground(a: LngLat, b: LngLat): UndergroundMap {
   }
 }
 
-beforeEach(() => initRouting(campus, []))
+beforeEach(() => initRouting(campus))
 
-describe('地上地下雨天一体化导航', () => {
-  it('晴天只返回地面路线', () => {
-    const result = findIntegratedRoute({ point: longA }, { point: longB }, underground(longA, longB), { rain: false })!
+describe('地上地下距离导航', () => {
+  it('没有地下数据时只返回地面路线', () => {
+    const result = findIntegratedRoute({ point: longA }, { point: longB }, null)!
     expect(result).not.toBeNull()
     expect(result.undergroundMeters).toBe(0)
     expect(result.transitions).toEqual([])
     expect(result.segments.every((segment) => segment.layer === 'surface')).toBe(true)
   })
 
-  it('雨天长露天段会进入地下并标记两个分界点', () => {
-    const result = findIntegratedRoute({ point: longA }, { point: longB }, underground(longA, longB), { rain: true })!
+  it('地下捷径短于地面绕行时进入地下并标记分界点', () => {
+    initRouting({ ...campus, grid: { ...campus.grid, rows: campus.grid.rows.map((row, i) => i < 25 ? row.slice(0, 18) + '1' + row.slice(19) : row) } })
+    const result = findIntegratedRoute({ point: longA }, { point: longB }, underground(longA, longB))!
     expect(result.undergroundMeters).toBeGreaterThan(0)
     expect(result.segments.map((segment) => segment.layer)).toEqual(['surface', 'underground', 'surface'])
     expect(result.transitions.map((transition) => transition.kind)).toEqual(['enter', 'exit'])
     expect(result.transitions.map((transition) => transition.connectorId)).toEqual(['a', 'b'])
   })
 
-  it('雨天只有十米左右露天时保留地面路线', () => {
-    const result = findIntegratedRoute({ point: shortA }, { point: shortB }, underground(shortA, shortB), { rain: true })!
+  it('地下路线不短于地面时保留地面路线', () => {
+    const result = findIntegratedRoute({ point: shortA }, { point: shortB }, underground(shortA, shortB))!
     expect(result.undergroundMeters).toBe(0)
     expect(result.transitions).toEqual([])
   })
 
-  it('地下连接点不可达时回退到地面雨天路线', () => {
+  it('小于旧换层附加距离的地下捷径也按距离选择', () => {
+    const a: LngLat = [0.00025, 0.00375], b: LngLat = [0.00045, 0.00375]
+    initRouting({ ...campus, grid: { ...campus.grid, rows: ['000000', '000000', '000100', '000000', '000000', '000000'] } })
+    const result = findIntegratedRoute({ point: a }, { point: b }, underground(a, b))!
+    expect(result.undergroundMeters).toBeGreaterThan(0)
+    expect(result.transitions).toHaveLength(2)
+  })
+
+  it('地下连接点不可达时回退到地面路线', () => {
     const map = underground(longA, longB)
     map.edges = []
-    const result = findIntegratedRoute({ point: longA }, { point: longB }, map, { rain: true })!
+    const result = findIntegratedRoute({ point: longA }, { point: longB }, map)!
     expect(result).not.toBeNull()
     expect(result.undergroundMeters).toBe(0)
     expect(result.segments.every((segment) => segment.layer === 'surface')).toBe(true)

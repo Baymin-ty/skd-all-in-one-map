@@ -2,7 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import type { IconName } from '../lib/icons'
 import {
-  chipHasBuilding, chipHasPoi, CHIPS, endFor, groupOf, PLACE_COLORS, POI_CATS, select, setChip, setEnd, state, WALKWAY_COLOR, type Selection,
+  chipHasBuilding, chipHasPoi, CHIPS, endFor, groupOf, PLACE_COLORS, POI_CATS, select, setChip, setEnd, state, type Selection,
 } from '../lib/store'
 import { eventsIn } from '../lib/discoveryData'
 import Ico from './Ico.vue'
@@ -17,7 +17,7 @@ const eventCounts = computed(() => {
   for (const e of eventsIn('upcoming')) if (e.place) counts.set(e.place, (counts.get(e.place) || 0) + 1)
   return counts
 })
-const hints: Record<string, string> = { academic: '学院、教学楼与科研空间', housing: '学生公寓与教授公寓，按楼群查看', sports: '球场、场馆与运动设施', service: '图书馆、校园服务与生活设施', gate: '各校门位置与地址', parking: '校园停车与车库出入口', walkway: '连接教学科研区的遮雨步行空间', dining: '食堂、咖啡与便利店' }
+const hints: Record<string, string> = { academic: '学院、教学楼与科研空间', housing: '学生公寓与教授公寓，按楼群查看', sports: '球场、场馆与运动设施', service: '图书馆、校园服务与生活设施', gate: '各校门位置与地址', parking: '校园停车与车库出入口', dining: '食堂、咖啡与便利店' }
 /** 同一楼群的楼只列一行楼群 */
 const rows = computed<Row[]>(() => {
   const c = state.chip!
@@ -33,7 +33,7 @@ const rows = computed<Row[]>(() => {
     } else {
       out.push({
         sel: { kind: 'building', id: b.id }, name: b.name.zh, sub: b.name.en, detail: b.hours?.zh || b.orgs.map((o) => o.zh).join(' · ') || b.info?.zh || '', isNew: b.isNew, events: eventCounts.value.get(b.id) || 0,
-        icon: b.walkway ? 'walkway' : b.cat, color: b.walkway ? WALKWAY_COLOR : PLACE_COLORS[b.cat],
+        icon: b.cat, color: PLACE_COLORS[b.cat],
       })
     }
   }
@@ -63,7 +63,6 @@ function choose(sel: Selection) {
       <button type="button" class="close" aria-label="关闭分类" @click="setChip(null)"><Ico name="close" /></button>
     </div>
     <p class="category-count">{{ rows.length }} 个地点 / 楼群 · 已在地图上高亮</p>
-    <p v-if="state.chip === 'walkway'" class="note">风雨长廊连着物质学院和信息学院一带。下雨天用「雨天导航」，路线会尽量从长廊下面走。</p>
     <label v-if="rows.length > 5" class="category-search"><Ico name="search" /><input v-model="query" type="search" :placeholder="`在${chip.zh}中查找…`" aria-label="搜索当前分类" /></label>
     <section v-for="section in sections" :key="section.title" class="category-section">
       <h3 v-if="sections.length > 1">{{ section.title }} <span>{{ section.items.length }}</span></h3>
