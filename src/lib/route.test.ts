@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { beforeAll, describe, expect, it } from 'vitest'
-import { findRoute, initRouting, walkableCells } from './route'
+import { findRoute, initRouting, routeWeatherCost, walkableCells } from './route'
 import type { Campus, Places } from './types'
 
 const load = <T>(f: string): T => JSON.parse(readFileSync(new URL(`../../public/data/${f}`, import.meta.url), 'utf8'))
@@ -49,14 +49,20 @@ describe('步行导航', () => {
     expect(doors).toContainEqual(r.segments.at(-1)!.path.at(-1))
   })
 
-  it('建筑边缘缓冲会把附近地面格标为有遮挡', () => {
+  it('建筑边缘缓冲只作为轻微遮挡，不等同于风雨长廊', () => {
     const shelter: [number, number][] = [
       [121.6002, 31.1842], [121.6006, 31.1842], [121.6006, 31.1846], [121.6002, 31.1846],
     ]
     initRouting(campus, [], [shelter])
     const nearby = walkableCells().filter((cell) =>
       Math.abs(cell.pos[0] - 121.6004) < 0.0004 && Math.abs(cell.pos[1] - 31.1844) < 0.0004)
-    expect(nearby.some((cell) => cell.covered)).toBe(true)
+    expect(nearby.some((cell) => cell.sheltered && !cell.covered)).toBe(true)
+    const path = nearby.slice(0, 2).map((cell) => cell.pos)
+    const shelteredCost = routeWeatherCost([{ path, covered: false, sheltered: true, layer: 'surface' }], 0)
+    expect(shelteredCost).toBeGreaterThan(
+      routeWeatherCost([{ path, covered: true, layer: 'surface' }], 0),
+    )
+    expect(shelteredCost).toBeLessThan(routeWeatherCost([{ path, covered: false, layer: 'surface' }], 0))
     initRouting(campus, places.buildings.filter((b) => b.walkway).map((b) => b.poly))
   })
 })

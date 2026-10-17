@@ -229,7 +229,10 @@ export async function loadData() {
     }
     state.groups = groupBuildings(state.buildings)
     const walkwayPolys = state.buildings.filter((b) => b.walkway).flatMap((b) => [b.poly, ...(b.parts ?? [])])
-    const shelterPolys = state.buildings.flatMap((b) => [b.poly, ...(b.parts ?? [])])
+    // 只有宿舍及此前约定的食堂两侧建筑边缘提供少量挡雨；学院建筑不算遮挡。
+    const shelterPolys = state.buildings
+      .filter((b) => b.cat === 'housing' || b.cat === 'dining')
+      .flatMap((b) => [b.poly, ...(b.parts ?? [])])
     initRouting(campus, walkwayPolys, shelterPolys)
     state.ready = true
   } catch (e) {
