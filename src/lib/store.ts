@@ -25,6 +25,14 @@ import { plan, type PlanItem, updateItem, withDiscoveryEvents } from './today'
 import { agendaEntries, agendaStops, myMap, weekDates } from './myMap'
 import { validateUndergroundMap, type UndergroundMap } from './underground'
 import { mergeUndergroundSketch } from './undergroundSketch'
+
+/** 当前地下地图中连通地面的车辆坡道（ramp）位置；在“我要避雨！”强制走地下时，把这些位置也视为地面可走，以便步行导航能走到车辆出入口。 */
+function rampConnectorPositions(underground: UndergroundMap | null): LngLat[] {
+  if (!underground) return []
+  return underground.connectors
+    .filter((c) => c.kind === 'ramp' && ((c.floorFrom === 0 && c.floorTo === underground.floor) || (c.floorTo === 0 && c.floorFrom === underground.floor)))
+    .map((c) => c.pos)
+}
 import { isParcelStation, openParcelPlan, parcelSearchHint } from './parcelStation'
 export { POI_CATS, PLACE_COLORS } from './catalog'
 /** 顶部分类条：每个分类对应哪些楼、哪些点位 */
@@ -240,7 +248,7 @@ export async function loadData() {
       state.readonly = true
     }
     state.groups = groupBuildings(state.buildings)
-    initRouting(campus)
+    initRouting(campus, state.rainMode ? rampConnectorPositions(state.underground) : [])
     state.ready = true
   } catch (e) {
     state.error = `地图数据加载失败：${(e as Error).message}`
@@ -667,7 +675,7 @@ export function setRainMode(enabled: boolean) {
   if (!state.campus) return
   if (enabled && !state.rainGrid) { toast('暂无避雨路网，已继续使用普通路网'); state.rainMode = false; return }
   state.rainMode = enabled
-  initRouting({ ...state.campus, grid: enabled ? state.rainGrid! : state.campus.grid })
+  initRouting({ ...state.campus, grid: enabled ? state.rainGrid! : state.campus.grid }, rampConnectorPositions(state.underground))
   computeRoute(false)
 }
 
@@ -711,7 +719,7 @@ export function computeRoute(fit = true) {
     r.failed = false
     return
   }
-  r.result = findIntegratedRoute(r.from, r.to, state.underground)
+  r.result = findIntegratedRoute(r.from, r.to, state.underground, state.rainMode ? { forceUnderground: true } : undefined)
   r.failed = !r.result
   if (r.result && fit) mapApi.fit(r.result.segments.flatMap((s) => s.path), 19)
 }

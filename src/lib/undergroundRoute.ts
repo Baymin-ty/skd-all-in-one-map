@@ -23,6 +23,7 @@ function project(p: LngLat, a: LngLat, b: LngLat) {
 /** 只沿显式双向边行走。未绑定连接点可临时投影接入，绝不移动持久化位置或连接邻近的孤立路网。 */
 export function findUndergroundRoute(map: UndergroundRouteMap, fromId: string, toId: string, options: UndergroundRouteOptions = {}): UndergroundRouteResult | null {
   const from = map.connectors.find((c) => c.id === fromId), to = map.connectors.find((c) => c.id === toId)
+  // 车辆坡道（ramp）与楼梯、电梯同等视为可步行出入地下的连接点。
   const reachesFloor = (c: UndergroundRouteMap['connectors'][number]) =>
     (c.floorFrom === 0 && c.floorTo === map.floor) || (c.floorTo === 0 && c.floorFrom === map.floor)
   if (!from || !to || !reachesFloor(from) || !reachesFloor(to)) return null

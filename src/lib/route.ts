@@ -51,17 +51,23 @@ const cellOf = (p: LngLat) => [Math.floor((g.y0 - p[1]) / g.dy), Math.floor((p[0
 export const posOf = (c: number): LngLat => [g.x0 + ((c % W) + 0.5) * g.dx, g.y0 - (Math.floor(c / W) + 0.5) * g.dy]
 const inGrid = (i: number, j: number) => i >= 0 && j >= 0 && i < H && j < W
 
-export function initRouting(campus: Campus) {
+export function initRouting(campus: Campus, extraWalkable: LngLat[] = []) {
   g = campus.grid
   H = g.rows.length
   W = g.rows[0].length
   mx = g.dx * 111320 * Math.cos((g.y0 * Math.PI) / 180)
   my = g.dy * 110574
   walk = new Uint8Array(W * H)
+  const extras = new Set<number>()
+  for (const p of extraWalkable) {
+    const [i, j] = cellOf(p)
+    if (inGrid(i, j)) extras.add(i * W + j)
+  }
   for (let i = 0; i < H; i++)
     for (let j = 0; j < W; j++) {
       const ch = g.rows[i][j]
-      walk[i * W + j] = ch === '0' || ch === '2' ? 1 : 0
+      const c = i * W + j
+      walk[c] = ch === '0' || ch === '2' || extras.has(c) ? 1 : 0
     }
 }
 
