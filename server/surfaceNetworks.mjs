@@ -95,7 +95,7 @@ export function installSurfaceNetworks(app, staticDb, campus, { authorize, backu
       try {
         staticDb.prepare('insert into surface_networks (id,data,updated_at) values (?,?,?) on conflict(id) do update set data=excluded.data, updated_at=excluded.updated_at').run('rain', JSON.stringify(grid), now)
         staticDb.exec('COMMIT')
-        try { staticDb.exec('PRAGMA wal_checkpoint(PASSIVE)') } catch { /* PASSIVE 非阻塞，这次没做成下次再说，不能让 WAL 无限增长 */ }
+        try { staticDb.exec('PRAGMA wal_checkpoint(TRUNCATE)') } catch { /* TRUNCATE 失败不阻塞响应，下次写入再试；持续失败说明有长时间读连接占用 */ }
       } catch (e) { rollbackQuietly(staticDb); throw e }
       finally { restoreBusyTimeout(staticDb) }
       const totalMs = Date.now() - startedAt

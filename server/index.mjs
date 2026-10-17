@@ -50,6 +50,7 @@ for (const table of ['pois', 'buildings']) {
       }
       staticDb.prepare('insert into meta (key, value) values (?, ?)').run(`${table}.seeded`, '1')
       staticDb.exec('commit')
+      checkpointStatic()
     } catch (error) { staticDb.exec('rollback'); throw error }
   }
 }
@@ -175,6 +176,7 @@ function requireAdmin(req, res, next) {
 }
 const app = express()
 app.disable('x-powered-by')
+function checkpointStatic() { try { staticDb.exec('PRAGMA wal_checkpoint(TRUNCATE)') } catch { /* 确保 static.db 主文件能被 Git 干净跟踪；失败不阻塞当前请求 */ } }
 app.enable('strict routing')
 installCommunity(app, db, root, { staticDb })
 installAccount(app, db)
@@ -201,6 +203,7 @@ app.put('/api/underground', requireAdmin, (req, res) => {
   const map = cleanUnderground(req.body ?? {})
   staticDb.prepare('insert into underground_maps (id, data, updated_at) values (?, ?, ?) on conflict(id) do update set data = excluded.data, updated_at = excluded.updated_at')
     .run('default', JSON.stringify(map), Date.now())
+  checkpointStatic()
   res.json(map)
 })
 for (const table of ['pois', 'buildings']) {
@@ -209,6 +212,7 @@ for (const table of ['pois', 'buildings']) {
     const data = clean(table, req.body ?? {})
     const id = (table === 'pois' ? 'p-' : 'b-') + randomUUID().slice(0, 8)
     staticDb.prepare(`insert into ${table} (id, data, updated_at) values (?, ?, ?)`).run(id, JSON.stringify(data), Date.now())
+    checkpointStatic()
     res.status(201).json({ id, ...data })
   })
   app.put(`/api/${table}/:id`, requireAdmin, (req, res) => {
@@ -216,10 +220,12 @@ for (const table of ['pois', 'buildings']) {
     if (!old) return res.status(404).json({ error: '记录不存在' })
     const data = clean(table, { ...old, ...req.body })
     staticDb.prepare(`update ${table} set data = ?, updated_at = ? where id = ?`).run(JSON.stringify(data), Date.now(), old.id)
+    checkpointStatic()
     res.json({ id: old.id, ...data })
   })
   app.delete(`/api/${table}/:id`, requireAdmin, (req, res) => {
     if (!staticDb.prepare(`delete from ${table} where id = ?`).run(req.params.id).changes) return res.status(404).json({ error: '记录不存在' })
+    checkpointStatic()
     res.status(204).end()
   })
 }

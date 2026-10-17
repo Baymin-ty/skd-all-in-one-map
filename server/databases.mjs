@@ -117,6 +117,7 @@ export async function openDatabases(options = databasePaths()) {
           staticDb.prepare(`INSERT INTO ${undergroundMapTable} (id, data, updated_at) VALUES (?, ?, ?)`).run('default', oldDynamic.value, Date.now())
         }
         staticDb.exec('COMMIT')
+        try { staticDb.exec('PRAGMA wal_checkpoint(TRUNCATE)') } catch { /* 初始化/迁移阶段 checkpoint 失败不阻塞启动，运行期写入会再次尝试 */ }
       } catch (error) { staticDb.exec('ROLLBACK'); throw error }
       // 打开/验证 static 成功后才能清理 dynamic；失败回滚，重启可继续。
       for (const table of ['pois', 'buildings']) db.exec(`DROP TABLE IF EXISTS ${table}`)
