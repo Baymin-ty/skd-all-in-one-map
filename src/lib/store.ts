@@ -54,7 +54,7 @@ export interface RouteEnd extends Target {
   place?: Selection
   /** 实时定位的「我的位置」，走动时跟着更新 */
   live?: boolean
-  /** 地下候选导航的 B1 连接点；地面端点不设置此字段。 */
+  /** 地下导航的 B1 连接点；地面端点不设置此字段。 */
   undergroundConnectorId?: string
 }
 
@@ -89,7 +89,7 @@ export const state = reactive({
   labelVisibility: defaultMapLabels(),
   showRoads: false,
   showUnderground: false,
-  /** 地下图纸候选线已从地图撤下，先保留一个可手绘的空白草稿区。 */
+  /** 地下图纸线已从地图撤下，先保留一个可手绘的空白草稿区。 */
   undergroundSketch: {
     active: false,
     paths: [] as LngLat[][],
@@ -215,8 +215,8 @@ export async function loadData() {
     const underground = await getJson<UndergroundMap>('/api/underground', undefined, 4000).catch(() => getJson<UndergroundMap>('/data/underground.json').catch(() => null))
     state.categories = places.categories
     state.campus = campus
-    state.underground = underground ? mergeUndergroundSketch(underground, state.undergroundSketch.paths) : underground
     state.undergroundErrors = underground ? validateUndergroundMap(underground, campus) : []
+    state.underground = underground && !state.undergroundErrors.length ? mergeUndergroundSketch(underground, state.undergroundSketch.paths) : null
     state.mapSettings = validMapSettings(mapSettings) ? mapSettings : { ...DEFAULT_MAP_SETTINGS }
     try {
       const live = await getJson<Places>('/api/places', undefined, 4000)
@@ -558,21 +558,20 @@ export function endFor(sel: Selection): RouteEnd | null {
   return null
 }
 
-const undergroundKindLabels = { ramp: '车库坡道', stairs: '楼梯候选', elevator: '电梯候选', unknown: '上下连接候选' } as const
+const undergroundKindLabels = { ramp: '车库坡道', stairs: '楼梯', elevator: '电梯', unknown: '上下连接点' } as const
 
-/** 把地下图层上的上下连接点变成 B1 导航端点。候选点只用于候选路线，不改变地面导航。 */
+/** 把地下图层上的上下连接点变成 B1 导航端点。 */
 export function undergroundEndFor(id: string): RouteEnd | null {
-  const connector = state.underground?.connectors.find((item) => item.id === id && item.status !== 'rejected')
+  const connector = state.underground?.connectors.find((item) => item.id === id)
   if (!connector) return null
-  const status = connector.status === 'confirmed' ? '已确认' : '待核验'
   return {
-    name: `${undergroundKindLabels[connector.kind]} · B1 · ${status}`,
+    name: `${undergroundKindLabels[connector.kind]} · B1`,
     point: connector.pos,
     undergroundConnectorId: connector.id,
   }
 }
 
-/** 切换地面/地下候选路网时清空旧端点，避免把不同楼层误拼成一条路线。 */
+/** 切换地面/地下路网时清空旧端点，避免把不同楼层误拼成一条路线。 */
 export function setRouteNetwork(network: 'surface' | 'underground') {
   const r = state.route
   r.network = network
@@ -678,7 +677,7 @@ export function computeRoute(fit = true) {
     r.failed = false
     return
   }
-  r.result = findIntegratedRoute(r.from, r.to, state.underground, { rain: r.rain, allowCandidate: true })
+  r.result = findIntegratedRoute(r.from, r.to, state.underground, { rain: r.rain })
   r.failed = !r.result
   if (r.result && fit) mapApi.fit(r.result.segments.flatMap((s) => s.path), 19)
 }

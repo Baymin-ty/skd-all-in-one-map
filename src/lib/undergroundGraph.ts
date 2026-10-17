@@ -1,33 +1,16 @@
 import { meters } from './measure'
-import type { LngLat, UndergroundConnector, UndergroundMap, UndergroundMode, UndergroundNode, UndergroundRoad, UndergroundRoadPoint, UndergroundStatus } from './types'
+import type { LngLat, UndergroundConnector, UndergroundEdge, UndergroundMap, UndergroundNode, UndergroundRoadPoint } from './types'
 
-/**
- * 后台标注用的地下路网：节点 + 路段 + 出入口。
- * 共享节点就是路口，拖一个点所有相连的路段一起动。保存时再拆回 roads/connectors，
- * 连续的二度节点合并成一条折线，路口处折线首尾坐标完全相同，重新载入时据此还原成同一个节点。
- * 出入口可以绑定到节点上：绑定后跟着节点走，保存时坐标与节点完全相同，载入时同样据此还原绑定。
- */
+/** 编辑器直接操作持久化的节点与双向边，连接点可独立放置或显式绑定。 */
 export type UgNode = UndergroundNode
-export interface UgEdge {
-  id: string
-  a: string
-  b: string
-  status: UndergroundStatus
-  mode: UndergroundMode
-  source?: string
-  note?: string
-}
+export type UgEdge = UndergroundEdge
 export type UgRoadPoint = UndergroundRoadPoint
-/** node 是绑定的路网节点；只存在于编辑器里，保存时去掉 */
-export type UgEntrance = UndergroundConnector & { node?: string }
+export type UgEntrance = UndergroundConnector
 export interface UndergroundGraph { nodes: UgNode[]; edges: UgEdge[]; entrances: UgEntrance[]; points: UgRoadPoint[] }
-export type UgEdgeProps = Omit<UgEdge, 'id' | 'a' | 'b'>
 
 let seq = 0
 export function ugId(prefix: string) { return `${prefix}-${Date.now().toString(36)}${(seq++).toString(36)}` }
 export const roundPos = (p: LngLat): LngLat => [+p[0].toFixed(6), +p[1].toFixed(6)]
-const key = (p: LngLat) => `${p[0].toFixed(6)},${p[1].toFixed(6)}`
-const sameProps = (x: UgEdge, y: UgEdge) => x.status === y.status && x.mode === y.mode && x.source === y.source && x.note === y.note
 
 export function node(g: UndergroundGraph, id: string) { return g.nodes.find((n) => n.id === id) }
 export function edgesOf(g: UndergroundGraph, id: string) { return g.edges.filter((e) => e.a === id || e.b === id) }
@@ -40,9 +23,9 @@ export function addNode(g: UndergroundGraph, pos: LngLat, id = ugId('n')) {
   g.nodes.push({ id, pos: roundPos(pos) }); return id
 }
 /** 连接两个节点；同一节点或已相连时不重复添加。 */
-export function connect(g: UndergroundGraph, a: string, b: string, props: UgEdgeProps) {
+export function connect(g: UndergroundGraph, a: string, b: string) {
   if (a === b || findEdge(g, a, b) || !node(g, a) || !node(g, b)) return null
-  const id = ugId('e'); g.edges.push({ id, a, b, ...props }); return id
+  const id = ugId('e'); g.edges.push({ id, a, b }); return id
 }
 export function moveNode(g: UndergroundGraph, id: string, pos: LngLat) {
   const n = node(g, id); if (n) n.pos = roundPos(pos)
@@ -79,7 +62,7 @@ export function projectOnEdge(g: UndergroundGraph, edgeId: string, p: LngLat) {
   return { pos, t, meters: meters(p, pos) }
 }
 
-/** 在路段上插入一个节点，原路段拆成两段并保留属性。 */
+/** 在路段上插入一个节点，原边拆成两条双向边。 */
 export function splitEdge(g: UndergroundGraph, edgeId: string, p: LngLat) {
   const index = g.edges.findIndex((e) => e.id === edgeId)
   const projected = projectOnEdge(g, edgeId, p)
@@ -88,8 +71,8 @@ export function splitEdge(g: UndergroundGraph, edgeId: string, p: LngLat) {
   if (projected.t <= 0) return e.a
   if (projected.t >= 1) return e.b
   const mid = addNode(g, projected.pos)
-  const { id: _id, a, b, ...props } = e
-  g.edges.splice(index, 1, { id: ugId('e'), a, b: mid, ...props }, { id: ugId('e'), a: mid, b, ...props })
+  const { a, b } = e
+  g.edges.splice(index, 1, { id: ugId('e'), a, b: mid }, { id: ugId('e'), a: mid, b })
   return mid
 }
 
@@ -141,7 +124,7 @@ export function mergeNodes(g: UndergroundGraph, from: string, into: string) {
 }
 
 function dropOrphans(g: UndergroundGraph, ids: string[]) {
-  for (const id of ids) if (!degree(g, id)) {
+  for (const id of ids) if (!degree(g, id) && !roadPoints(g).some((p) => p.endpointId1 === id || p.endpointId2 === id)) {
     const index = g.nodes.findIndex((n) => n.id === id)
     if (index >= 0) g.nodes.splice(index, 1)
   }
@@ -155,8 +138,7 @@ export function removeNode(g: UndergroundGraph, id: string) {
   g.nodes = g.nodes.filter((n) => n.id !== id)
   g.points = roadPoints(g).filter((point) => point.endpointId1 !== id && point.endpointId2 !== id)
   if (incident.length === 2 && neighbours[0] !== neighbours[1]) {
-    const { id: _id, a: _a, b: _b, ...props } = incident[0]
-    connect(g, neighbours[0], neighbours[1], props)
+    connect(g, neighbours[0], neighbours[1])
   } else dropOrphans(g, neighbours)
   syncEntrances(g)
 }
@@ -170,78 +152,53 @@ export function removeEdge(g: UndergroundGraph, id: string) {
   syncEntrances(g)
 }
 
-function emptyGraph(entrances: UgEntrance[] = [], points: UgRoadPoint[] = []): UndergroundGraph {
-  return { nodes: [], edges: [], entrances, points }
+/** 已被分割的同一直线也算已导入，避免重复草稿生成跨越中间节点的捷径。 */
+function coveredStraightPath(g: UndergroundGraph, a: string, b: string) {
+  const start = node(g, a)!, end = node(g, b)!
+  const dx = end.pos[0] - start.pos[0], dy = end.pos[1] - start.pos[1]
+  const onSegment = (id: string) => {
+    const p = node(g, id)!.pos
+    const t = ((p[0] - start.pos[0]) * dx + (p[1] - start.pos[1]) * dy) / (dx * dx + dy * dy || 1)
+    return t >= 0 && t <= 1 && meters(p, [start.pos[0] + dx * t, start.pos[1] + dy * t]) < 0.2
+  }
+  const seen = new Set([a]), pending = [a]
+  while (pending.length) {
+    const current = pending.pop()!
+    if (current === b) return true
+    for (const edge of edgesOf(g, current)) {
+      const next = other(edge, current)
+      if (!seen.has(next) && onSegment(next)) { seen.add(next); pending.push(next) }
+    }
+  }
+  return false
 }
 
-function addPath(g: UndergroundGraph, path: LngLat[], props: UgEdgeProps, nodeFor: (p: LngLat) => string) {
+function addPath(g: UndergroundGraph, path: LngLat[], nodeFor: (p: LngLat) => string) {
   let prev: string | null = null
   for (const point of path) {
     const id = nodeFor(point)
-    if (prev) connect(g, prev, id, props)
+    if (prev && !coveredStraightPath(g, prev, id)) connect(g, prev, id)
     prev = id
   }
 }
 
-/** 从后台保存的地下地图还原路网：坐标完全相同的折点视为同一个节点，落在节点上的出入口视为已绑定。 */
+/** 直接载入持久化图，不按坐标推断绑定或合并不同 ID。 */
 export function graphFromMap(map: UndergroundMap): UndergroundGraph {
-  const g = emptyGraph(map.connectors.map((c) => ({ ...c, pos: roundPos(c.pos) })), (map.points ?? []).map((point) => ({ ...point })))
-  const byKey = new Map<string, string>()
-  for (const n of map.nodes ?? []) {
-    if (!byKey.has(key(n.pos))) { byKey.set(key(n.pos), n.id); g.nodes.push({ id: n.id, pos: roundPos(n.pos) }) }
+  return {
+    nodes: map.nodes.map(({ id, pos }) => ({ id, pos: [...pos] })),
+    edges: map.edges.map(({ id, a, b }) => ({ id, a, b })),
+    entrances: map.connectors.map((c) => ({ ...c, pos: [...c.pos] })),
+    points: (map.points ?? []).map((point) => ({ ...point })),
   }
-  const nodeFor = (p: LngLat) => {
-    const k = key(p)
-    let id = byKey.get(k)
-    if (!id) { id = addNode(g, p); byKey.set(k, id) }
-    return id
-  }
-  for (const road of map.roads) {
-    addPath(g, road.path, {
-      status: road.status, mode: road.mode,
-      ...(road.source ? { source: road.source } : {}), ...(road.note ? { note: road.note } : {}),
-    }, nodeFor)
-  }
-  for (const e of g.entrances) { const id = byKey.get(key(e.pos)); if (id) e.node = id }
-  return g
-}
-
-/** 断点：端点、路口，或者两侧路段属性不同的二度节点。 */
-function isBreak(g: UndergroundGraph, id: string) {
-  const incident = edgesOf(g, id)
-  return incident.length !== 2 || !sameProps(incident[0], incident[1])
-}
-
-/** 路网拆回折线道路：断点之间的连续路段合并成一条，纯环路从任意点断开。 */
-export function graphToRoads(g: UndergroundGraph, floor: number): UndergroundRoad[] {
-  const pos = new Map(g.nodes.map((n) => [n.id, n.pos]))
-  const visited = new Set<string>()
-  const roads: UndergroundRoad[] = []
-  const walk = (start: string, first: UgEdge) => {
-    const ids = [start]
-    let current = start, edge: UgEdge | undefined = first
-    while (edge && !visited.has(edge.id)) {
-      visited.add(edge.id)
-      current = other(edge, current); ids.push(current)
-      if (isBreak(g, current)) break
-      edge = edgesOf(g, current).find((e) => !visited.has(e.id))
-    }
-    const { status, mode, source, note } = first
-    roads.push({
-      id: `ug-road-${first.id}`, floor, mode, direction: 'both', status,
-      path: ids.map((id) => pos.get(id)!), ...(source ? { source } : {}), ...(note ? { note } : {}),
-    })
-  }
-  for (const n of g.nodes) if (isBreak(g, n.id)) for (const e of edgesOf(g, n.id)) if (!visited.has(e.id)) walk(n.id, e)
-  for (const e of g.edges) if (!visited.has(e.id)) walk(e.a, e)
-  return roads
 }
 
 export function graphToMap(g: UndergroundGraph, base: UndergroundMap): UndergroundMap {
-  const pos = new Map(g.nodes.map((n) => [n.id, n.pos]))
   return {
-    ...base, nodes: g.nodes.map((n) => ({ ...n, pos: roundPos(n.pos) })), points: (g.points ?? []).map((point) => ({ ...point })), roads: graphToRoads(g, base.floor),
-    connectors: g.entrances.map(({ node: id, ...c }) => ({ ...c, pos: (id && pos.get(id)) || c.pos })),
+    version: 2, floor: base.floor, bounds: base.bounds, sources: base.sources,
+    nodes: g.nodes.map(({ id, pos }) => ({ id, pos: roundPos(pos) })),
+    edges: g.edges.map(({ id, a, b }) => ({ id, a, b })),
+    points: (g.points ?? []).map((point) => ({ ...point })),
+    connectors: g.entrances.map((c) => ({ ...c, pos: [...c.pos] })),
   }
 }
 
@@ -264,7 +221,7 @@ export function nearestOnNetwork(g: UndergroundGraph, p: LngLat, maxMeters: numb
 export function autoBindEntrances(g: UndergroundGraph, maxMeters: number, ids?: string[]) {
   let count = 0
   for (const e of g.entrances) {
-    if (e.node || e.status === 'rejected' || (ids && !ids.includes(e.id))) continue
+    if (e.node || (ids && !ids.includes(e.id))) continue
     const hit = nearestOnNetwork(g, e.pos, maxMeters)
     const target = hit && ('node' in hit ? hit.node : splitEdge(g, hit.edge, e.pos))
     if (target) { e.node = target; count++ }
@@ -277,7 +234,7 @@ export function autoBindEntrances(g: UndergroundGraph, maxMeters: number, ids?: 
  * 导入前台手绘线段。手绘时点在已有点附近会差几米，按 toleranceMeters 合并成同一个节点；
  * 悬空的端点如果落在别的路段旁边，就在那条路段上插点接上，形成真正的路口。
  */
-export function importSketch(g: UndergroundGraph, paths: LngLat[][], props: UgEdgeProps, toleranceMeters = 4) {
+export function importSketch(g: UndergroundGraph, paths: LngLat[][], toleranceMeters = 4) {
   const touched = new Set<string>()
   const nodeFor = (p: LngLat) => {
     let best: UgNode | undefined, bestDistance = toleranceMeters
@@ -289,7 +246,11 @@ export function importSketch(g: UndergroundGraph, paths: LngLat[][], props: UgEd
     touched.add(id); return id
   }
   let count = 0
-  for (const path of paths) if (path.length >= 2) { addPath(g, path, props, nodeFor); count++ }
+  for (const path of paths) if (path.length >= 2) {
+    const before = JSON.stringify(g)
+    addPath(g, path, nodeFor)
+    if (JSON.stringify(g) !== before) count++
+  }
   for (const id of touched) {
     if (degree(g, id) !== 1) continue
     const n = node(g, id)!
@@ -326,7 +287,7 @@ export interface UgIssues {
   islands: string[][]
   /** 悬空端点离别的路段/节点很近，可能是没接上 */
   looseEnds: string[]
-  /** 还没绑定到路网节点的出入口 id（已排除的不算） */
+  /** 还没绑定到路网节点的出入口 id */
   unboundEntrances: string[]
 }
 
@@ -339,7 +300,7 @@ export function graphIssues(g: UndergroundGraph, looseMeters = 8): UgIssues {
     const near = (id: string) => id === n.id || id === neighbour
     return g.edges.some((e) => !near(e.a) && !near(e.b) && (projectOnEdge(g, e.id, n.pos)?.meters ?? Infinity) <= looseMeters)
   }).map((n) => n.id)
-  const unboundEntrances = g.entrances.filter((c) => c.status !== 'rejected' && !(c.node && node(g, c.node))).map((c) => c.id)
+  const unboundEntrances = g.entrances.filter((c) => !(c.node && node(g, c.node))).map((c) => c.id)
   return { islands, looseEnds, unboundEntrances }
 }
 

@@ -19,12 +19,13 @@ const source = {
 }
 
 const valid: UndergroundMap = {
-  version: 1,
+  version: 2,
   floor: -1,
   bounds: [[121.6, 31.183], [121.603, 31.186]],
   sources: [source],
-  roads: [{ id: 'r-1', floor: -1, mode: 'car', status: 'candidate', path: [[121.6, 31.185], [121.601, 31.185]] }],
-  connectors: [{ id: 'c-1', kind: 'stairs', floorFrom: -1, floorTo: 0, status: 'candidate', pos: [121.601, 31.184] }],
+  nodes: [{ id: 'n-a', pos: [121.6, 31.185] }, { id: 'n-b', pos: [121.601, 31.185] }],
+  edges: [{ id: 'e-1', a: 'n-a', b: 'n-b' }],
+  connectors: [{ id: 'c-1', kind: 'stairs', floorFrom: -1, floorTo: 0, pos: [121.601, 31.184] }],
 }
 
 describe('地下图层数据校验', () => {
@@ -32,23 +33,19 @@ describe('地下图层数据校验', () => {
     const map = JSON.parse(readFileSync(new URL('../../public/data/underground.json', import.meta.url), 'utf8')) as UndergroundMap
     expect(validateUndergroundMap(map, JSON.parse(readFileSync(new URL('../../public/data/campus.json', import.meta.url), 'utf8')))).toEqual([])
     expect(map.sources).toHaveLength(6)
-    expect(map.roads).toHaveLength(18)
-    expect(map.connectors).toHaveLength(16)
-    expect(map.roads.every((road) => road.status === 'candidate')).toBe(true)
+    expect(map.edges.length).toBeGreaterThan(0)
+    expect(map).not.toHaveProperty('roads')
+    expect(map.connectors).toHaveLength(26)
+    expect([...map.edges, ...map.connectors].every((entity) => !Object.hasOwn(entity, 'status'))).toBe(true)
   })
 
-  it('接受带来源、道路和候选上下点的地下图', () => {
+  it('接受带来源、道路和上下连接点的无状态地下图', () => {
     expect(validateUndergroundMap(valid, campus)).toEqual([])
   })
 
-  it('拒绝越过校园范围的道路', () => {
-    const errors = validateUndergroundMap({ ...valid, roads: [{ ...valid.roads[0], path: [[121.6, 31.185], [121.7, 31.185]] }] }, campus)
-    expect(errors.some((e) => e.includes('r-1') && e.includes('范围'))).toBe(true)
-  })
-
-  it('拒绝没有候选或确认状态的上下点', () => {
-    const errors = validateUndergroundMap({ ...valid, connectors: [{ ...valid.connectors[0], status: 'draft' as never }] }, campus)
-    expect(errors.some((e) => e.includes('c-1') && e.includes('status'))).toBe(true)
+  it('拒绝越界节点、自环与不存在的引用', () => {
+    expect(validateUndergroundMap({ ...valid, nodes: [{ ...valid.nodes[0], pos: [121.7, 31.185] }] }, campus).some((e) => e.includes('范围'))).toBe(true)
+    for (const b of ['missing', 'n-a']) expect(validateUndergroundMap({ ...valid, edges: [{ id: 'bad', a: 'n-a', b }] }, campus).some((e) => e.includes('端点'))).toBe(true)
   })
 
   it('校验路网上图片点的端点、权重和图片 ID', () => {

@@ -30,7 +30,7 @@ export function communitySession(req, db) {
   return db.prepare('SELECT u.id, u.name FROM community_sessions s JOIN community_users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>?').get(hash(token), Date.now()) ?? null
 }
 
-export function installCommunity(app, db, root, { fetchAI = fetch } = {}) {
+export function installCommunity(app, db, root, { fetchAI = fetch, staticDb = db } = {}) {
   db.exec(`PRAGMA foreign_keys = ON;
     CREATE TABLE IF NOT EXISTS discovery_catalog (kind TEXT PRIMARY KEY, data TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS community_topics (id TEXT PRIMARY KEY, type TEXT NOT NULL, name TEXT NOT NULL, context TEXT NOT NULL);
@@ -104,11 +104,11 @@ export function installCommunity(app, db, root, { fetchAI = fetch } = {}) {
     return me
   }
   // 地点话题按需创建：楼宇和点位由地图后台维护（buildings / pois 表），随时会新增或修改资料
-  const hasTable = (name) => !!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name)
+  const hasTable = (name, connection = db) => !!connection.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name)
   function placeTopic(id) {
     if (!/^[\w-]{1,64}$/.test(id)) return null
     for (const [table, kind] of [['buildings', 'building'], ['pois', 'poi']]) {
-      const row = hasTable(table) && db.prepare(`SELECT data FROM ${table} WHERE id=?`).get(id)
+      const row = hasTable(table, staticDb) && staticDb.prepare(`SELECT data FROM ${table} WHERE id=?`).get(id)
       if (!row) continue
       const p = JSON.parse(row.data)
       const context = JSON.stringify({ kind, name: p.name, aliases: p.aliases, info: p.info ?? p.desc, hours: p.hours, orgs: p.orgs })

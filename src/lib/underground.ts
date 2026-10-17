@@ -1,8 +1,7 @@
 import type { Campus, LngLat, UndergroundMap } from './types'
 
-export type { UndergroundConnector, UndergroundMap, UndergroundMode, UndergroundNode, UndergroundRoad, UndergroundRoadPoint, UndergroundSource, UndergroundStatus } from './types'
+export type { UndergroundConnector, UndergroundMap, UndergroundEdge, UndergroundNode, UndergroundRoadPoint, UndergroundSource } from './types'
 
-const VALID_STATUS = new Set(['candidate', 'confirmed', 'rejected'])
 const VALID_KINDS = new Set(['ramp', 'stairs', 'elevator', 'unknown'])
 
 function inBounds(p: LngLat, bounds: [LngLat, LngLat]) {
@@ -26,7 +25,8 @@ function duplicateIds(ids: string[]) {
 export function validateUndergroundMap(map: UndergroundMap, campus: Campus): string[] {
   const errors: string[] = []
   const bounds = campus.bounds
-  const ids = [...(map.nodes ?? []).map((n) => n.id), ...map.roads.map((r) => r.id), ...map.connectors.map((c) => c.id), ...(map.points ?? []).map((p) => p.id)]
+  if (map.version !== 2 || !Array.isArray(map.nodes) || !Array.isArray(map.edges) || 'roads' in map) return ['地下地图必须为 version 2 节点与边格式']
+  const ids = [...map.nodes.map((n) => n.id), ...map.edges.map((e) => e.id), ...map.connectors.map((c) => c.id), ...(map.points ?? []).map((p) => p.id)]
   for (const id of duplicateIds(ids)) errors.push(`重复 id: ${id}`)
   const nodeIds = new Set<string>()
   for (const networkNode of map.nodes ?? []) {
@@ -42,13 +42,16 @@ export function validateUndergroundMap(map: UndergroundMap, campus: Campus): str
       if (!inBounds(anchor.pos, bounds)) errors.push(`来源锚点超出校园范围: ${source.id}#${i}`)
     })
   }
-  for (const road of map.roads) {
-    if (road.path.length < 2) errors.push(`道路至少需要两个点: ${road.id}`)
-    if (!VALID_STATUS.has(road.status)) errors.push(`道路 status 无效: ${road.id}`)
-    road.path.forEach((p) => { if (!inBounds(p, bounds)) errors.push(`道路超出校园范围: ${road.id}`) })
+  const pairs = new Set<string>()
+  for (const edge of map.edges) {
+    if (!edge.id || Object.keys(edge).some((key) => !['id', 'a', 'b'].includes(key))) errors.push(`路段字段无效: ${edge.id}`)
+    if (!nodeIds.has(edge.a) || !nodeIds.has(edge.b) || edge.a === edge.b) errors.push(`路段端点无效: ${edge.id}`)
+    const pair = JSON.stringify([edge.a, edge.b].sort())
+    if (pairs.has(pair)) errors.push(`重复路段: ${edge.id}`)
+    pairs.add(pair)
   }
   for (const connector of map.connectors) {
-    if (!VALID_STATUS.has(connector.status)) errors.push(`连接点 status 无效: ${connector.id}`)
+    if (connector.node !== undefined && !nodeIds.has(connector.node)) errors.push(`连接点绑定无效: ${connector.id}`)
     if (!VALID_KINDS.has(connector.kind)) errors.push(`连接点 kind 无效: ${connector.id}`)
     if (!inBounds(connector.pos, bounds)) errors.push(`连接点超出校园范围: ${connector.id}`)
     if (connector.floorFrom === connector.floorTo) errors.push(`连接点楼层不能相同: ${connector.id}`)

@@ -7,13 +7,13 @@ import { createCampusMap } from '../lib/campusMap'
 import { fromLatLng, toLatLng } from '../lib/geo'
 import type { IconName } from '../lib/icons'
 import { meters } from '../lib/measure'
-import type { LngLat, UndergroundConnectorKind, UndergroundStatus } from '../lib/types'
+import type { LngLat, UndergroundConnectorKind } from '../lib/types'
 import { degree, edgeMeters, graphIssues, projectOnEdge, roadPointPosition, type UgEdge, type UgEntrance } from '../lib/undergroundGraph'
 import {
   admin, addUndergroundEntrance, addUndergroundRoadPoint, bindUndergroundEntrances, deleteUnderground, deleteUndergroundSelection, drawUndergroundAt,
   drawUndergroundOnEdge, drawUndergroundToEntrance, drawUndergroundToNode, finishUndergroundRoad, insertUndergroundNode,
   moveUndergroundEntrance, moveUndergroundNode, redoUnderground, saveUnderground, selectUnderground, setUndergroundTool,
-  undergroundCanRedo, undergroundCanUndo, undergroundDirty, undoUnderground, updateUndergroundEdge, updateUndergroundEntrance, updateUndergroundRoadPoint,
+  undergroundCanRedo, undergroundCanUndo, undergroundDirty, undoUnderground, updateUndergroundEntrance, updateUndergroundRoadPoint,
   type UndergroundSnap, type UndergroundTool,
 } from './store'
 
@@ -35,8 +35,6 @@ const kindLabel: Record<UndergroundConnectorKind, string> = { ramp: '车辆出�
 /** 车辆出入口是醒目的红圈；楼梯口、电梯口只用一个小圆点，按颜色区分 */
 const kindColor: Record<UndergroundConnectorKind, string> = { ramp: RED, stairs: '#f08c00', elevator: '#1c7ed6', unknown: '#64748b' }
 const markClass = (kind: UndergroundConnectorKind) => kind === 'ramp' ? 'ring' : 'dot'
-const statusLabel: Record<UndergroundStatus, string> = { candidate: '待核验', confirmed: '已确认', rejected: '已排除' }
-const sourceLabel: Record<string, string> = { admin: '后台标注', 'front-sketch': '前台手绘', 'admin-sketch': '后台标注' }
 
 const el = ref<HTMLDivElement>()
 const ready = ref(false)
@@ -90,12 +88,8 @@ function nearestRoadMeters(pos: LngLat) {
   if (!g) return Infinity
   return Math.min(Infinity, ...g.nodes.map((n) => meters(n.pos, pos)), ...g.edges.map((e) => projectOnEdge(g, e.id, pos)?.meters ?? Infinity))
 }
-function edgeStyle(e: UgEdge, selected: boolean): L.PolylineOptions {
-  if (e.status === 'rejected') return { color: '#a1a1aa', weight: selected ? 7 : 5, opacity: 0.6, dashArray: '2 8' }
-  return {
-    color: selected ? PURPLE_DARK : PURPLE, weight: selected ? 8 : 5.5, opacity: e.status === 'candidate' ? 0.7 : 0.95,
-    dashArray: e.status === 'candidate' ? '10 7' : undefined,
-  }
+function edgeStyle(_e: UgEdge, selected: boolean): L.PolylineOptions {
+  return { color: selected ? PURPLE_DARK : PURPLE, weight: selected ? 8 : 5.5, opacity: 0.95 }
 }
 function track(id: string, line: L.Polyline, end: 0 | 1) {
   const list = tracked.get(id) ?? []; list.push({ line, end }); tracked.set(id, list)
@@ -141,7 +135,7 @@ function draw() {
   }
   for (const c of g.entrances) {
     const selected = sel?.kind === 'entrance' && sel.id === c.id
-    const state = `${selected ? ' selected' : ''}${c.status === 'rejected' ? ' rejected' : ''}`
+    const state = selected ? ' selected' : ''
     const icon = c.kind === 'ramp'
       ? L.divIcon({ className: 'ug-entrance-host', html: `<span class="ug-entrance${state}"></span>`, iconSize: [30, 30], iconAnchor: [15, 15] })
       : L.divIcon({ className: 'ug-access-host', html: `<span class="ug-access${state}" style="--c:${kindColor[c.kind]}"></span>`, iconSize: [22, 22], iconAnchor: [11, 11] })
@@ -326,8 +320,7 @@ function keydown(event: KeyboardEvent) {
   }
 }
 
-function setEdgeStatus(status: string) { if (selectedEdge.value) updateUndergroundEdge(selectedEdge.value.id, { status: status as UndergroundStatus }) }
-function setEntrance(key: 'kind' | 'status' | 'note', value: string) {
+function setEntrance(key: 'kind' | 'note', value: string) {
   if (selectedEntrance.value) updateUndergroundEntrance(selectedEntrance.value.id, { [key]: key === 'note' ? value.trim() : value } as never)
 }
 function continueFrom() { setUndergroundTool('road') }
@@ -371,7 +364,7 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', keydown); map?.rem
       </div>
 
       <div class="ug-legend" aria-hidden="true">
-        <span><i class="line" />道路</span><span><i class="line dashed" />待核验</span>
+        <span><i class="line" />道路</span>
         <span v-for="k in (['ramp', 'stairs', 'elevator'] as const)" :key="k"><i class="ug-mark" :class="markClass(k)" :style="{ '--c': kindColor[k] }" />{{ kindLabel[k] }}</span>
       </div>
       <div class="ug-zoom">
@@ -405,21 +398,15 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', keydown); map?.rem
         </section>
 
         <section v-else-if="selectedEdge" class="ug-card">
-          <div class="ug-card-head"><span class="ug-swatch" :class="selectedEdge.status" />路段<button class="icon-button danger" title="删除路段（Delete）" @click="deleteUndergroundSelection"><Ico name="trash" /></button></div>
-          <p class="ug-meta">约 {{ Math.round(edgeMeters(graph!, selectedEdge)) }} 米 · {{ sourceLabel[selectedEdge.source ?? ''] ?? (selectedEdge.source ? '地下图纸' : '未注明来源') }}</p>
-          <div class="ug-segmented" role="radiogroup" aria-label="路段状态">
-            <button v-for="s in (['confirmed', 'candidate', 'rejected'] as const)" :key="s" type="button" role="radio" :aria-checked="selectedEdge.status === s" :class="{ on: selectedEdge.status === s }" @click="setEdgeStatus(s)">{{ statusLabel[s] }}</button>
-          </div>
-          <p class="ug-help">已排除的路段不参与地下寻路。双击路段可以在上面加点。</p>
+          <div class="ug-card-head"><span class="ug-swatch" />路段<button class="icon-button danger" title="删除路段（Delete）" @click="deleteUndergroundSelection"><Ico name="trash" /></button></div>
+          <p class="ug-meta">约 {{ Math.round(edgeMeters(graph!, selectedEdge)) }} 米 · 双向通行</p>
+          <p class="ug-help">双击路段可以在上面加点；不需要的路段可直接删除。</p>
         </section>
 
         <section v-else-if="selectedEntrance" class="ug-card">
           <div class="ug-card-head"><i class="ug-mark" :class="markClass(selectedEntrance.kind)" :style="{ '--c': kindColor[selectedEntrance.kind] }" />{{ kindLabel[selectedEntrance.kind] }}<button class="icon-button danger" title="删除出入口（Delete）" @click="deleteUndergroundSelection"><Ico name="trash" /></button></div>
           <label>类型<select :value="selectedEntrance.kind" @change="setEntrance('kind', ($event.target as HTMLSelectElement).value)"><option v-for="(label, k) in kindLabel" :key="k" :value="k">{{ label }}</option></select></label>
           <label>说明<input :value="selectedEntrance.note ?? ''" placeholder="例如：信息学院北侧坡道" @change="setEntrance('note', ($event.target as HTMLInputElement).value)"></label>
-          <div class="ug-segmented" role="radiogroup" aria-label="出入口状态">
-            <button v-for="s in (['confirmed', 'candidate', 'rejected'] as const)" :key="s" type="button" role="radio" :aria-checked="selectedEntrance.status === s" :class="{ on: selectedEntrance.status === s }" @click="setEntrance('status', s)">{{ statusLabel[s] }}</button>
-          </div>
           <div v-if="selectedEntrance.node" class="ug-bind bound"><Ico name="check" /><span><b>已绑定在道路上</b>拖动时连同道路一起移动；按住 <kbd>⌥</kbd> 拖动可以拆开</span></div>
           <div v-else class="ug-bind">
             <span><b>还没绑定到道路</b>{{ Number.isFinite(nearestRoadMeters(selectedEntrance.pos)) ? `离最近的道路 ${Math.round(nearestRoadMeters(selectedEntrance.pos))} 米，` : '' }}拖到道路上松手即可绑定</span>
@@ -467,11 +454,11 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', keydown); map?.rem
           <h3>出入口 <small>{{ graph?.entrances.length ?? 0 }}</small></h3>
           <p v-if="!graph?.entrances.length" class="ug-help">还没有出入口，按 <kbd>E</kbd> 在地图上点击添加。</p>
           <button
-            v-for="c in graph?.entrances" :key="c.id" class="ug-row" :class="{ selected: admin.undergroundSelected?.id === c.id, rejected: c.status === 'rejected' }"
+            v-for="c in graph?.entrances" :key="c.id" class="ug-row" :class="{ selected: admin.undergroundSelected?.id === c.id }"
             @click="focus([c.pos], { kind: 'entrance', id: c.id })"
           >
-            <span class="ug-row-mark"><i class="ug-mark" :class="markClass(c.kind)" :style="{ '--c': c.status === 'rejected' ? '#a1a1aa' : kindColor[c.kind] }" /></span>
-            <span class="grow"><b>{{ c.note || kindLabel[c.kind] }}</b><small>{{ kindLabel[c.kind] }} · {{ statusLabel[c.status] }}<template v-if="issues.unboundEntrances.includes(c.id)"> · 未绑定</template></small></span>
+            <span class="ug-row-mark"><i class="ug-mark" :class="markClass(c.kind)" :style="{ '--c': kindColor[c.kind] }" /></span>
+            <span class="grow"><b>{{ c.note || kindLabel[c.kind] }}</b><small>{{ kindLabel[c.kind] }}<template v-if="issues.unboundEntrances.includes(c.id)"> · 未绑定</template></small></span>
           </button>
         </section>
 
@@ -524,7 +511,6 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', keydown); map?.rem
 .ug-legend { position: absolute; z-index: 800; left: 16px; bottom: 18px; display: flex; flex-wrap: wrap; gap: 6px 14px; max-width: calc(100% - 90px); padding: 7px 12px; border: 1px solid #e3dcea; border-radius: 9px; background: #fffffff2; color: #5d5470; font-size: 12px; }
 .ug-legend span { display: inline-flex; align-items: center; gap: 6px; }
 .ug-legend .line { width: 22px; height: 5px; border-radius: 3px; background: #9b4fd1; }
-.ug-legend .line.dashed { background: repeating-linear-gradient(90deg, #9b4fd1b3 0 7px, transparent 7px 11px); }
 .ug-zoom { position: absolute; z-index: 800; right: 16px; bottom: 18px; display: flex; flex-direction: column; overflow: hidden; border: 1px solid #e3dcea; border-radius: 9px; background: #fff; box-shadow: 0 2px 10px #3b1f5a14; }
 .ug-zoom button { display: grid; place-items: center; width: 36px; height: 36px; background: #fff; color: #5d5470; font-size: 17px; }
 .ug-zoom button + button { border-top: 1px solid #efeaf3; }
@@ -551,8 +537,6 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', keydown); map?.rem
 .ug-card select, .ug-card input { width: 100%; padding: 7px 9px; }
 .ug-dot { width: 12px; height: 12px; border: 2.5px solid #9b4fd1; border-radius: 50%; background: #fff; }
 .ug-swatch { width: 22px; height: 5px; border-radius: 3px; background: #9b4fd1; }
-.ug-swatch.candidate { background: repeating-linear-gradient(90deg, #9b4fd1 0 6px, transparent 6px 9px); }
-.ug-swatch.rejected { background: #a1a1aa; }
 .ug-mark { flex: none; display: inline-block; border-radius: 50%; }
 .ug-mark.ring { width: 14px; height: 14px; border: 3px solid var(--c, #e5262d); }
 .ug-mark.dot { width: 10px; height: 10px; margin: 2px; background: var(--c); box-shadow: 0 0 0 1.5px #fff, 0 0 0 2.5px #0000001f; }
@@ -562,9 +546,6 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', keydown); map?.rem
 .ug-help.warn { color: #b0362f; }
 .ug-point-binding { display: grid; gap: 4px; padding: 9px 10px; border-radius: 8px; background: #f3eff8; color: #5d5470; font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; }
 .ug-point-binding b { color: #4c4260; font: 600 12px/1.4 inherit; }
-.ug-segmented { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px; padding: 3px; border-radius: 9px; background: #f1edf5; }
-.ug-segmented button { padding: 6px 4px; border-radius: 7px; background: transparent; color: #6a5d7c; font-size: 12px; }
-.ug-segmented button.on { background: #fff; color: #2e2540; font-weight: 600; box-shadow: 0 1px 3px #2e254026; }
 .full { width: 100%; }
 .ug-guide h3 { font-size: 13px; }
 .ug-guide ul { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; color: #5d5470; font-size: 12px; line-height: 1.55; }
@@ -586,7 +567,6 @@ kbd { display: inline-block; min-width: 18px; padding: 0 5px; border: 1px solid 
 .ug-check:disabled { opacity: 1; cursor: default; }
 .ug-row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 9px; border-radius: 9px; background: transparent; text-align: left; }
 .ug-row:hover, .ug-row.selected { background: #f6f0fa; }
-.ug-row.rejected { opacity: .55; }
 .ug-row b { display: block; overflow: hidden; color: #2e2540; font-size: 13px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .ug-row small { color: #8a8197; font-size: 11px; }
 .ug-row .grow { flex: 1; min-width: 0; }
@@ -620,12 +600,10 @@ kbd { display: inline-block; min-width: 18px; padding: 0 5px; border: 1px solid 
 .ug-entrance { display: block; width: 24px; height: 24px; margin: 3px; border: 3.5px solid #e5262d; border-radius: 50%; background: #ffffff38; box-shadow: 0 0 0 1.5px #fff, 0 1px 5px #0005; transition: transform .1s; }
 .ug-entrance-host:hover .ug-entrance { transform: scale(1.12); }
 .ug-entrance.selected { background: #e5262d40; box-shadow: 0 0 0 2px #fff, 0 0 0 6px #e5262d55; transform: scale(1.15); }
-.ug-entrance.rejected { border-color: #a1a1aa; border-style: dashed; }
 .ug-access-host { cursor: grab; }
 .ug-access { display: block; width: 14px; height: 14px; margin: 4px; border: 2.5px solid #fff; border-radius: 50%; background: var(--c); box-shadow: 0 1px 4px #0006; transition: transform .1s; }
 .ug-access-host:hover .ug-access { transform: scale(1.25); }
 .ug-access.selected { outline: 2.5px solid var(--c); outline-offset: 2px; transform: scale(1.2); }
-.ug-access.rejected { background: #a1a1aa; }
 .ug-point-host { cursor: pointer; background: transparent; border: 0; }
 .ug-point { display: grid; place-items: center; width: 24px; height: 24px; border: 2px solid #8a4cba; border-radius: 50%; background: #fff; box-shadow: 0 1px 4px #0005; transition: transform .1s, background .1s; }
 .ug-point-dot { width: 7px; height: 7px; border-radius: 50%; background: #8a4cba; }

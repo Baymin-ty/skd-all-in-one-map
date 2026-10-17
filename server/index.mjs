@@ -3,7 +3,7 @@ import express from 'express'
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
-import { DatabaseSync } from 'node:sqlite'
+import { openDatabases } from './databases.mjs'
 import { fileURLToPath } from 'node:url'
 import { loadEnvFile } from 'node:process'
 import { installCommunity } from './community.mjs'
@@ -33,28 +33,25 @@ function loadPassword() {
 }
 const digest = (s) => createHash('sha256').update(String(s)).digest()
 const passwordHash = digest(loadPassword())
-const db = new DatabaseSync(process.env.DB_PATH ?? join(here, 'map.db'))
-db.exec(`pragma journal_mode = WAL;
-  create table if not exists meta (key text primary key, value text not null);
-  create table if not exists pois (id text primary key, data text not null, updated_at integer not null);
-  create table if not exists buildings (id text primary key, data text not null, updated_at integer not null);`)
+const databases = await openDatabases()
+const { db, staticDb } = databases
 // 初始化标记与记录同一事务提交，清空一个分类后重启也不会把已删除内容重新导入。
 for (const table of ['pois', 'buildings']) {
-  if (!db.prepare('select 1 from meta where key = ?').get(`${table}.seeded`)) {
-    db.exec('begin immediate')
+  if (!staticDb.prepare('select 1 from meta where key = ?').get(`${table}.seeded`)) {
+    staticDb.exec('begin immediate')
     try {
-      if (!db.prepare(`select 1 from ${table} limit 1`).get()) {
-        const insert = db.prepare(`insert into ${table} (id, data, updated_at) values (?, ?, ?)`)
+      if (!staticDb.prepare(`select 1 from ${table} limit 1`).get()) {
+        const insert = staticDb.prepare(`insert into ${table} (id, data, updated_at) values (?, ?, ?)`)
         for (const { id, ...data } of seed[table]) insert.run(id, JSON.stringify(data), Date.now())
       }
-      db.prepare('insert into meta (key, value) values (?, ?)').run(`${table}.seeded`, '1')
-      db.exec('commit')
-    } catch (error) { db.exec('rollback'); throw error }
+      staticDb.prepare('insert into meta (key, value) values (?, ?)').run(`${table}.seeded`, '1')
+      staticDb.exec('commit')
+    } catch (error) { staticDb.exec('rollback'); throw error }
   }
 }
-const list = (table) => db.prepare(`select id, data from ${table} order by rowid`).all().map((r) => ({ id: r.id, ...JSON.parse(r.data) }))
+const list = (table) => staticDb.prepare(`select id, data from ${table} order by rowid`).all().map((r) => ({ id: r.id, ...JSON.parse(r.data) }))
 const get = (table, id) => {
-  const r = db.prepare(`select data from ${table} where id = ?`).get(id)
+  const r = staticDb.prepare(`select data from ${table} where id = ?`).get(id)
   return r ? { id, ...JSON.parse(r.data) } : null
 }
 class BadRequest extends Error {}
@@ -102,13 +99,10 @@ function clean(table, p) {
     walkway: !!p.walkway, isNew: !!p.isNew,
   }
 }
-function undergroundStatus(value) {
-  if (!['candidate', 'confirmed', 'rejected'].includes(value)) throw new BadRequest('地下数据状态不正确')
-  return value
-}
 function undergroundPoint(value) { return position(value) }
 function cleanUnderground(p) {
   if (!p || typeof p !== 'object') throw new BadRequest('地下手绘数据格式不正确')
+  if (p.version !== 2 || 'roads' in p || !Array.isArray(p.nodes) || !Array.isArray(p.edges) || !Array.isArray(p.connectors) || !Array.isArray(p.sources)) throw new BadRequest('地下地图必须为 version 2 节点与边格式')
   const floor = Number.isInteger(p.floor) ? p.floor : -1
   if (!Array.isArray(p.bounds) || p.bounds.length !== 2) throw new BadRequest('地下地图范围不正确')
   const bounds = p.bounds.map(undergroundPoint)
@@ -130,21 +124,28 @@ function cleanUnderground(p) {
     if (!result || ids.has(result)) throw new BadRequest('地下对象 id 重复或为空')
     ids.add(result); return result || prefix
   }
-  const nodes = Array.isArray(p.nodes) ? p.nodes.map((node) => ({ id: id(node?.id, 'ug-node'), pos: undergroundPoint(node?.pos) })) : []
+  const nodes = p.nodes.map((node) => {
+    if (!node || Object.keys(node).some((key) => !['id', 'pos'].includes(key))) throw new BadRequest('地下节点仅允许 id/pos')
+    return { id: id(node.id, 'ug-node'), pos: undergroundPoint(node.pos) }
+  })
   const nodeIds = new Set(nodes.map((node) => node.id))
-  const roads = Array.isArray(p.roads) ? p.roads.map((road) => {
-    if (!Array.isArray(road?.path) || road.path.length < 2 || road.path.length > 1000) throw new BadRequest('地下道路至少需要两个点')
-    if (!['car', 'walk'].includes(road.mode)) throw new BadRequest('地下道路模式不正确')
-    const direction = ['in', 'out', 'both'].includes(road.direction) ? road.direction : 'both'
-    return { id: id(road.id, 'ug-road'), floor: Number.isInteger(road.floor) ? road.floor : floor, mode: road.mode, direction, status: undergroundStatus(road.status), path: road.path.map(undergroundPoint),
-      ...(road.source ? { source: text(road.source, 120) } : {}), ...(road.note ? { note: text(road.note, 2000) } : {}) }
-  }) : []
+  const pairs = new Set()
+  const edges = p.edges.map((edge) => {
+    if (!edge || Object.keys(edge).some((key) => !['id', 'a', 'b'].includes(key))) throw new BadRequest('地下路段仅允许 id/a/b')
+    if (!nodeIds.has(edge.a) || !nodeIds.has(edge.b) || edge.a === edge.b) throw new BadRequest('地下路段端点不存在或自环')
+    const pair = JSON.stringify([edge.a, edge.b].sort())
+    if (pairs.has(pair)) throw new BadRequest('地下路段重复')
+    pairs.add(pair)
+    return { id: id(edge.id, 'ug-edge'), a: edge.a, b: edge.b }
+  })
   const connectors = Array.isArray(p.connectors) ? p.connectors.map((connector) => {
     if (!['ramp', 'stairs', 'elevator', 'unknown'].includes(connector.kind)) throw new BadRequest('地下连接点类型不正确')
     const floorFrom = Number.isInteger(connector.floorFrom) ? connector.floorFrom : 0
     const floorTo = Number.isInteger(connector.floorTo) ? connector.floorTo : floor
     if (floorFrom === floorTo) throw new BadRequest('地下连接点楼层不能相同')
-    return { id: id(connector.id, 'ug-connector'), floorFrom, floorTo, kind: connector.kind, status: undergroundStatus(connector.status), pos: undergroundPoint(connector.pos),
+    if (connector.node !== undefined && !nodeIds.has(connector.node)) throw new BadRequest('地下连接点绑定节点不存在')
+    return { id: id(connector.id, 'ug-connector'), floorFrom, floorTo, kind: connector.kind, pos: undergroundPoint(connector.pos),
+      ...(connector.node !== undefined ? { node: connector.node } : {}),
       ...(connector.source ? { source: text(connector.source, 120) } : {}), ...(connector.linkedPoiId ? { linkedPoiId: text(connector.linkedPoiId, 120) } : {}), ...(connector.note ? { note: text(connector.note, 2000) } : {}) }
   }) : []
   const points = Array.isArray(p.points) ? p.points.map((point) => {
@@ -156,7 +157,7 @@ function cleanUnderground(p) {
     if (!imageId) throw new BadRequest('地下图片点必须绑定图片 ID')
     return { id: pointId, endpointId1: point.endpointId1, endpointWeight1: +weights[0].toFixed(6), endpointId2: point.endpointId2, endpointWeight2: +weights[1].toFixed(6), imageId }
   }) : []
-  return { version: Number.isInteger(p.version) ? p.version : 1, floor, bounds, sources, nodes, roads, connectors, points }
+  return { version: 2, floor, bounds, sources, nodes, edges, connectors, points }
 }
 function isAdmin(req) {
   const token = (req.get('authorization') ?? '').replace(/^Bearer /, '')
@@ -170,7 +171,7 @@ function requireAdmin(req, res, next) {
 const app = express()
 app.disable('x-powered-by')
 app.enable('strict routing')
-installCommunity(app, db, root)
+installCommunity(app, db, root, { staticDb })
 installAccount(app, db)
 // 课表截图使用独立的 6 MB JSON 限制，必须先于通用 256 KB 解析器挂载。
 installSchedule(app)
@@ -186,17 +187,17 @@ app.use('/api', (_req, res, next) => { res.set('Cache-Control', 'no-store'); nex
 app.get('/api/places', (_req, res) => res.json({ categories: seed.categories, buildings: list('buildings'), pois: list('pois') }))
 app.post('/api/auth', requireAdmin, (_req, res) => res.json({ ok: true }))
 app.get('/api/map-settings', (_req, res) => {
-  const row = db.prepare('select value from meta where key = ?').get('map.settings')
+  const row = staticDb.prepare('select value from meta where key = ?').get('map.settings')
   res.json(row ? JSON.parse(row.value) : defaultMapSettings)
 })
 app.get('/api/underground', (_req, res) => {
-  const row = db.prepare('select value from meta where key = ?').get('underground.map')
-  res.json(row ? JSON.parse(row.value) : defaultUnderground)
+  const row = staticDb.prepare('select data from underground_maps where id = ?').get('default')
+  res.json(row ? JSON.parse(row.data) : defaultUnderground)
 })
 app.put('/api/underground', requireAdmin, (req, res) => {
   const map = cleanUnderground(req.body ?? {})
-  db.prepare('insert into meta (key, value) values (?, ?) on conflict(key) do update set value = excluded.value')
-    .run('underground.map', JSON.stringify(map))
+  staticDb.prepare('insert into underground_maps (id, data, updated_at) values (?, ?, ?) on conflict(id) do update set data = excluded.data, updated_at = excluded.updated_at')
+    .run('default', JSON.stringify(map), Date.now())
   res.json(map)
 })
 app.put('/api/map-settings', requireAdmin, (req, res) => {
@@ -207,7 +208,7 @@ app.put('/api/map-settings', requireAdmin, (req, res) => {
       throw new BadRequest('三项透明度都必须是 0%–100% 的有效数字')
     settings[key] = value
   }
-  db.prepare('insert into meta (key, value) values (?, ?) on conflict(key) do update set value = excluded.value')
+  staticDb.prepare('insert into meta (key, value) values (?, ?) on conflict(key) do update set value = excluded.value')
     .run('map.settings', JSON.stringify(settings))
   res.json(settings)
 })
@@ -216,18 +217,18 @@ for (const table of ['pois', 'buildings']) {
   app.post(`/api/${table}`, requireAdmin, (req, res) => {
     const data = clean(table, req.body ?? {})
     const id = (table === 'pois' ? 'p-' : 'b-') + randomUUID().slice(0, 8)
-    db.prepare(`insert into ${table} (id, data, updated_at) values (?, ?, ?)`).run(id, JSON.stringify(data), Date.now())
+    staticDb.prepare(`insert into ${table} (id, data, updated_at) values (?, ?, ?)`).run(id, JSON.stringify(data), Date.now())
     res.status(201).json({ id, ...data })
   })
   app.put(`/api/${table}/:id`, requireAdmin, (req, res) => {
     const old = get(table, req.params.id)
     if (!old) return res.status(404).json({ error: '记录不存在' })
     const data = clean(table, { ...old, ...req.body })
-    db.prepare(`update ${table} set data = ?, updated_at = ? where id = ?`).run(JSON.stringify(data), Date.now(), old.id)
+    staticDb.prepare(`update ${table} set data = ?, updated_at = ? where id = ?`).run(JSON.stringify(data), Date.now(), old.id)
     res.json({ id: old.id, ...data })
   })
   app.delete(`/api/${table}/:id`, requireAdmin, (req, res) => {
-    if (!db.prepare(`delete from ${table} where id = ?`).run(req.params.id).changes) return res.status(404).json({ error: '记录不存在' })
+    if (!staticDb.prepare(`delete from ${table} where id = ?`).run(req.params.id).changes) return res.status(404).json({ error: '记录不存在' })
     res.status(204).end()
   })
 }
@@ -243,4 +244,4 @@ app.use((err, _req, res, _next) => {
 })
 const server = app.listen(Number(process.env.PORT ?? 8790))
 server.once('listening', () => console.log(`http://localhost:${server.address()?.port ?? process.env.PORT ?? 8790}`))
-for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => { eventPipeline.close(); server.close(() => { db.close(); process.exit(0) }) })
+for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => { eventPipeline.close(); server.close(() => { databases.close(); process.exit(0) }) })

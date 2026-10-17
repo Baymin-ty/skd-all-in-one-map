@@ -62,8 +62,6 @@ export interface Places {
   pois: Poi[]
 }
 
-export type UndergroundStatus = 'candidate' | 'confirmed' | 'rejected'
-export type UndergroundMode = 'car' | 'walk'
 export type UndergroundConnectorKind = 'ramp' | 'stairs' | 'elevator' | 'unknown'
 
 export interface UndergroundSourceAnchor {
@@ -82,15 +80,10 @@ export interface UndergroundSource {
   note?: string
 }
 
-export interface UndergroundRoad {
+export interface UndergroundEdge {
   id: string
-  floor: number
-  mode: UndergroundMode
-  status: UndergroundStatus
-  path: LngLat[]
-  source?: string
-  direction?: 'in' | 'out' | 'both'
-  note?: string
+  a: string
+  b: string
 }
 
 export interface UndergroundConnector {
@@ -98,8 +91,8 @@ export interface UndergroundConnector {
   floorFrom: number
   floorTo: number
   kind: UndergroundConnectorKind
-  status: UndergroundStatus
   pos: LngLat
+  node?: string
   source?: string
   linkedPoiId?: string
   note?: string
@@ -122,12 +115,12 @@ export interface UndergroundNode {
 }
 
 export interface UndergroundMap {
-  version: number
+  version: 2
   floor: number
   bounds: [LngLat, LngLat]
   sources: UndergroundSource[]
-  nodes?: UndergroundNode[]
-  roads: UndergroundRoad[]
+  nodes: UndergroundNode[]
+  edges: UndergroundEdge[]
   connectors: UndergroundConnector[]
   points?: UndergroundRoadPoint[]
 }

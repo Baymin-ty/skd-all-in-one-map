@@ -18,6 +18,8 @@ beforeEach(() => {
   vi.stubGlobal('window', { setTimeout })
   vi.stubGlobal('sessionStorage', { setItem: vi.fn(), removeItem: vi.fn() })
   vi.stubGlobal('fetch', vi.fn())
+  const local = new Map<string, string>()
+  vi.stubGlobal('localStorage', { getItem: (key: string) => local.get(key) ?? null, setItem: (key: string, value: string) => local.set(key, value), removeItem: (key: string) => local.delete(key) })
   vi.useFakeTimers()
   admin.saving = false
   admin.deleteTarget = null; admin.deleteError = ''; admin.selected = null
@@ -25,8 +27,8 @@ beforeEach(() => {
   discard(); closeLogin()
   Object.assign(admin, { loggedIn: true, offline: false, token: 'test', view: 'overview', kind: 'building', search: '测试', category: 'building:academic' })
   admin.places.buildings = [building()]; admin.places.pois = []
-  const underground: UndergroundMap = { version: 1, floor: -1, bounds: [[121.59, 31.17], [121.62, 31.20]], sources: [], roads: [], connectors: [] }
-  admin.underground = underground; admin.undergroundGraph = { nodes: [], edges: [], entrances: [] }; admin.undergroundBaseline = JSON.stringify(admin.undergroundGraph)
+  const underground: UndergroundMap = { version: 2, floor: -1, bounds: [[121.59, 31.17], [121.62, 31.20]], sources: [], nodes: [], edges: [], connectors: [] }
+  admin.underground = underground; admin.undergroundGraph = { nodes: [], edges: [], entrances: [], points: [] }; admin.undergroundBaseline = JSON.stringify(admin.undergroundGraph)
   admin.undergroundPast = []; admin.undergroundFuture = []; admin.undergroundSelected = null; admin.undergroundActive = null
   admin.undergroundTool = 'select'; admin.undergroundSaving = false; admin.undergroundError = ''
   admin.campus = { bounds: [[121.59, 31.17], [121.62, 31.20]] } as Campus
@@ -268,8 +270,12 @@ describe('地下标注工作台', () => {
     const [url, init] = vi.mocked(fetch).mock.calls.at(-1)!
     expect(url).toBe('/api/underground')
     const body = JSON.parse(init!.body as string)
-    expect(body.roads).toEqual([expect.objectContaining({ status: 'confirmed', mode: 'car', direction: 'both', path: [[121.6, 31.18], [121.601, 31.18], [121.601, 31.181]] })])
+    expect(body.version).toBe(2)
+    expect(body.nodes.map((n: { pos: number[] }) => n.pos)).toEqual([[121.6, 31.18], [121.601, 31.18], [121.601, 31.181]])
+    expect(body.edges).toHaveLength(2)
+    expect(body).not.toHaveProperty('roads')
     expect(body.connectors).toEqual([expect.objectContaining({ kind: 'stairs', floorFrom: 0, floorTo: -1, pos: [121.6011, 31.1811] })])
+    expect([...body.edges, ...body.connectors].every((entity) => !Object.hasOwn(entity, 'status'))).toBe(true)
     expect(undergroundDirty.value).toBe(false)
     expect(admin.undergroundGraph!.edges).toHaveLength(2)
   })
@@ -289,7 +295,7 @@ describe('地下标注工作台', () => {
     vi.mocked(fetch).mockImplementationOnce(async (_url, init) => new Response(init!.body as string))
     await saveUnderground()
     const body = JSON.parse(vi.mocked(fetch).mock.calls.at(-1)![1]!.body as string)
-    expect(body.connectors[0]).not.toHaveProperty('node')
+    expect(body.connectors[0].node).toBe(end)
     expect(body.connectors[0].pos).toEqual([121.6025, 31.1805])
     expect(admin.undergroundGraph!.entrances.every((e) => e.node)).toBe(true)
   })
@@ -317,7 +323,7 @@ describe('地下标注工作台', () => {
     const edge = admin.undergroundGraph!.edges[0].id
     moveUndergroundNode(nodeAt(121.601, 31.1805), [121.601, 31.18], { edge, pos: [121.601, 31.18] })
     expect(degreeOf(nodeAt(121.601, 31.18))).toBe(3)
-    admin.undergroundGraph!.entrances.push({ id: 'old', floorFrom: 0, floorTo: -1, kind: 'stairs', status: 'confirmed', pos: [121.60001, 31.18001] })
+    admin.undergroundGraph!.entrances.push({ id: 'old', floorFrom: 0, floorTo: -1, kind: 'stairs', pos: [121.60001, 31.18001] })
     expect(bindUndergroundEntrances(10)).toBe(1)
     expect(admin.undergroundGraph!.entrances[0]).toMatchObject({ node: nodeAt(121.6, 31.18), pos: [121.6, 31.18] })
   })
@@ -334,5 +340,37 @@ describe('地下标注工作台', () => {
     await saveUnderground()
     const body = JSON.parse(vi.mocked(fetch).mock.calls.at(-1)![1]!.body as string)
     expect(body.points).toEqual([expect.objectContaining({ id: point.id, endpointWeight1: 0.25, endpointWeight2: 0.75, imageId: 'image-road-sign-1' })])
+  })
+
+  it('草稿几何去重，保存成功只消费已保存线段，保留同时新画的草稿和未完成线段', async () => {
+    const key = 'campus.underground.sketch'
+    const path = [[121.6, 31.18], [121.601, 31.18]], fresh = [[121.602, 31.18], [121.603, 31.18]], current = [[121.604, 31.18]]
+    localStorage.setItem(key, JSON.stringify({ paths: [path], current: [] }))
+    vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify(admin.underground)))
+    await store.loadUnderground()
+    expect(admin.undergroundGraph!.edges).toHaveLength(1)
+    const savedMap = admin.underground!
+    vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify(savedMap)))
+    await store.loadUnderground()
+    expect(admin.undergroundGraph!.edges).toHaveLength(1)
+    vi.mocked(fetch).mockImplementationOnce(async (_url, init) => {
+      localStorage.setItem(key, JSON.stringify({ paths: [path, fresh], current }))
+      return new Response(init!.body as string)
+    })
+    await saveUnderground()
+    expect(JSON.parse(localStorage.getItem(key)!)).toEqual({ paths: [fresh], current })
+  })
+
+  it('草稿保存失败不消费本机数据，导入可撤销', async () => {
+    const key = 'campus.underground.sketch', draft = JSON.stringify({ paths: [[[121.6, 31.18], [121.601, 31.18]]], current: [] })
+    localStorage.setItem(key, draft)
+    vi.mocked(fetch).mockResolvedValueOnce(new Response(JSON.stringify(admin.underground)))
+    await store.loadUnderground()
+    expect(admin.undergroundGraph!.edges).toHaveLength(1)
+    vi.mocked(fetch).mockRejectedValueOnce(new Error('网络断开'))
+    await saveUnderground()
+    expect(localStorage.getItem(key)).toBe(draft)
+    undoUnderground()
+    expect(admin.undergroundGraph!.edges).toHaveLength(0)
   })
 })

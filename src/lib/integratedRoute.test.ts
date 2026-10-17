@@ -17,16 +17,17 @@ const longB: LngLat = [0.0035, 0.0038]
 const shortA: LngLat = [0.001, 0.0038]
 const shortB: LngLat = [0.0012, 0.0038]
 
-function underground(a: LngLat, b: LngLat, status: 'candidate' | 'confirmed' | 'rejected' = 'candidate'): UndergroundMap {
+function underground(a: LngLat, b: LngLat): UndergroundMap {
   return {
-    version: 1,
+    version: 2,
     floor: -1,
     bounds: [[0, 0], [0.004, 0.004]],
     sources: [],
-    roads: [{ id: 'road', floor: -1, mode: 'car', direction: 'both', status, path: [a, b] }],
+    nodes: [{ id: 'na', pos: a }, { id: 'nb', pos: b }],
+    edges: [{ id: 'edge', a: 'na', b: 'nb' }],
     connectors: [
-      { id: 'a', floorFrom: 0, floorTo: -1, kind: 'stairs', status, pos: a },
-      { id: 'b', floorFrom: 0, floorTo: -1, kind: 'elevator', status, pos: b },
+      { id: 'a', floorFrom: 0, floorTo: -1, kind: 'stairs', pos: a },
+      { id: 'b', floorFrom: 0, floorTo: -1, kind: 'elevator', pos: b },
     ],
   }
 }
@@ -57,14 +58,12 @@ describe('地上地下雨天一体化导航', () => {
   })
 
   it('地下连接点不可达时回退到地面雨天路线', () => {
-    const result = findIntegratedRoute({ point: longA }, { point: longB }, underground(longA, longB, 'rejected'), { rain: true })!
+    const map = underground(longA, longB)
+    map.edges = []
+    const result = findIntegratedRoute({ point: longA }, { point: longB }, map, { rain: true })!
     expect(result).not.toBeNull()
     expect(result.undergroundMeters).toBe(0)
     expect(result.segments.every((segment) => segment.layer === 'surface')).toBe(true)
   })
 
-  it('可关闭候选线，拒绝状态和候选状态都不会进入路线', () => {
-    const result = findIntegratedRoute({ point: longA }, { point: longB }, underground(longA, longB), { rain: true, allowCandidate: false })!
-    expect(result.undergroundMeters).toBe(0)
-  })
 })

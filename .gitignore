@@ -2,7 +2,9 @@ node_modules
 dist
 .DS_Store
 server/*.db
+!server/static.db
 server/*.db-*
+server/*.migrating*
 server/.admin-password
 server/.checkin-secret
 server/backups/
@@ -10,3 +12,5 @@ server/backups/
 .env.*
 !.env.example
 server/.env
+
+vite.log

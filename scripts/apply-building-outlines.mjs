@@ -7,7 +7,7 @@ import { planOutlinePatches } from './outline-patches.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const write = process.argv.includes('--write')
-const path = resolve(process.argv.slice(2).find((arg) => !arg.startsWith('--')) ?? join(root, 'server/map.db'))
+const path = resolve(process.argv.slice(2).find((arg) => !arg.startsWith('--')) ?? join(root, 'server/static.db'))
 if (!existsSync(path)) throw new Error(`数据库不存在：${path}`)
 const { patches } = JSON.parse(readFileSync(join(root, 'data/building-outline-refinements.json'), 'utf8'))
 const db = new DatabaseSync(path, { readOnly: !write })

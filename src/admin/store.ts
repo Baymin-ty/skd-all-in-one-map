@@ -5,7 +5,7 @@ import type { IconName } from '../lib/icons'
 import { DEFAULT_MAP_SETTINGS, validMapSettings } from '../lib/mapSettings'
 import {
   addNode, autoBindEntrances, bindEntrance, connect, createRoadPoint, graphFromMap, graphToMap, importSketch, mergeNodes, moveNode, removeEdge, removeNode,
-  roundPos, splitEdge, ugId, unbindEntrance, type UgEdge, type UgEdgeProps, type UgRoadPoint, type UndergroundGraph,
+  roundPos, splitEdge, ugId, unbindEntrance, type UgRoadPoint, type UndergroundGraph,
 } from '../lib/undergroundGraph'
 export type Kind = 'building' | 'poi'
 export type View = 'overview' | 'underground' | 'appearance' | 'data' | 'events'
@@ -155,8 +155,7 @@ export async function loadMapSettings() {
 }
 
 const SKETCH_KEY = 'campus.underground.sketch'
-/** 管理员画的路段默认是已确认的车行道 */
-const ADMIN_EDGE: UgEdgeProps = { status: 'confirmed', mode: 'car', source: 'admin' }
+let loadedSketchPaths: LngLat[][] = []
 function frontSketchPaths(): LngLat[][] {
   try {
     const value = JSON.parse(localStorage.getItem(SKETCH_KEY) || 'null')
@@ -168,8 +167,9 @@ function resetUnderground(map: UndergroundMap) {
   admin.undergroundSelected = null; admin.undergroundActive = null; admin.undergroundTool = 'select'
   admin.undergroundPast = []; admin.undergroundFuture = []; admin.undergroundImported = 0; admin.undergroundVersion++
   // 前台手绘草稿只存在浏览器里：导入成一步可撤销的修改，保存后才写进后台
-  const paths = map.roads.some((road) => road.source === 'front-sketch') ? [] : frontSketchPaths()
-  if (paths.length) changeUnderground((g) => { admin.undergroundImported = importSketch(g, paths, { ...ADMIN_EDGE, source: 'front-sketch' }) })
+  const paths = frontSketchPaths()
+  loadedSketchPaths = copy(paths)
+  if (paths.length) changeUnderground((g) => { admin.undergroundImported = importSketch(g, paths) })
 }
 export async function loadUnderground() {
   admin.undergroundLoading = true; admin.undergroundError = ''
@@ -226,7 +226,7 @@ function inCampus(pos: LngLat) {
 function drawTo(target: (g: UndergroundGraph) => string | null) {
   changeUnderground((g) => {
     const id = target(g); if (!id) return
-    if (admin.undergroundActive) connect(g, admin.undergroundActive, id, ADMIN_EDGE)
+    if (admin.undergroundActive) connect(g, admin.undergroundActive, id)
     admin.undergroundActive = id
     admin.undergroundSelected = { kind: 'node', id }
   })
@@ -279,7 +279,7 @@ export function addUndergroundEntrance(pos: LngLat, snap?: UndergroundSnap) {
   if (!snap && !inCampus(pos)) return
   const id = ugId('ug-entrance')
   changeUnderground((g) => {
-    g.entrances.push({ id, floorFrom: 0, floorTo: admin.underground?.floor ?? -1, kind: admin.undergroundEntranceKind, status: 'confirmed', pos: roundPos(pos), source: 'admin' })
+    g.entrances.push({ id, floorFrom: 0, floorTo: admin.underground?.floor ?? -1, kind: admin.undergroundEntranceKind, pos: roundPos(pos), source: 'admin' })
     const target = snapNode(g, snap)
     if (target) bindEntrance(g, id, target)
     admin.undergroundSelected = { kind: 'entrance', id }
@@ -343,10 +343,7 @@ export function deleteUnderground(target: UndergroundSelection) {
 export function deleteUndergroundSelection() {
   if (admin.undergroundSelected) deleteUnderground(admin.undergroundSelected)
 }
-export function updateUndergroundEdge(id: string, patch: Partial<Pick<UgEdge, 'status'>>) {
-  changeUnderground((g) => { const e = g.edges.find((item) => item.id === id); if (e) Object.assign(e, patch) })
-}
-export function updateUndergroundEntrance(id: string, patch: Partial<Pick<UndergroundConnector, 'kind' | 'status' | 'note'>>) {
+export function updateUndergroundEntrance(id: string, patch: Partial<Pick<UndergroundConnector, 'kind' | 'note'>>) {
   changeUnderground((g) => {
     const e = g.entrances.find((item) => item.id === id); if (!e) return
     Object.assign(e, patch)
@@ -358,8 +355,21 @@ export async function saveUnderground() {
   admin.undergroundSaving = true; admin.undergroundError = ''
   try {
     const body = graphToMap(admin.undergroundGraph, admin.underground)
+    const consumed = new Set(loadedSketchPaths.filter((path) => {
+      const graph = graphFromMap(body), before = JSON.stringify(graph)
+      importSketch(graph, [path])
+      return JSON.stringify(graph) === before
+    }).map((path) => JSON.stringify(path)))
     const saved = await request<UndergroundMap>('/api/underground', { method: 'PUT', body: JSON.stringify(body) })
-    try { localStorage.removeItem(SKETCH_KEY) } catch { /* 无存储 */ }
+    try {
+      const draft = JSON.parse(localStorage.getItem(SKETCH_KEY) || 'null')
+      if (Array.isArray(draft?.paths)) {
+        draft.paths = draft.paths.filter((path: LngLat[]) => !consumed.has(JSON.stringify(path)))
+        if (draft.paths.length || draft.current?.length) localStorage.setItem(SKETCH_KEY, JSON.stringify(draft))
+        else localStorage.removeItem(SKETCH_KEY)
+      }
+    } catch { /* 无存储 */ }
+    admin.undergroundSaving = false
     resetUnderground(saved)
     notify('地下标注已保存到后台')
   } catch (e) { admin.undergroundError = `保存失败：${(e as Error).message}` }

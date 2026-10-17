@@ -9,15 +9,15 @@ import { addNode, connect, createRoadPoint, graphFromMap, graphToMap } from '../
 
 const directory = mkdtempSync(join(tmpdir(), 'campus-admin-test-'))
 const dbPath = join(directory, 'map.db')
+const staticPath = `${dbPath}.static.db`
 const password = 'local-integration-test'
 const seed = JSON.parse(readFileSync(resolve('public/data/places.json'), 'utf8'))
 const undergroundSeed = JSON.parse(readFileSync(resolve('public/data/underground.json'), 'utf8'))
-// 种子数据已清空，测试用旧版候选路网当样本
-const undergroundSample = JSON.parse(readFileSync(resolve('data/underground-sketch-backup-20261017.json'), 'utf8'))
+const undergroundSample = undergroundSeed
 let server, base
 async function start() {
   server = spawn(process.execPath, ['server/index.mjs'], {
-    cwd: resolve('.'), env: { ...process.env, PORT: '0', DB_PATH: dbPath, ADMIN_PASSWORD: password, EVENT_SYNC_ON_START: 'false' }, stdio: ['ignore', 'pipe', 'pipe'],
+    cwd: resolve('.'), env: { ...process.env, PORT: '0', DB_PATH: dbPath, DYNAMIC_DB_PATH: dbPath, STATIC_DB_PATH: staticPath, ADMIN_PASSWORD: password, EVENT_SYNC_ON_START: 'false' }, stdio: ['ignore', 'pipe', 'pipe'],
   })
   base = await new Promise((resolve, reject) => {
     let output = ''
@@ -50,17 +50,28 @@ describe('campus management API', () => {
 
   test('地下手绘需要管理员保存，并在重启后保留道路和连接点', async () => {
     const initial = await (await call('/api/underground', 'GET', undefined, false)).json()
-    expect(initial.roads).toHaveLength(undergroundSeed.roads.length)
+    expect(initial.edges).toHaveLength(undergroundSeed.edges.length)
     expect(initial.connectors).toHaveLength(undergroundSeed.connectors.length)
     expect((await call('/api/underground', 'PUT', initial, false)).status).toBe(401)
     const changed = {
       ...initial,
-      roads: [{ ...undergroundSample.roads[0], path: [[121.5963, 31.1832], [121.5964, 31.1837]] }],
-      connectors: [{ ...undergroundSample.connectors[0], kind: 'ramp', note: '后台保存测试' }],
+      nodes: [{ id: 'na', pos: [121.5963, 31.1832] }, { id: 'nb', pos: [121.5964, 31.1837] }],
+      edges: [{ id: 'ab', a: 'na', b: 'nb' }],
+      points: [],
+      connectors: [{ id: 'off', floorFrom: 0, floorTo: -1, pos: [121.597, 31.184], kind: 'ramp', note: '后台保存测试' }],
     }
     const saved = await (await call('/api/underground', 'PUT', changed)).json()
-    expect(saved.roads[0].path).toEqual(changed.roads[0].path)
+    expect(saved.edges).toEqual(changed.edges)
+    expect(saved.nodes).toEqual(changed.nodes)
+    expect(saved.connectors[0].pos).toEqual(changed.connectors[0].pos)
+    expect(saved.connectors[0]).not.toHaveProperty('node')
     expect(saved.connectors[0].note).toBe('后台保存测试')
+    expect([...saved.edges, ...saved.connectors].every((entity) => !Object.hasOwn(entity, 'status'))).toBe(true)
+    expect(saved.sources).toEqual(initial.sources)
+    const database = new DatabaseSync(staticPath)
+    const stored = JSON.parse(database.prepare('select data from underground_maps where id = ?').get('default').data)
+    database.close()
+    expect(stored).toEqual(saved)
     await stop(); await start()
     expect(await (await call('/api/underground', 'GET', undefined, false)).json()).toEqual(saved)
     await call('/api/underground', 'PUT', undergroundSeed)
@@ -70,9 +81,9 @@ describe('campus management API', () => {
     const graph = graphFromMap(undergroundSample)
     const junction = graph.nodes[1].id
     const branch = addNode(graph, [121.5975, 31.1835])
-    connect(graph, junction, branch, { status: 'confirmed', mode: 'car', source: 'admin' })
+    connect(graph, junction, branch)
     const point = createRoadPoint(graph, graph.edges[0].id, [121.59635, 31.18345], 'garage-sign-1')
-    graph.entrances.push({ id: 'ug-entrance-test', floorFrom: 0, floorTo: -1, kind: 'stairs', status: 'confirmed', pos: [121.5975, 31.1835], source: 'admin' })
+    graph.entrances.push({ id: 'ug-entrance-test', floorFrom: 0, floorTo: -1, kind: 'stairs', pos: [121.5975, 31.1835], source: 'admin' })
     const response = await call('/api/underground', 'PUT', graphToMap(graph, undergroundSeed))
     expect(response.status).toBe(200)
     const saved = await response.json()
@@ -86,11 +97,21 @@ describe('campus management API', () => {
     await call('/api/underground', 'PUT', undergroundSeed)
   })
 
-  test('地下手绘拒绝越界和不完整道路', async () => {
+  test('地下图严格拒绝非法边、节点、引用和旧字段，失败不写入', async () => {
     const initial = await (await call('/api/underground')).json()
-    const road = undergroundSample.roads[0]
-    for (const roads of [[{ ...road, path: [[121.6, 31.184]] }], [{ ...road, path: [[0, 0], [121.6, 31.184]] }]]) {
-      expect((await call('/api/underground', 'PUT', { ...initial, roads })).status).toBe(400)
+    const edge = initial.edges[0], node = initial.nodes[0]
+    const invalid = [
+      { version: 1 }, { roads: [] }, { nodes: null }, { edges: null },
+      { edges: [{ ...edge, b: edge.a }] }, { edges: [{ ...edge, b: 'missing' }] },
+      { edges: [edge, { id: 'duplicate', a: edge.b, b: edge.a }] },
+      { nodes: [{ ...node, pos: [0, 0] }] },
+      { connectors: [{ ...initial.connectors[0], node: 'missing' }] },
+      ...['path', 'mode', 'direction', 'source', 'note'].map((key) => ({ edges: [{ ...edge, [key]: 'removed' }] })),
+      { edges: [{ ...edge, id: node.id }] },
+    ]
+    for (const patch of invalid) {
+      expect((await call('/api/underground', 'PUT', { ...initial, ...patch })).status).toBe(400)
+      expect(await (await call('/api/underground')).json()).toEqual(initial)
     }
   })
   test('map opacity settings require authentication and persist across restart', async () => {
@@ -123,6 +144,12 @@ describe('campus management API', () => {
       expect((await call(`/api/${resource}/missing`, 'PUT', {}, false)).status).toBe(401)
       expect((await call(`/api/${resource}/missing`, 'DELETE', undefined, false)).status).toBe(401)
     }
+  })
+  test('place community topics resolve the separate static database', async () => {
+    const id = seed.buildings[0].id
+    const response = await call(`/api/community/topics/place/${id}/posts`, 'GET', undefined, false)
+    expect(response.status).toBe(200)
+    expect((await response.json()).total).toBe(0)
   })
   test('creates, updates and deletes a POI without changing the original data', async () => {
     const input = { name: { zh: '测试点位', en: 'Test' }, cat: 'life', pos: [121.601, 31.183] }
@@ -181,7 +208,7 @@ describe('campus management API', () => {
   })
   test('deleting every record remains empty after restart', async () => {
     await stop()
-    const db = new DatabaseSync(dbPath)
+    const db = new DatabaseSync(staticPath)
     db.exec('delete from buildings; delete from pois;')
     db.close()
     await start()

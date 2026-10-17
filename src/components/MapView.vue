@@ -647,12 +647,13 @@ function toggleRoads(on: boolean) {
 function drawUnderground() {
   undergroundLayer.clearLayers()
   if (!map || !state.underground || (state.route.network !== 'underground' && !state.showUnderground)) { undergroundLayer.remove(); return }
-  for (const road of state.underground.roads) {
-    if (road.status === 'rejected' || road.path.length < 2) continue
-    L.polyline(road.path.map(toLatLng), { color: road.status === 'confirmed' ? '#6f2dbd' : '#a24bc4', weight: 4.5, opacity: 0.8, dashArray: road.status === 'candidate' ? '10 6' : undefined, lineCap: 'round', lineJoin: 'round', interactive: false }).addTo(undergroundLayer)
+  const nodes = new Map(state.underground.nodes.map((n) => [n.id, n.pos]))
+  for (const edge of state.underground.edges) {
+    const a = nodes.get(edge.a), b = nodes.get(edge.b)
+    if (!a || !b) continue
+    L.polyline([a, b].map(toLatLng), { color: '#6f2dbd', weight: 4.5, opacity: 0.8, lineCap: 'round', lineJoin: 'round', interactive: false }).addTo(undergroundLayer)
   }
   for (const connector of state.underground.connectors) {
-    if (connector.status === 'rejected') continue
     const label = connector.kind === 'ramp' ? '车' : connector.kind === 'stairs' ? '楼' : connector.kind === 'elevator' ? '梯' : '连'
     const color = connector.kind === 'ramp' ? '#3559a8' : connector.kind === 'stairs' ? '#b65b22' : connector.kind === 'elevator' ? '#168266' : '#73549b'
     L.marker(toLatLng(connector.pos), { icon: L.divIcon({ className: '', html: `<span class="underground-connector" style="--connector-color:${color}">${label}</span>`, iconSize: [30, 30], iconAnchor: [15, 15] }), title: `${connector.kind === 'ramp' ? '车辆出入口' : connector.kind === 'stairs' ? '楼梯' : connector.kind === 'elevator' ? '电梯' : '连接点'} · B1`, bubblingMouseEvents: false })
@@ -928,10 +929,7 @@ const toolsHidden = computed(() => tm.open || !ui.desktop && ui.sheet > ui.ancho
 .leaflet-marker-icon { background: none; border: 0; }
 .leaflet-control-attribution { font-size: 10px; }
 .ug-marker { position: absolute; transform: translate(-50%, -50%); display: flex; align-items: center; gap: 3px; white-space: nowrap; padding: 3px; border: 2px solid #b47a22; border-radius: 999px; background: #fff9e9; color: #8b5b17; box-shadow: 0 1px 5px #0003; font-size: 14px; }
-.ug-marker.confirmed { border-color: #287b55; background: #edf9f0; color: #287b55; }
-.ug-marker.rejected { border-color: #999; background: #f3f3f3; color: #999; }
 .ug-marker em { padding-right: 4px; color: #6b542c; font-size: 10px; font-style: normal; font-weight: 700; }
-.ug-marker.confirmed em { color: #287b55; }
 .ug-source-popup { display: grid; gap: 6px; min-width: 220px; }
 .ug-source-popup small { color: #6d746e; line-height: 1.45; }
 .ug-source-popup img { display: block; width: 100%; max-height: 180px; object-fit: cover; border-radius: 8px; }
