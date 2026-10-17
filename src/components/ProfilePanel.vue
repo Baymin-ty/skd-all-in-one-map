@@ -2,9 +2,9 @@
 import { computed, nextTick, onMounted, reactive, ref } from 'vue'
 import { account, logoutAccount, openAccount, ROLE_LABELS, updateNickname } from '../lib/account'
 import { dateKey } from '../lib/campusTime'
-import { openShare } from '../lib/deepLink'
+import { formatWeekRanges } from '../lib/academicCalendar'
 import { clearHomePlace, favorites, HOME_ROLES, homePlace, placeLabel, profileUi, removePlace, setHomePlace, type HomeRole } from '../lib/profile'
-import { navigateToPlace, placeName, placeSelection, select, showPanel, state, toast } from '../lib/store'
+import { navigateToPlace, placeName, placeSelection, select, state, toast } from '../lib/store'
 import type { PlaceCat } from '../lib/types'
 import { clearClasses, endMin, fromMin, isWeeklyClass, plan, removeItem, startMin, type PlanItem } from '../lib/today'
 import Ico from './Ico.vue'
@@ -86,10 +86,6 @@ function clearAll() {
   toast('课表已清空')
 }
 
-function shareSite() {
-  openShare({ title: '上科大一图通', links: [{ label: '首页', url: `${window.location.origin}/`, hint: '用手机扫码打开校园地图' }] })
-}
-
 onMounted(async () => {
   const focus = profileUi.focus
   profileUi.focus = ''
@@ -128,11 +124,39 @@ onMounted(async () => {
     <section v-else class="me-card guest">
       <div class="me-who">
         <span class="me-avatar blank"><Ico name="users" /></span>
-        <div class="grow"><b class="me-name">未登录</b><small>现在设置的寝室和课表只存在这台设备</small></div>
+        <div class="grow"><b class="me-name">登录可获得你的专属地图</b></div>
       </div>
-      <p class="me-copy">用校园邮箱登录后，昵称、课表和寝室跟着账号走，换手机也在；这台设备上已有的内容会自动并入账号。</p>
-      <button type="button" class="act primary" @click="openAccount()"><Ico name="users" />校园邮箱登录</button>
+      <p class="me-copy">登录后，地图、课表和寝室跟着账号走，换手机也在。</p>
+      <button type="button" class="act primary" @click="openAccount()"><Ico name="users" />邮箱登录</button>
     </section>
+
+    <!-- 课表 -->
+    <section id="me-schedule" class="sec">
+      <h3>我的课表 <span v-if="classes.length" class="muted">{{ classes.length }} 门课 · 每周重复</span></h3>
+      <p class="muted">课表会按星期出现在「我的今天」里，自动推荐下课后去哪吃饭、提醒出发时间。</p>
+      <div class="me-tools">
+        <ScheduleImport />
+        <button v-if="editing !== 'new'" type="button" class="act small" @click="editing = 'new'"><Ico name="plus" />手动添加</button>
+      </div>
+      <TodayItemForm v-if="editing" :key="editing === 'new' ? 'new' : editing.id" :item="editing === 'new' ? null : editing" :date="dateKey()" class-only @done="editing = null" />
+      <div v-for="d in week" :key="d.zh" class="me-day">
+        <h4 class="me-sub">{{ d.zh }}</h4>
+        <ul class="list-plain me-rows">
+          <li v-for="c in d.items" :key="c.id" class="me-row class-row">
+            <span class="me-time"><b>{{ c.start }}</b><small>{{ fromMin(endMin(c)) }}</small></span>
+            <button type="button" class="grow me-link" @click="editing = c">
+              <b class="ellipsis">{{ c.title }}</b>
+              <small class="ellipsis">{{ where(c) || '地点未填' }}<template v-if="c.weekdays!.length > 1"> · 每周{{ c.weekdays!.map((w) => WEEKDAYS[w - 1].slice(1)).join('、') }}</template><template v-if="c.weeks?.length"> · 第{{ formatWeekRanges(c.weeks) }}周</template></small>
+            </button>
+            <button type="button" class="icon-btn" :aria-label="`编辑 ${c.title}`" @click="editing = c"><Ico name="edit" /></button>
+            <button type="button" class="icon-btn danger" :aria-label="`删除 ${c.title}`" @click="removeClass(c)"><Ico name="trash" /></button>
+          </li>
+        </ul>
+      </div>
+      <p v-if="!classes.length && !editing" class="muted me-empty">还没有课表。导入教务系统的课表截图最快，也可以手动一门门加。</p>
+      <button v-if="classes.length" type="button" class="text-link danger me-clear" @click="clearAll">清空课表</button>
+    </section>
+
 
     <!-- 常用地点 -->
     <section id="me-places" class="sec">
@@ -179,45 +203,14 @@ onMounted(async () => {
       <p v-else class="muted me-empty">在地图上点开一个地点，点「收藏」就会出现在这里。</p>
     </section>
 
-    <!-- 课表 -->
-    <section id="me-schedule" class="sec">
-      <h3>我的课表 <span v-if="classes.length" class="muted">{{ classes.length }} 门课 · 每周重复</span></h3>
-      <p class="muted">课表会按星期出现在「我的今天」里，自动推荐下课后去哪吃饭、提醒出发时间。</p>
-      <div class="me-tools">
-        <ScheduleImport />
-        <button v-if="editing !== 'new'" type="button" class="act small" @click="editing = 'new'"><Ico name="plus" />手动添加</button>
-      </div>
-      <TodayItemForm v-if="editing" :key="editing === 'new' ? 'new' : editing.id" :item="editing === 'new' ? null : editing" :date="dateKey()" class-only @done="editing = null" />
-      <div v-for="d in week" :key="d.zh" class="me-day">
-        <h4 class="me-sub">{{ d.zh }}</h4>
-        <ul class="list-plain me-rows">
-          <li v-for="c in d.items" :key="c.id" class="me-row class-row">
-            <span class="me-time"><b>{{ c.start }}</b><small>{{ fromMin(endMin(c)) }}</small></span>
-            <button type="button" class="grow me-link" @click="editing = c">
-              <b class="ellipsis">{{ c.title }}</b>
-              <small class="ellipsis">{{ where(c) || '地点未填' }}<template v-if="c.weekdays!.length > 1"> · 每周{{ c.weekdays!.map((w) => WEEKDAYS[w - 1].slice(1)).join('、') }}</template></small>
-            </button>
-            <button type="button" class="icon-btn" :aria-label="`编辑 ${c.title}`" @click="editing = c"><Ico name="edit" /></button>
-            <button type="button" class="icon-btn danger" :aria-label="`删除 ${c.title}`" @click="removeClass(c)"><Ico name="trash" /></button>
-          </li>
-        </ul>
-      </div>
-      <p v-if="!classes.length && !editing" class="muted me-empty">还没有课表。导入教务系统的课表截图最快，也可以手动一门门加。</p>
-      <button v-if="classes.length" type="button" class="text-link danger me-clear" @click="clearAll">清空课表</button>
-    </section>
-
     <!-- 更多 -->
-    <section class="sec">
+    <section v-if="account.me" class="sec">
       <h3>更多</h3>
       <ul class="list-plain me-rows">
-        <li><button type="button" class="me-row me-nav" @click="showPanel('today')"><span class="me-ic"><Ico name="clock" /></span><span class="grow">我的今天</span><Ico name="chevron" class="chev" /></button></li>
-        <li><button type="button" class="me-row me-nav" @click="shareSite"><span class="me-ic"><Ico name="grid" /></span><span class="grow">手机扫码使用</span><Ico name="chevron" class="chev" /></button></li>
-        <li v-if="account.me && account.me.role !== 'student'"><a class="me-row me-nav" href="/admin/" target="_blank" rel="noopener"><span class="me-ic"><Ico name="lock" /></span><span class="grow">管理后台</span><Ico name="external" class="chev" /></a></li>
         <li v-if="account.me"><button type="button" class="me-row me-nav danger" :disabled="account.busy" @click="logout"><span class="me-ic"><Ico name="back" /></span><span class="grow">退出登录</span></button></li>
       </ul>
     </section>
 
-    <p class="me-foot">{{ account.me ? '昵称、课表和地点保存在校园账号里，换设备登录也能看到。' : '未登录时，课表和地点只保存在这台设备的浏览器里。' }}</p>
   </div>
 </template>
 

@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import type { Canteen, Dish, Outlet } from './discoveryTypes'
 import type { MenuItem } from './menu'
-import { groupByCanteen } from './menu'
+import { groupByCanteen, visibleDayHint } from './menu'
+import { nowTick, timestamp } from './campusTime'
 
 const dish = (id: string, zh = id, price: number | null = 12): Dish => ({ id, zh, price })
 const outlet = (id: string, zh = id): Outlet => ({ id, zh, en: zh, floor: '1F', hours: null, closures: [], stalls: [], dishes: [] })
@@ -41,5 +42,13 @@ describe('groupByCanteen', () => {
 
     expect(items).toEqual(original)
     expect(groups[0]).toMatchObject({ count: 1, available: false, price: { min: null, max: null } })
+  })
+})
+
+describe('菜单列表的供应提示', () => {
+  it('隐藏本期菜单无后续安排，但保留后续供应日期', () => {
+    nowTick.value = timestamp('2026-10-17T12:00')
+    expect(visibleDayHint({ id: 'past', zh: '已结束', days: { '2026-10-16': [] } }, { id: 's', zh: '自选', week: ['2026-10-12', '2026-10-18'] })).toBeNull()
+    expect(visibleDayHint({ id: 'next', zh: '明天供应', days: { '2026-10-18': [] } }, { id: 's', zh: '自选', week: ['2026-10-12', '2026-10-18'] })).toEqual({ text: '明天供应', today: false })
   })
 })

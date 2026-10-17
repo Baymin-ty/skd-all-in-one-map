@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, reactive, ref } from 'vue'
 import { discovery } from '../lib/discoveryData'
+import { ACADEMIC_TERMS, formatWeekRanges, parseWeeks } from '../lib/academicCalendar'
 import { placeName, placeSelection, search, toast, type SearchHit } from '../lib/store'
 import { addItem, itemsOn, overlaps, plan, PLAN_KINDS, updateItem, weekdayOf, type PlanItem, type PlanKind } from '../lib/today'
 import Ico from './Ico.vue'
@@ -19,6 +20,8 @@ const form = reactive({
   end: props.item?.end ?? '',
   weekly: props.classOnly || (props.item ? !!props.item.weekdays?.length : true),
   weekdays: props.item?.weekdays ?? [weekdayOf(props.date)],
+  weeksText: props.item?.weeks?.length ? formatWeekRanges(props.item.weeks) : '',
+  term: props.item?.term ?? ACADEMIC_TERMS[0].key,
   note: props.item?.note ?? '',
 })
 const q = ref('')
@@ -45,11 +48,13 @@ function save() {
   if (!form.title.trim()) return void (error.value = '写一下这是什么安排')
   if (form.end && form.end <= form.start) return void (error.value = '结束时间要晚于开始时间')
   const weekly = form.kind === 'class' && form.weekly
+  const weeks = weekly ? parseWeeks(form.weeksText) : []
   if (weekly && !form.weekdays.length) return void (error.value = '至少选一天')
   const data: Omit<PlanItem, 'id'> = {
     kind: form.kind, title: form.title.trim(), place: form.place || undefined, room: form.room.trim() || undefined,
     start: form.start, end: form.end || undefined, note: form.note.trim() || undefined,
     date: weekly ? undefined : props.item?.date ?? props.date, weekdays: weekly ? form.weekdays : undefined,
+    weeks: weeks.length ? weeks : undefined, term: weeks.length ? form.term : undefined,
     eventId: props.item?.eventId, source: props.item?.source ?? 'manual',
   }
   const probe = { ...data, id: props.item?.id ?? '' }
@@ -84,6 +89,10 @@ function save() {
       <div v-if="form.weekly" class="weekdays" aria-label="上课的星期">
         <button v-for="(w, i) in WEEKDAYS" :key="w" type="button" :class="{ on: form.weekdays.includes(i + 1) }" :aria-pressed="form.weekdays.includes(i + 1)" @click="toggleDay(i + 1)">{{ w }}</button>
       </div>
+      <div v-if="form.weekly" class="term-weeks">
+        <label>校历学期<select v-model="form.term"><option v-for="term in ACADEMIC_TERMS" :key="term.key" :value="term.key">{{ term.label }}</option></select></label>
+        <label>教学周次<input v-model="form.weeksText" placeholder="如 1-4,6；留空=整个学期" /></label>
+      </div>
     </template>
     <label>备注<input v-model="form.note" type="text" maxlength="120" placeholder="可不填" /></label>
     <p v-if="error" class="error" role="alert">{{ error }}</p>
@@ -109,6 +118,7 @@ function save() {
 .place-hits b { display: block; font-size: 13px; }
 .place-hits small { display: block; font-size: 11.5px; color: var(--ink-3); }
 .times { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.term-weeks { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .check { flex-direction: row !important; align-items: center; gap: 6px !important; }
 .days-label { margin-bottom: -4px; font-size: 12.5px; font-weight: 600; color: var(--ink-2); }
 .plan-form .actions { margin: 4px 0 0; }

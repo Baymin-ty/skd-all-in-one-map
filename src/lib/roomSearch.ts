@@ -19,7 +19,7 @@ export interface RoomHit {
   /** history：往期活动里的原始地点写法 */
   venue?: string
 }
-interface RoomIndex {
+export interface RoomIndex {
   rooms: { building: string; code: string; key: string; label: string; kind: string; floor: number | null }[]
   /** 楼名、简称、别名、楼群名 → 楼 */
   tokens: { key: string; buildings: string[] }[]
@@ -117,4 +117,10 @@ export function findRooms(query: string, index: RoomIndex, limit = 5): RoomHit[]
   return [...hits.values()]
     .sort((a, b) => (byCount ? count(b) - count(a) : 0) || CONFIDENCE[a.confidence] - CONFIDENCE[b.confidence] || count(b) - count(a) || a.code.localeCompare(b.code, 'zh', { numeric: true }))
     .slice(0, limit)
+}
+
+/** 将课表或活动里的原始教室写法落到一个可导航的楼栋。 */
+export function resolveRoomPlace(query: string, index: RoomIndex): RoomHit | null {
+  const hits = findRooms(query, index, 20)
+  return hits.find((hit) => hit.confidence === 'exact') ?? hits[0] ?? null
 }

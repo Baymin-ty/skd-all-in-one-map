@@ -20,6 +20,14 @@ export function ensureEventTopics(db, events) {
   const insert = db.prepare('INSERT INTO community_topics VALUES (?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET name=excluded.name, context=excluded.context')
   for (const event of events) insert.run(topicKey('event', event.id), 'event', event.title, JSON.stringify(event))
 }
+/** 档口话题带着当前菜单，后台改菜品后用它刷新 AI 总结看到的资料。 */
+export function ensureStallTopics(db, canteens) {
+  const insert = db.prepare('INSERT INTO community_topics VALUES (?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET name=excluded.name, context=excluded.context')
+  for (const c of canteens) for (const o of c.outlets) for (const s of o.stalls) {
+    const context = { canteen: c.zh, outlet: o.zh, hours: o.hours, menuDate: o.menuDate, stall: s, dishes: o.dishes.filter(d => d.stall === s.zh).map(({ zh, price, specs, days }) => ({ zh, price, specs, days })) }
+    insert.run(topicKey('stall', `${c.id}:${o.id}:${s.id}`), 'stall', s.zh, JSON.stringify(context))
+  }
+}
 
 // 交流区和排队反馈共用这一份会话；cookie 路径覆盖全部 /api 接口。
 // 未登录时它只是匿名占位（用于点赞、收藏、排队反馈），公开署名的昵称由校园账号在「我的」里设置。
@@ -56,17 +64,16 @@ export function installCommunity(app, db, root, { fetchAI = fetch, staticDb = db
     }
     const events = JSON.parse(db.prepare('SELECT data FROM discovery_catalog WHERE kind = ?').get('events').data)
     const dining = JSON.parse(db.prepare('SELECT data FROM discovery_catalog WHERE kind = ?').get('canteens').data)
-    const insert = db.prepare('INSERT INTO community_topics VALUES (?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET name=excluded.name, context=excluded.context')
     ensureEventTopics(db, events)
-    for (const c of dining.canteens) for (const o of c.outlets) for (const s of o.stalls) {
-      const context = { canteen: c.zh, outlet: o.zh, hours: o.hours, menuDate: o.menuDate, stall: s, dishes: o.dishes.filter(d => d.stall === s.zh).map(({ zh, price, specs, days }) => ({ zh, price, specs, days })) }
-      insert.run(topicKey('stall', `${c.id}:${o.id}:${s.id}`), 'stall', s.zh, JSON.stringify(context))
-    }
+    ensureStallTopics(db, dining.canteens)
     db.exec('COMMIT')
   } catch (error) { db.exec('ROLLBACK'); throw error }
 
   for (const kind of ['events', 'canteens']) app.get(`/api/${kind}`, (_req, res) => {
-    res.set('Cache-Control', 'no-cache').type('json').send(db.prepare('SELECT data FROM discovery_catalog WHERE kind=?').get(kind).data)
+    const data = db.prepare('SELECT data FROM discovery_catalog WHERE kind=?').get(kind).data
+    // 后台隐藏的活动只留在目录里供管理，前台看不到。
+    const visible = kind === 'events' && data.includes('"hidden":true') ? JSON.stringify(JSON.parse(data).filter((event) => !event.hidden)) : data
+    res.set('Cache-Control', 'no-cache').type('json').send(visible)
   })
   const router = express.Router()
   app.use('/api/community', router)

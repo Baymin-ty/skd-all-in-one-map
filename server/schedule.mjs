@@ -1,6 +1,7 @@
 import express from 'express'
 
 const MAX_BYTES = 4 * 1024 * 1024
+const MAX_OUTPUT_TOKENS = 8192
 const MODEL = 'deepseek-flash'
 function visionEndpoint() {
   return process.env.SCHEDULE_VISION_URL || `${(process.env.SCHEDULE_VISION_BASE_URL || 'https://api.deepseek.com').replace(/\/$/, '')}/chat/completions`
@@ -37,8 +38,10 @@ function jsonCandidates(text) {
   }
   return candidates
 }
-function parseJson(content) {
+function parseJson(content, { truncated = false } = {}) {
   const text = typeof content === 'string' ? content.trim() : ''
+  if (!text) throw new Error('识别服务返回为空，请稍后重试')
+  if (truncated) throw new Error('识别服务输出过短，课表 JSON 被截断，请重试')
   let parsedJson = false, value
   for (const candidate of jsonCandidates(text)) {
     try {
@@ -65,10 +68,19 @@ export async function parseScheduleImage(image, { fetcher = fetch, apiKey = proc
   const prompt = '请识别这张上海科技大学教务系统课表截图，只返回 JSON：{"classes":[{"title":"课程名","weekday":1,"start":"08:00","end":"09:40","room":"1A-108","weeks":[1,2],"teacher":""}],"warnings":[]}。不要添加 Markdown 代码块或解释文字。weekday 用 1-7 表示周一到周日，时间必须是 HH:MM；看不清的字段留空并在 warnings 说明，不要编造。'
   const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), timeoutMs)
   try {
-    const response = await fetcher(visionEndpoint(), { method: 'POST', signal: controller.signal, headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ model, temperature: 0, response_format: { type: 'json_object' }, messages: [{ role: 'user', content: [{ type: 'text', text: prompt }, { type: 'image_url', image_url: { url: data } }] }] }) })
-    const body = await response.json().catch(() => null)
-    if (!response.ok) throw new Error(body?.error?.message || `识别服务返回 ${response.status}`)
-    return parseJson(body?.choices?.[0]?.message?.content)
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const retryPrompt = attempt ? `${prompt} 上一次没有返回内容，请这次直接输出完整 JSON，即使看不清也返回 classes 数组和 warnings 数组。` : prompt
+      const response = await fetcher(visionEndpoint(), { method: 'POST', signal: controller.signal, headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ model, temperature: 0, max_tokens: MAX_OUTPUT_TOKENS, thinking: { type: 'disabled' }, messages: [{ role: 'user', content: [{ type: 'text', text: retryPrompt }, { type: 'image_url', image_url: { url: data } }] }] }) })
+      const body = await response.json().catch(() => null)
+      if (!response.ok) throw new Error(body?.error?.message || `识别服务返回 ${response.status}`)
+      const choice = body?.choices?.[0]
+      try { return parseJson(choice?.message?.content, { truncated: choice?.finish_reason === 'length' }) }
+      catch (error) {
+        if (attempt === 0 && error instanceof Error && /返回为空|输出过短/.test(error.message)) continue
+        throw error
+      }
+    }
+    throw new Error('识别服务返回为空，请稍后重试')
   } catch (error) {
     if (error?.name === 'AbortError') throw new Error('课表识别超时，请稍后重试')
     if (error instanceof SyntaxError) throw new Error('识别结果不是有效 JSON')

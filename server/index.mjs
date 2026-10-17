@@ -3,7 +3,7 @@ import express from 'express'
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
-import { openDatabases } from './databases.mjs'
+import { databasePaths, openDatabases } from './databases.mjs'
 import { fileURLToPath } from 'node:url'
 import { loadEnvFile } from 'node:process'
 import { installCommunity } from './community.mjs'
@@ -15,6 +15,7 @@ import { installCheckin } from './checkin.mjs'
 import { installOrganizer } from './organizer.mjs'
 import { installSchedule } from './schedule.mjs'
 import { installSurfaceNetworks } from './surfaceNetworks.mjs'
+import { installAdmin } from './admin.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const root = resolve(here, '..')
@@ -22,7 +23,8 @@ if (existsSync(join(root, '.env'))) loadEnvFile(join(root, '.env'))
 const campus = JSON.parse(readFileSync(join(root, 'public/data/campus.json'), 'utf8'))
 const seed = JSON.parse(readFileSync(join(root, 'public/data/places.json'), 'utf8'))
 const defaultUnderground = JSON.parse(readFileSync(join(root, 'public/data/underground.json'), 'utf8'))
-const defaultMapSettings = JSON.parse(readFileSync(join(root, 'public/data/map-settings.json'), 'utf8'))
+// 地图显示（三层透明度）是固定配置，前台和后台都直接读这份文件。
+const mapSettings = JSON.parse(readFileSync(join(root, 'public/data/map-settings.json'), 'utf8'))
 function loadPassword() {
   if (process.env.ADMIN_PASSWORD) return process.env.ADMIN_PASSWORD
   const file = join(here, '.admin-password')
@@ -34,7 +36,8 @@ function loadPassword() {
 }
 const digest = (s) => createHash('sha256').update(String(s)).digest()
 const passwordHash = digest(loadPassword())
-const databases = await openDatabases()
+const dbPaths = databasePaths()
+const databases = await openDatabases(dbPaths)
 const { db, staticDb } = databases
 // 初始化标记与记录同一事务提交，清空一个分类后重启也不会把已删除内容重新导入。
 for (const table of ['pois', 'buildings']) {
@@ -185,14 +188,11 @@ const eventSync = installEventSync(app, db, root, { authorize: requireAdmin, res
 const eventPipeline = installEventPipeline(app, db, { authorize: requireAdmin, eventSync, resolver: venueResolver })
 installCheckin(app, db, root, { isAdmin })
 installOrganizer(app, db, { isAdmin })
+installAdmin(app, { db, staticDb, authorize: requireAdmin, root, paths: dbPaths, pipelineStatus: () => eventPipeline.status(), config: { mapSettings, defaultUnderground } })
 app.use('/api', (_req, res, next) => { res.set('Cache-Control', 'no-store'); next() })
 installSurfaceNetworks(app, staticDb, campus, { authorize: requireAdmin })
 app.get('/api/places', (_req, res) => res.json({ categories: seed.categories, buildings: list('buildings'), pois: list('pois') }))
 app.post('/api/auth', requireAdmin, (_req, res) => res.json({ ok: true }))
-app.get('/api/map-settings', (_req, res) => {
-  const row = staticDb.prepare('select value from meta where key = ?').get('map.settings')
-  res.json(row ? JSON.parse(row.value) : defaultMapSettings)
-})
 app.get('/api/underground', (_req, res) => {
   const row = staticDb.prepare('select data from underground_maps where id = ?').get('default')
   res.json(row ? JSON.parse(row.data) : defaultUnderground)
@@ -202,18 +202,6 @@ app.put('/api/underground', requireAdmin, (req, res) => {
   staticDb.prepare('insert into underground_maps (id, data, updated_at) values (?, ?, ?) on conflict(id) do update set data = excluded.data, updated_at = excluded.updated_at')
     .run('default', JSON.stringify(map), Date.now())
   res.json(map)
-})
-app.put('/api/map-settings', requireAdmin, (req, res) => {
-  const settings = {}
-  for (const key of Object.keys(defaultMapSettings)) {
-    const value = req.body?.[key]
-    if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 1)
-      throw new BadRequest('三项透明度都必须是 0%–100% 的有效数字')
-    settings[key] = value
-  }
-  staticDb.prepare('insert into meta (key, value) values (?, ?) on conflict(key) do update set value = excluded.value')
-    .run('map.settings', JSON.stringify(settings))
-  res.json(settings)
 })
 for (const table of ['pois', 'buildings']) {
   app.get(`/api/${table}`, (_req, res) => res.json(list(table)))

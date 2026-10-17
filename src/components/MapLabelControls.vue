@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { allMapLabels, MAP_LABEL_CATEGORIES, type MapLabelCategory, type MapLabelVisibility } from '../lib/mapLabelCategories'
+import { allMapLabels, defaultMapLabels, PICKER_CATEGORIES, type MapLabelCategory, type MapLabelVisibility } from '../lib/mapLabelCategories'
 import Ico from './Ico.vue'
 import { setMapLabel, setMapLabels } from '../lib/mapPrefs'
-import { setRouteNetwork, state } from '../lib/store'
+import { state } from '../lib/store'
 import { setUserData } from '../lib/userData'
 
 const props = defineProps<{ modelValue: MapLabelVisibility }>()
@@ -11,8 +11,11 @@ const emit = defineEmits<{ 'update:modelValue': [value: MapLabelVisibility]; lay
 const root = ref<HTMLDivElement>()
 const trigger = ref<HTMLButtonElement>()
 const open = ref(false)
-const enabled = computed(() => MAP_LABEL_CATEGORIES.filter((c) => props.modelValue[c.id]))
-const hidden = computed(() => MAP_LABEL_CATEGORIES.filter((c) => !props.modelValue[c.id]))
+const enabled = computed(() => PICKER_CATEGORIES.filter((c) => props.modelValue[c.id]))
+const hidden = computed(() => PICKER_CATEGORIES.filter((c) => !props.modelValue[c.id]))
+const defaults = defaultMapLabels()
+/** 和默认选择不同时才在按钮上提示 */
+const customized = computed(() => PICKER_CATEGORIES.some((c) => props.modelValue[c.id] !== defaults[c.id]))
 /** 直接说出藏了哪几类，不让人去数「几类显示几类隐藏」 */
 const summary = computed(() => {
   const names = (list: typeof hidden.value) => list.map((c) => c.name).join('、')
@@ -45,23 +48,16 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', outside))
 <template>
   <div ref="root" class="label-picker" :class="{ open }" @keydown.esc.stop.prevent="close">
     <button ref="trigger" type="button" class="fab picker-trigger" :class="{ on: open }" :aria-expanded="open" aria-controls="map-label-options" aria-label="地图图层与标签" title="图层与标签" @click="open = !open">
-      <Ico name="grid" /><i v-if="hidden.length" class="picker-dot" aria-hidden="true" />
+      <Ico name="grid" /><i v-if="customized" class="picker-dot" aria-hidden="true" />
     </button>
       <div v-if="open" id="map-label-options" class="picker-panel" role="group" aria-label="显示或隐藏地图标签">
       <div class="panel-head"><b>图层与标签<em>{{ state.mapPrefs.mode === 'mine' ? '我的地图' : '全校地图' }}</em></b><small>{{ summary }}</small><button type="button" class="panel-close" aria-label="关闭" @click="close"><Ico name="close" /></button></div>
-      <div class="picker-actions"><span>显示哪些标签</span><button type="button" :disabled="enabled.length === MAP_LABEL_CATEGORIES.length" @click="setLabels(allMapLabels(true))">全部显示</button><button type="button" :disabled="!enabled.length" @click="setLabels(allMapLabels(false))">全部隐藏</button></div>
+      <div class="picker-actions"><span>显示哪些标签</span><button type="button" :disabled="enabled.length === PICKER_CATEGORIES.length" @click="setLabels(allMapLabels(true))">全部显示</button><button type="button" :disabled="!enabled.length" @click="setLabels(allMapLabels(false))">全部隐藏</button></div>
       <div class="picker-grid">
-        <button v-for="category in MAP_LABEL_CATEGORIES" :key="category.id" type="button" role="switch" class="type-toggle" :class="{ enabled: modelValue[category.id] }" :style="{ '--type-color': category.color }" :aria-checked="modelValue[category.id]" :aria-label="`${category.name}标签`" :title="`${modelValue[category.id] ? '隐藏' : '显示'}${category.name}标签`" @click="toggle(category.id)">
+        <button v-for="category in PICKER_CATEGORIES" :key="category.id" type="button" role="switch" class="type-toggle" :class="{ enabled: modelValue[category.id] }" :style="{ '--type-color': category.color }" :aria-checked="modelValue[category.id]" :aria-label="`${category.name}标签`" :title="`${modelValue[category.id] ? '隐藏' : '显示'}${category.name}标签`" @click="toggle(category.id)">
           <span class="type-icon"><Ico :name="category.icon" /></span><span>{{ category.name }}</span><span class="type-check"><Ico :name="modelValue[category.id] ? 'check' : 'minus'" /></span>
         </button>
       </div>
-      <button type="button" role="switch" class="road-toggle" :aria-checked="state.showRoads" @click="state.showRoads = !state.showRoads"><Ico name="road" /><span class="grow">显示统一地面路网</span><span class="switch" :class="{ on: state.showRoads }" /></button>
-      <button v-if="state.underground" type="button" class="road-toggle underground-toggle" @click="setRouteNetwork('underground')"><Ico name="stairs" /><span class="grow">打开地下标注窗口</span><Ico name="chevron" /></button>
-      <ul class="picker-notes">
-        <li>颜色和图标与地图上的标签一致，可当图例看。</li>
-        <li>隐藏的类型在选中、筛选或悬停时仍会显示。</li>
-        <li>活动挂在举办地点名称下方；打开活动雷达时总会显示。</li>
-      </ul>
     </div>
   </div>
 </template>
@@ -82,14 +78,7 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', outside))
 .type-toggle { position: relative; min-height: 62px; display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 7px; padding: 10px; border: 1px solid #e7eae5; border-radius: 10px; background: #f7f8f5; color: #909a93; font-size: 11.5px; cursor: pointer; transition: background-color 150ms, border-color 150ms; }
 .type-toggle.enabled { border-color: color-mix(in srgb, var(--type-color) 38%, #fff); background: color-mix(in srgb, var(--type-color) 14%, #fff); color: color-mix(in srgb, var(--type-color) 75%, #1f3027); }
 .type-icon { display: grid; place-items: center; width: 24px; height: 24px; border-radius: 7px; background: #e3e7e2; color: #a0a8a2; font-size: 14px; }.enabled .type-icon { background: var(--type-color); color: #fff; }.type-check { position: absolute; top: 9px; right: 8px; width: 14px; height: 14px; display: grid; place-items: center; border-radius: 50%; background: #e7ebe5; color: #9ca59e; font-size: 9px; }.enabled .type-check { background: var(--type-color); color: #fff; }
-.road-toggle { display: flex; align-items: center; gap: 10px; width: 100%; margin-top: 10px; padding: 10px; border: 1px solid #e7eae5; border-radius: 10px; background: #fff; font-size: 13px; text-align: left; cursor: pointer; }
-.road-toggle > .svgi { font-size: 17px; color: var(--ink-2); }
-.underground-toggle > .svgi { color: #b47a22; }
-.switch { position: relative; flex: none; width: 34px; height: 20px; border-radius: 999px; background: #d9dcd8; transition: background-color 150ms; }
-.switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px #0003; transition: transform 150ms; }
-.switch.on { background: var(--green); }.switch.on::after { transform: translateX(14px); }
-.picker-notes { margin: 11px 0 0; padding: 0 0 0 14px; color: #8a958d; font-size: 10.5px; line-height: 1.7; }
 .label-picker button:focus-visible { outline: 2px solid var(--blue); outline-offset: -3px; }
-@media (hover: hover) { .type-toggle:hover { border-color: var(--type-color); } .road-toggle:hover { background: #fafbf8; } }
-@media (prefers-reduced-motion: reduce) { .type-toggle, .switch, .switch::after { transition: none; } }
+@media (hover: hover) { .type-toggle:hover { border-color: var(--type-color); } }
+@media (prefers-reduced-motion: reduce) { .type-toggle { transition: none; } }
 </style>

@@ -1,32 +1,44 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import { CHIPS, chooseSearch, search, setChip, setMapView, setMyScope, state, type SearchHit } from '../lib/store'
-import { dateKey, nowTick, weekdayText } from '../lib/campusTime'
-import { myMap } from '../lib/myMap'
-import { plan } from '../lib/today'
+import { computed, nextTick, ref, watch } from 'vue'
+import { chooseSearch, openRoute, search, state, type SearchHit } from '../lib/store'
+import { ui } from '../lib/ui'
 import Ico from './Ico.vue'
+import MapChips from './MapChips.vue'
 import { t } from '../lib/i18n'
+import { closeParcelPlan, parcel } from '../lib/parcelStation'
 
-const q = ref('')
+const text = ref('')
+// 桌面打开快递站时，侧栏搜索框只搜快递站：直接驱动右边的货架平面图，不弹出全局结果
+const parcelMode = computed(() => ui.desktop && parcel.open)
+const q = computed({
+  get: () => parcelMode.value ? parcel.query : text.value,
+  set: (v: string) => { if (parcelMode.value) parcel.query = v; else text.value = v },
+})
+const placeholder = computed(() => parcelMode.value ? '取件码 / 货架号，如 15-3-2045' : t('search.placeholder'))
+watch(parcelMode, async (on) => {
+  if (!on) return
+  await nextTick()
+  input.value?.focus()
+})
+function onEnter() {
+  if (parcelMode.value) return
+  if (hits.value[0]) choose(hits.value[0])
+}
+function onEsc() {
+  if (parcelMode.value && !q.value) closeParcelPlan()
+  else q.value = ''
+}
 const focused = ref(false)
 const input = ref<HTMLInputElement>()
 const hits = computed(() => search(q.value))
-// 分类只在「探索」里筛地图；食堂和活动有自己的功能页，不在这里重复。
-const chips = CHIPS.filter((c) => c.id !== 'dining')
-const showChips = computed(() => state.panel === 'home' && !state.route.open && !state.route.picking)
-// 我的地图 / 全校地图：我的地图下面跟日期，全校地图下面跟分类
-const mine = computed(() => state.mapPrefs.mode === 'mine')
-const today = computed(() => dateKey(nowTick.value))
-const scopes = computed(() => [
-  { id: 'today' as const, zh: `今天 ${weekdayText(today.value)}` },
-  { id: 'tomorrow' as const, zh: '明天' },
-  { id: 'week' as const, zh: '本周' },
-])
-const scope = computed(() => myMap.scope === 'week' ? 'week' : plan.date === today.value ? 'today' : plan.date === dateKey(nowTick.value + 86_400_000) ? 'tomorrow' : '')
-
+// 手机上分类条放在搜索框下面；桌面侧栏放不下，浮到地图左上角（见 App）。我的 / 全校地图的切换在地图右侧按钮
+const showChips = computed(() => !ui.desktop && !parcelMode.value && state.panel === 'home' && !state.route.open && !state.route.picking)
 function choose(h: SearchHit) {
   chooseSearch(h)
-  q.value = ''
+  // 选择货架结果时 chooseSearch 会同步打开货架模式；此时 q 的 setter
+  // 已经指向 parcel.query，清空 q 会把刚写入的取件码一起清掉。全局搜索
+  // 文本独立清空，保留货架图的查询以便高亮并自动定位。
+  text.value = ''
   input.value?.blur()
 }
 </script>
@@ -34,16 +46,16 @@ function choose(h: SearchHit) {
 <template>
   <div class="sbar">
     <div class="search-wrap">
-      <div class="pillbtn search">
-        <label class="field"><Ico name="search" />
+      <div class="pillbtn search" :class="{ parcel: parcelMode }">
+        <label class="field"><Ico :name="parcelMode ? 'parcel' : 'search'" />
         <input
-          ref="input" v-model="q" type="search" :placeholder="t('search.placeholder')" :aria-label="t('search.placeholder')" enterkeyhint="search"
-          @focus="focused = true" @blur="focused = false" @keydown.enter="hits[0] && choose(hits[0])" @keydown.esc="q = ''"
+          ref="input" v-model="q" type="search" :placeholder="placeholder" :aria-label="placeholder" enterkeyhint="search"
+          @focus="focused = true" @blur="focused = false" @keydown.enter="onEnter" @keydown.esc.stop="onEsc"
         /></label>
         <button v-if="q" type="button" class="clear" aria-label="清空" @mousedown.prevent="q = ''"><Ico name="close" /></button>
-        <slot />
+        <button v-if="!ui.desktop" type="button" class="route-btn" aria-label="步行导航" title="步行导航" @click="openRoute()"><Ico name="walk" /></button>
       </div>
-      <ul v-if="focused && q.trim()" class="hits" role="listbox">
+      <ul v-if="focused && q.trim() && !parcelMode" class="hits" role="listbox">
         <li v-for="h in hits" :key="h.sel.kind + ('id' in h.sel ? h.sel.id : 'group') + h.name" role="option" @mousedown.prevent @click="choose(h)">
           <span class="hic" :class="h.sel.kind"><Ico :name="h.icon" /></span>
           <span class="grow"><span class="hit-name">{{ h.name }}</span><small>{{ h.sub }}</small></span>
@@ -52,18 +64,7 @@ function choose(h: SearchHit) {
       </ul>
     </div>
     <div v-if="showChips" class="chip-row">
-      <div class="map-mode" role="group" aria-label="地图">
-        <button type="button" :class="{ on: mine }" :aria-pressed="mine" title="只看我的课、活动和常用地点" @click="setMapView('mine')"><Ico name="users" />我的</button>
-        <button type="button" :class="{ on: !mine }" :aria-pressed="!mine" title="全校所有地点" @click="setMapView('all')"><Ico name="building" />全校</button>
-      </div>
-      <nav v-if="mine" class="chips" aria-label="我的地图看哪天">
-        <button v-for="s in scopes" :key="s.id" type="button" class="chip" :class="{ on: scope === s.id }" :aria-pressed="scope === s.id" @click="setMyScope(s.id)">{{ s.zh }}</button>
-      </nav>
-      <nav v-else class="chips" aria-label="按类型在地图上筛选">
-        <button v-for="c in chips" :key="c.id" type="button" class="chip" :class="{ on: state.chip === c.id }" :aria-pressed="state.chip === c.id" @click="setChip(c.id)">
-          <Ico :name="c.icon" />{{ c.zh }}
-        </button>
-      </nav>
+      <MapChips />
     </div>
   </div>
 </template>
@@ -89,15 +90,6 @@ function choose(h: SearchHit) {
 .hic.group { background: var(--ink); color: #fff; }
 .hic.parcel { background: var(--brand-soft); color: var(--brand); }
 .chip-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.map-mode { flex: none; display: flex; padding: 3px; border-radius: 999px; background: #fff; box-shadow: 0 1px 5px #00000029; }
-.map-mode button { display: inline-flex; align-items: center; gap: 4px; height: 28px; padding: 0 11px 0 9px; border: 0; border-radius: 999px; background: none; color: var(--ink-2); font-size: 13px; font-weight: 650; cursor: pointer; transition: background-color .15s, color .15s; }
-.map-mode button .svgi { font-size: 14px; }
-.map-mode button.on { background: var(--brand); color: #fff; }
-.chips { flex: 1; min-width: 0; display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; padding: 2px 2px 4px; margin: 0 -2px; }
-.chips::-webkit-scrollbar { display: none; }
-.chip { flex: none; display: inline-flex; align-items: center; gap: 5px; height: 34px; padding: 0 12px; border: 0; border-radius: 999px; background: #fff; box-shadow: 0 1px 5px #00000029; font-size: 13px; font-weight: 600; cursor: pointer; }
-.chip-row .chips { margin-top: 2px; }
-.chip svg { font-size: 15px; color: var(--ink-2); }
-.chip.on { background: var(--ink); color: #fff; }
-.chip.on svg { color: #fff; }
+.route-btn { flex: none; width: 36px; height: 36px; display: grid; place-items: center; border: 0; border-radius: 50%; background: var(--brand); color: #fff; font-size: 18px; cursor: pointer; }
+.route-btn svg { color: #fff; }
 </style>

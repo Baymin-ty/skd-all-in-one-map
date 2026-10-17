@@ -7,13 +7,14 @@ import {
 } from '../lib/parcelStation'
 import { itemAt, itemBox, planSize, planSvg } from '../lib/parcelPlanSvg'
 import { buildingById, poiById } from '../lib/store'
+import { ui } from '../lib/ui'
 import type { IconName } from '../lib/icons'
 import Ico from './Ico.vue'
 
 // 快递站货架平面图：一张可以拖动、缩放的小地图。输入取件码或货架号，对应格子标红，镜头飞过去。
 const QUICK = [
   { q: '前台', zh: '前台' }, { q: '扫码机', zh: '扫码机' }, { q: '智能柜', zh: '智能柜' },
-  { q: '室内入口', zh: '入口' }, { q: '卫生间', zh: '卫生间' }, { q: '信件收取处', zh: '信件' },
+  { q: '室内入口', zh: '入口' }, { q: '信件收取处', zh: '信件' },
 ]
 /** 聚焦一个格子时至少看这么大一片（原图像素），旁边的格子也在画面里，方便对照；也不放得太大 */
 const FOCUS_SPAN = 320
@@ -46,11 +47,14 @@ const choices = computed(() => {
 const station = computed(() => buildingById(parcel.poi) ?? poiById(parcel.poi))
 const short = (item: ParcelItem) => item.kind === 'shelf' ? item.label : item.kind === 'locker' ? item.label.replace('智能', '') : item.name
 watch(q, (v) => { parcel.query = v })
+// 桌面：搜索框在左侧栏里，平面图只换掉右边的地图
+watch(() => parcel.query, (v) => { if (v !== q.value) q.value = v })
 
 // 宽屏和手机横屏：左边一栏放搜索和结果；竖屏：上面搜索、下面结果卡片
 const vw = ref(window.innerWidth)
 const vh = ref(window.innerHeight)
 const side = computed(() => vw.value >= 700 && vw.value > vh.value)
+const embed = computed(() => ui.desktop)
 /** 竖屏时平面图转 90°，长边竖着放；null = 自动，按钮可以手动切换 */
 const turned = ref<boolean | null>(null)
 const rotated = computed(() => turned.value ?? (!side.value && vh.value > vw.value))
@@ -64,7 +68,8 @@ let flyTimer = 0
 function insets() {
   const box = mapEl.value!.getBoundingClientRect()
   const pad = { l: 12, t: 12, r: 12, b: 12 }
-  if (side.value) {
+  if (embed.value) pad.r = 64 // 面板在左侧栏里，只躲右下角按钮
+  else if (side.value) {
     pad.l = Math.max(pad.l, (head.value?.parentElement?.getBoundingClientRect().right ?? 0) - box.left + 16)
     pad.r = 64 // 右边一列按钮
   } else {
@@ -210,6 +215,8 @@ function onResize() {
 function onPop() { closeParcelPlan() }
 // 竖屏时右侧按钮跟在搜索栏下面
 const headObserver = new ResizeObserver(() => root.value?.style.setProperty('--head-h', `${head.value?.offsetHeight ?? 0}px`))
+// 桌面拖动侧栏宽度时地图区跟着变
+const rootObserver = new ResizeObserver(() => map?.invalidateSize({ pan: false }))
 
 onMounted(async () => {
   history.pushState({ parcelPlan: true }, '')
@@ -221,6 +228,7 @@ onMounted(async () => {
     attributionControl: false, zoomControl: false, bounceAtZoomLimits: false, maxBoundsViscosity: 0.85,
   })
   if (head.value) headObserver.observe(head.value)
+  if (root.value) rootObserver.observe(root.value)
   map.on('click', (e: L.LeafletMouseEvent) => {
     const hit = itemAt([e.latlng.lng, -e.latlng.lat], rotated.value, 16 / 2 ** map!.getZoom())
     if (hit) pick(queryFor(hit), true)
@@ -229,12 +237,14 @@ onMounted(async () => {
   draw()
   if (result.value.items.length) focusResult(false)
   else overview(false)
+  if (embed.value) return // 焦点留在侧栏搜索框
   if (side.value && !q.value) input.value?.focus()
   else root.value?.focus()
 })
 onBeforeUnmount(() => {
   clearTimeout(flyTimer)
   headObserver.disconnect()
+  rootObserver.disconnect()
   window.removeEventListener('popstate', onPop)
   window.removeEventListener('resize', onResize)
   window.removeEventListener('keydown', onKey)
@@ -245,17 +255,19 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <Teleport to="body">
-    <div ref="root" class="pp" :class="{ side, turned: rotated }" role="dialog" aria-modal="true" aria-label="快递站地图" tabindex="-1">
+  <Teleport to="body" :disabled="embed">
+    <div ref="root" class="pp" :class="{ side: side || embed, turned: rotated, embed }" :role="embed ? 'region' : 'dialog'" :aria-modal="embed ? undefined : 'true'" aria-label="快递站地图" tabindex="-1">
       <div ref="mapEl" class="pp-map" />
 
-      <div class="pp-panel">
+      <Teleport to="#parcel-side" :disabled="!embed" defer>
+      <div class="pp-panel" :class="{ 'in-side': embed }">
         <header ref="head" class="pp-head">
-          <div class="pp-title">
+          <!-- 嵌在桌面侧栏时左侧导航栏就能回去，不再放返回按钮和标题；营业时间挪到面板最下面 -->
+          <div v-if="!embed" class="pp-title">
             <button type="button" class="pp-back" aria-label="返回地图" @click="close"><Ico name="back" /></button>
             <div class="grow"><b>快递站地图</b><small class="ellipsis">{{ station?.name.zh ?? '快递服务中心' }}<template v-if="station?.hours"> · {{ station.hours.zh }}</template></small></div>
           </div>
-          <form class="pp-search" role="search" @submit.prevent="submit">
+          <form v-if="!embed" class="pp-search" role="search" @submit.prevent="submit">
             <Ico name="search" />
             <input
               ref="input" v-model="q" type="search" placeholder="取件码或货架号，如 15-3-2045" aria-label="取件码或货架号"
@@ -299,7 +311,9 @@ onBeforeUnmount(() => {
             <p v-if="isShelf" class="pp-tip">取完件到前台旁的 <button type="button" @click="pick('扫码机')">扫码机</button> 扫码出库</p>
           </template>
         </section>
+        <p v-if="embed" class="pp-hours"><Ico name="clock" />{{ station?.name.zh ?? '快递服务中心' }}<template v-if="station?.hours"> · {{ station.hours.zh }}</template></p>
       </div>
+      </Teleport>
 
       <div class="pp-tools">
         <button type="button" class="pp-zoom" aria-label="放大" title="放大" @click="zoomBy(1)"><Ico name="plus" /></button>
@@ -379,6 +393,17 @@ button { cursor: pointer; font: inherit; }
 .side .pp-quick { margin: 8px -12px 0; padding: 0 12px; flex-wrap: wrap; }
 .side .pp-card { position: static; flex: 0 1 auto; max-height: none; min-height: 0; }
 .side .pp-tools { top: auto; bottom: 16px; right: calc(env(safe-area-inset-right) + 16px); }
+/* 桌面：左侧栏不动（搜索框换成快递站搜索），平面图只铺在右边地图区 */
+.embed { position: absolute; z-index: 1001; left: var(--side-w); animation: pp-in 0.22s ease-out; }
+/* 放进左侧栏：不悬浮，没有阴影，接在搜索框下面 */
+.pp-panel.in-side { display: block; padding: 6px 14px 16px; }
+.in-side .pp-head { position: static; padding: 0; background: none; box-shadow: none; border-radius: 0; backdrop-filter: none; -webkit-backdrop-filter: none; }
+.in-side .pp-quick { flex-wrap: wrap; margin: 0; padding: 12px 0; }
+.pp-hours { display: flex; align-items: center; gap: 6px; margin: 12px 2px 0; color: var(--ink-3); font-size: 12px; }
+.pp-hours .svgi { flex: none; font-size: 13px; }
+.in-side .pp-card { position: static; max-height: none; overflow: visible; padding: 14px; border: 1px solid var(--line); border-radius: 14px; box-shadow: none; }
+@keyframes pp-in { from { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .embed { animation: none; } }
 @media (max-height: 480px) {
   .side .pp-panel { top: 8px; bottom: 8px; gap: 6px; }
   .side .pp-head { padding: 8px 10px; }

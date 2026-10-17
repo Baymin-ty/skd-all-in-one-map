@@ -4,6 +4,7 @@ import Ico from '../components/Ico.vue'
 import AdminMap from './AdminMap.vue'
 import EditorWorkspace from './EditorWorkspace.vue'
 import PlaceDetails from './PlaceDetails.vue'
+import MapLayerSwitch from './MapLayerSwitch.vue'
 import { admin, assets, category, categoryOptions, clearFilters, filtered, selectAsset, setKind, type Kind } from './store'
 
 defineEmits<{ create: []; refresh: [] }>()
@@ -13,10 +14,11 @@ const selectedHidden = computed(() => admin.selected && !filtered.value.some((a)
 </script>
 
 <template>
-  <section class="place-workspace" :class="{ 'has-inspector': admin.selected || admin.draft }" aria-label="地点编辑工作台">
+  <section class="place-workspace" :class="{ 'has-inspector': admin.selected || admin.draft }" aria-label="地上地点编辑">
     <aside class="asset-explorer">
       <div class="explorer-head">
-        <div class="explorer-title"><h2>地点目录</h2><div class="explorer-actions"><button class="icon-button" title="刷新数据" aria-label="刷新数据" :disabled="admin.loading || admin.saving" @click="$emit('refresh')"><Ico name="refresh" /></button><button class="button primary" :disabled="admin.offline || admin.saving" aria-label="新增地点" @click="$emit('create')"><Ico name="plus" />新增</button></div></div>
+        <MapLayerSwitch />
+        <div class="explorer-title"><h2>地上地点</h2><div class="explorer-actions"><button class="icon-button" title="刷新数据" aria-label="刷新数据" :disabled="admin.loading || admin.saving" @click="$emit('refresh')"><Ico name="refresh" /></button><button class="button primary" :disabled="admin.offline || admin.saving" aria-label="新增地点" @click="$emit('create')"><Ico name="plus" />新增</button></div></div>
         <div class="search-field"><Ico name="search" /><input v-model="admin.search" type="search" placeholder="搜索名称、简称或别名…" aria-label="搜索地点" /></div>
         <div class="kind-filters" aria-label="地点类型筛选">
           <button v-for="f in filters" :key="f.kind" :class="{ active: admin.kind === f.kind }" :aria-pressed="admin.kind === f.kind" @click="setKind(f.kind)">{{ f.label }}<span>{{ f.kind === 'building' ? admin.places.buildings.length : f.kind === 'poi' ? admin.places.pois.length : assets.length }}</span></button>

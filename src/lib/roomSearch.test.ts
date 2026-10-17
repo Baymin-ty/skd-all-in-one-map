@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import type { CampusEvent } from './discoveryTypes'
 import { groupBuildings } from './groups'
-import { buildRoomIndex, findRooms } from './roomSearch'
+import { buildRoomIndex, findRooms, resolveRoomPlace } from './roomSearch'
 import type { Places } from './types'
 
 const load = <T>(name: string): T => JSON.parse(readFileSync(new URL(`../../public/data/${name}.json`, import.meta.url), 'utf8'))
@@ -40,5 +40,11 @@ describe('教室号全局搜索', () => {
     expect(findRooms('1a10', index).every((h) => h.code.startsWith('1A-10'))).toBe(true)
     expect(findRooms('图书馆', index)).toEqual([])
     expect(findRooms('1', index)).toEqual([])
+  })
+
+  it('可以把课表里的完整教室写法解析成地图楼栋', () => {
+    const hit = resolveRoomPlace('信息学院1D106', index)
+    expect(hit && name(hit.building)).toBe('信息学院1号楼')
+    expect(hit?.code).toBe('1D-106')
   })
 })

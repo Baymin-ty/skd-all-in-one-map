@@ -134,25 +134,59 @@ describe('campus management API', () => {
       expect(await (await call('/api/underground')).json()).toEqual(initial)
     }
   })
-  test('map opacity settings require authentication and persist across restart', async () => {
-    const defaults = { background: 0.2, selectable: 0.5, selected: 1 }
-    expect(await (await call('/api/map-settings', 'GET', undefined, false)).json()).toEqual(defaults)
-    const settings = { background: 0.3, selectable: 0.65, selected: 0.9 }
-    expect((await call('/api/map-settings', 'PUT', settings, false)).status).toBe(401)
-    expect(await (await call('/api/map-settings', 'PUT', settings)).json()).toEqual(settings)
-    await stop(); await start()
-    expect(await (await call('/api/map-settings', 'GET', undefined, false)).json()).toEqual(settings)
-    await call('/api/map-settings', 'PUT', defaults)
+  test('map display is fixed configuration, no longer editable through the API', async () => {
+    expect((await call('/api/map-settings')).status).toBe(404)
+    expect((await call('/api/map-settings', 'PUT', { background: 0.3, selectable: 0.65, selected: 0.9 })).status).toBe(404)
+    const config = JSON.parse(readFileSync(resolve('public/data/map-settings.json'), 'utf8'))
+    for (const key of ['background', 'selectable', 'selected']) expect(config[key]).toBeGreaterThanOrEqual(0)
+    const system = await (await call('/api/admin/system')).json()
+    expect(system.config.mapSettings).toEqual(config)
   })
-  test('map opacity rejects invalid input without changing settings and accepts the full range', async () => {
-    const defaults = { background: 0.2, selectable: 0.5, selected: 1 }
-    for (const data of [{}, { ...defaults, background: -0.1 }, { ...defaults, selected: 1.01 }, { ...defaults, selectable: '0.5' }, { ...defaults, background: null }]) {
-      expect((await call('/api/map-settings', 'PUT', data)).status).toBe(400)
-      expect(await (await call('/api/map-settings')).json()).toEqual(defaults)
-    }
-    for (const settings of [{ background: 1, selectable: 1, selected: 1 }, { background: 0, selectable: 0, selected: 0 }, { background: 0.8, selectable: 0.3, selected: 0.6 }])
-      expect(await (await call('/api/map-settings', 'PUT', settings)).json()).toEqual(settings)
-    await call('/api/map-settings', 'PUT', defaults)
+  test('admin event catalog: edits survive as manual overrides, hidden events leave the public list, pins keep order', async () => {
+    expect((await call('/api/admin/events', 'GET', undefined, false)).status).toBe(401)
+    const { events } = await (await call('/api/admin/events')).json()
+    const [first, second] = events.filter((e) => e.source !== 'organizer')
+    const edited = await (await call(`/api/admin/events/${first.id}`, 'PUT', { title: '后台改过的标题', room: 'A-101', hidden: true })).json()
+    expect(edited).toMatchObject({ title: '后台改过的标题', room: 'A-101', hidden: true })
+    expect(edited.manualOverrides).toMatchObject({ title: '后台改过的标题', room: 'A-101' })
+    expect((await call(`/api/admin/events/${first.id}`, 'PUT', { start: 'not a time' })).status).toBe(400)
+    expect((await call(`/api/admin/events/${first.id}`, 'PUT', { category: 'nope' })).status).toBe(400)
+    let visible = await (await call('/api/events', 'GET', undefined, false)).json()
+    expect(visible.some((e) => e.id === first.id)).toBe(false)
+    await call(`/api/admin/events/${first.id}`, 'PUT', { hidden: false, status: 'cancelled' })
+    visible = await (await call('/api/events', 'GET', undefined, false)).json()
+    expect(visible.find((e) => e.id === first.id)).toMatchObject({ status: 'cancelled', title: '后台改过的标题' })
+
+    expect((await call('/api/admin/event-pins', 'PUT', { ids: 'x' })).status).toBe(400)
+    expect(await (await call('/api/admin/event-pins', 'PUT', { ids: [second.id, first.id] })).json()).toEqual({ pins: [second.id, first.id] })
+    expect(await (await call('/api/admin/event-pins', 'PUT', { ids: [first.id] })).json()).toEqual({ pins: [first.id] })
+    await stop(); await start()
+    const after = (await (await call('/api/admin/events')).json()).events
+    expect(after.find((e) => e.id === first.id)).toMatchObject({ pin: 1, title: '后台改过的标题' })
+    expect(after.find((e) => e.id === second.id).pin).toBeUndefined()
+    await call('/api/admin/event-pins', 'PUT', { ids: [] })
+  })
+  test('admin dish management edits a canteen menu and validates input', async () => {
+    const { canteens } = await (await call('/api/canteens', 'GET', undefined, false)).json()
+    const canteen = canteens[0], outlet = canteen.outlets.find((o) => o.stalls.length && o.dishes.length)
+    const url = `/api/admin/canteens/${canteen.id}/outlets/${outlet.id}/dishes`
+    expect((await call(url, 'POST', { zh: '测试菜' }, false)).status).toBe(401)
+    expect((await call(url, 'POST', { zh: '', stall: outlet.stalls[0].zh })).status).toBe(400)
+    expect((await call(url, 'POST', { zh: '测试菜', stall: '不存在的档口' })).status).toBe(400)
+    const created = await (await call(url, 'POST', { zh: '测试菜', stall: outlet.stalls[0].zh, specs: [{ zh: '小份', price: 12 }, { zh: '大份', price: 15 }], meals: ['lunch', 'bogus'], tags: ['noodles'] })).json()
+    expect(created).toMatchObject({ zh: '测试菜', price: 12, meals: ['lunch'], tags: ['noodles'] })
+    const updated = await (await call(`${url}/${created.id}`, 'PUT', { soldOut: true })).json()
+    expect(updated).toMatchObject({ zh: '测试菜', soldOut: true, price: 12 })
+    const menu = await (await call('/api/canteens', 'GET', undefined, false)).json()
+    expect(menu.canteens[0].outlets.find((o) => o.id === outlet.id).dishes.find((d) => d.id === created.id).soldOut).toBe(true)
+    expect((await call(`${url}/${created.id}`, 'DELETE')).status).toBe(204)
+    expect((await call(`${url}/${created.id}`, 'DELETE')).status).toBe(404)
+  })
+  test('admin community moderation lists and removes posts', async () => {
+    const page = await (await call('/api/admin/community')).json()
+    expect(page).toMatchObject({ posts: expect.any(Array), total: expect.any(Number) })
+    expect((await call('/api/admin/community/posts/missing', 'DELETE')).status).toBe(404)
+    expect((await call('/api/admin/community', 'GET', undefined, false)).status).toBe(401)
   })
   test('public data combines seeded buildings and POIs; writes require authentication', async () => {
     const data = await (await call('/api/places', 'GET', undefined, false)).json()

@@ -4,6 +4,7 @@ import type { CampusEvent } from './discoveryTypes'
 import type { IconName } from './icons'
 import { readUserData, setUserData } from './userData'
 import { account } from './account'
+import { teachingWeek } from './academicCalendar'
 
 /**
  * 「我的今天」：课、活动、吃饭和待办排成一条时间线。匿名访客保存在本机，
@@ -25,6 +26,10 @@ export interface PlanItem {
   date?: string
   /** 每周重复（课程），1 = 周一 … 7 = 周日 */
   weekdays?: number[]
+  /** 教学周限制；仅课程使用。 */
+  weeks?: number[]
+  /** 教学周所属校历学期。 */
+  term?: string
   eventId?: string
   note?: string
   source: 'manual' | 'event' | 'ai' | 'planner'
@@ -60,8 +65,32 @@ export function nowMinute(date: string, now: number) {
 
 export function itemsOn(items: PlanItem[], date: string) {
   const weekday = weekdayOf(date)
-  return items.filter((i) => !i.deleted && (i.date ? i.date === date : !!i.weekdays?.includes(weekday)))
+  return items.filter((i) => {
+    if (i.deleted || (i.date ? i.date !== date : !i.weekdays?.includes(weekday))) return false
+    if (!i.weeks?.length) return true
+    const week = i.term ? teachingWeek(date, i.term) : null
+    return week !== null && i.weeks.includes(week)
+  })
     .sort((a, b) => startMin(a) - startMin(b) || endMin(a) - endMin(b))
+}
+
+/** 活动页数据直接进入日程；已手动导入的同一活动只保留用户版本。 */
+export function itemsOnIncludingEvents(items: PlanItem[], events: CampusEvent[], date: string) {
+  const existingEventIds = new Set(items.filter((item) => item.eventId).map((item) => item.eventId!))
+  const fromEvents = events
+    .filter((event) => !event.hidden && event.status !== 'cancelled' && !existingEventIds.has(event.id))
+    .filter((event) => evStart(event) < timestamp(date) + 86_400_000 && evEnd(event) > timestamp(date))
+    .map((event) => ({ ...itemFromEvent(event), id: `event:${event.id}` }))
+  return itemsOn([...items, ...fromEvents], date)
+}
+
+/** 给需要计算路线和冲突的规划器提供同一份“课程 + 活动”数据。 */
+export function withDiscoveryEvents(items: PlanItem[], events: CampusEvent[]) {
+  const existingEventIds = new Set(items.filter((item) => item.eventId).map((item) => item.eventId!))
+  const fromEvents = events
+    .filter((event) => !event.hidden && event.status !== 'cancelled' && !existingEventIds.has(event.id))
+    .map((event) => ({ ...itemFromEvent(event), id: `event:${event.id}` }))
+  return [...items, ...fromEvents]
 }
 export const overlaps = (a: PlanItem, b: PlanItem) => startMin(a) < endMin(b) && startMin(b) < endMin(a)
 

@@ -16,7 +16,7 @@ export type EventRange = keyof typeof EVENT_RANGES
 export function eventsIn(range: EventRange, cat = 'all', place = '', time = nowTick.value) {
   const endOfToday = dayStart(time) + 86_400_000
   return discovery.events.filter((e) => {
-    if (e.status === 'cancelled' && range !== 'past') return false
+    if (e.hidden || e.status === 'cancelled' && range !== 'past') return false
     if (cat !== 'all' && e.category !== cat || place && e.place !== place) return false
     const start = evStart(e), end = evEnd(e)
     if (range === 'past') return end <= time
@@ -25,6 +25,13 @@ export function eventsIn(range: EventRange, cat = 'all', place = '', time = nowT
     if (range === 'week') return start < endOfToday + 6 * 86_400_000 && end > time
     return end > time
   }).sort((a, b) => range === 'past' ? evStart(b) - evStart(a) : evStart(a) - evStart(b))
+}
+/** 全校地图按哪天看活动：今天、明天或本周（今天起 7 天），和我的地图的日期选择同一套说法 */
+export type DayScope = 'today' | 'tomorrow' | 'week'
+export function eventsForScope(scope: DayScope, time = nowTick.value) {
+  if (scope !== 'tomorrow') return eventsIn(scope, 'all', '', time)
+  const from = dayStart(time) + 86_400_000
+  return eventsIn('upcoming', 'all', '', time).filter((e) => evStart(e) < from + 86_400_000 && evEnd(e) > from)
 }
 /** 地图常驻角标：进行中以及未来若干小时内开始的活动（滚动窗口，不按自然日截断）。 */
 export function eventsAhead(hours = 24, time = nowTick.value) {

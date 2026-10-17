@@ -22,7 +22,6 @@ beforeEach(() => {
   vi.useFakeTimers()
   admin.saving = false
   admin.deleteTarget = null; admin.deleteError = ''; admin.selected = null
-  admin.settingsSaving = false; admin.mapSettingsDraft = { ...admin.mapSettings }
   discard(); closeLogin()
   Object.assign(admin, { loggedIn: true, offline: false, token: 'test', view: 'overview', kind: 'building', search: '测试', category: 'building:academic' })
   admin.places.buildings = [building()]; admin.places.pois = []

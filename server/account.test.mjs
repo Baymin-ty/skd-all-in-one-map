@@ -41,11 +41,16 @@ beforeEach(async () => { folder = mkdtempSync(join(tmpdir(), 'campus-account-'))
 afterEach(stop)
 
 describe('account login and user data API', () => {
-  test('accepts campus email and rejects other domains', async () => {
+  test('accepts any valid email address and rejects malformed addresses', async () => {
     const ok = await requestCode('student@shanghaitech.edu.cn')
     expect(ok.status).toBe(200)
     expect(sent).toEqual({ email: 'student@shanghaitech.edu.cn', value: '123456' })
-    expect((await requestCode('student@example.com')).status).toBe(400)
+    time += 61_000
+    const other = await requestCode('student@example.com')
+    expect(other.status).toBe(200)
+    expect(sent).toEqual({ email: 'student@example.com', value: '123456' })
+    time += 61_000
+    expect((await requestCode('not-an-email')).status).toBe(400)
   })
 
   test('binds an anonymous session to a new account so it can post', async () => {

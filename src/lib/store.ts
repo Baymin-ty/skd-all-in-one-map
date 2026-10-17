@@ -9,8 +9,8 @@ import { openSheet, ui } from './ui'
 import type { Building, Campus, I18nText, LngLat, PlaceCat, Places, Poi } from './types'
 
 import { poiIcon, poiKindLabel } from './catalog'
-import { DEFAULT_MAP_SETTINGS, validMapSettings } from './mapSettings'
-import { discovery, eventsIn, type EventRange } from './discoveryData'
+import { DEFAULT_MAP_SETTINGS } from './mapSettings'
+import { discovery, eventsIn, type DayScope, type EventRange } from './discoveryData'
 import { dateKey, dayLabel, evStart, nowTick, outletState } from './campusTime'
 import { defaultMenuDay, menuMeals } from './canteenMenu'
 import { menuItems, priceShort, searchMenu, type MenuSort } from './menu'
@@ -19,9 +19,9 @@ import { defaultMapPrefs, type MapPrefs } from './mapPrefs'
 import { outlinePoints } from './outlineGeometry'
 import { mergedPlace } from './placeCuration'
 import { defaultMapLabels } from './mapLabelCategories'
-import { buildRoomIndex, findRooms, floorFromCode, type RoomHit } from './roomSearch'
+import { buildRoomIndex, findRooms, floorFromCode, resolveRoomPlace, type RoomHit } from './roomSearch'
 import { floorLabel } from './rooms'
-import { plan } from './today'
+import { plan, type PlanItem, updateItem, withDiscoveryEvents } from './today'
 import { agendaEntries, agendaStops, myMap, weekDates } from './myMap'
 import { validateUndergroundMap, type UndergroundMap } from './underground'
 import { mergeUndergroundSketch } from './undergroundSketch'
@@ -81,6 +81,8 @@ export const state = reactive({
   panel: 'home' as 'home' | 'events' | 'dining' | 'canteen' | 'today' | 'me',
   canteen: { id: '', outlet: '', stall: '', day: '', meal: '' as Meal | '', query: '', dish: '' },
   radar: { range: 'week' as EventRange, cat: 'all', place: '' },
+  /** 全校地图上显示哪天的活动 */
+  allScope: 'today' as DayScope,
   eventId: '',
   /** Query currently highlighted on the map as a campus-wide dish distribution. */
   dishFocus: '',
@@ -139,10 +141,17 @@ export const mineFocus = computed(() => !state.route.open && !state.chip
 export const myAgenda = computed(() => {
   const week = state.panel === 'home' && myMap.scope === 'week'
   const dates = week ? weekDates(dateKey(nowTick.value)) : [plan.date]
-  const entries = agendaEntries(plan.items, dates, nowTick.value)
+  const entries = agendaEntries(withDiscoveryEvents(plan.items, discovery.events), dates, nowTick.value)
   const canon = (id: string) => { const sel = placeSelection(id); return sel && sel.kind !== 'group' ? sel.id : null }
   return { week, dates, entries, stops: agendaStops(entries, canon) }
 })
+/** 点一项安排：活动打开活动详情；课程打开那栋楼并定位到教室 */
+export function openPlanItem(i: PlanItem) {
+  if (i.eventId) return openEvent(i.eventId)
+  const sel = placeSelection(i.place)
+  if (sel?.kind === 'building' && i.room) openRoom(sel.id, i.room)
+  else if (sel) select(sel)
+}
 
 /** 分类与活动/菜单面板共用地图的批量选中集合，不依赖侧栏是否显示分类列表。 */
 export const mapHighlights = computed(() => {
@@ -208,10 +217,9 @@ async function getJson<T>(url: string, init?: RequestInit, ms = 6000): Promise<T
 
 export async function loadData() {
   try {
-    const [places, campus, mapSettings] = await Promise.all([
+    const [places, campus] = await Promise.all([
       getJson<{ categories: Record<PlaceCat, I18nText>; buildings: Building[]; pois: Poi[] }>('/data/places.json'),
       getJson<Campus>('/data/campus.json'),
-      getJson<unknown>('/api/map-settings', undefined, 4000).catch(() => DEFAULT_MAP_SETTINGS),
     ])
     const underground = await getJson<UndergroundMap>('/api/underground', undefined, 4000).catch(() => getJson<UndergroundMap>('/data/underground.json').catch(() => null))
     state.categories = places.categories
@@ -222,7 +230,6 @@ export async function loadData() {
     } catch { /* 静态/离线运行时没有 rain 版本 */ }
     state.undergroundErrors = underground ? validateUndergroundMap(underground, campus) : []
     state.underground = underground && !state.undergroundErrors.length ? mergeUndergroundSketch(underground, state.undergroundSketch.paths) : null
-    state.mapSettings = validMapSettings(mapSettings) ? mapSettings : { ...DEFAULT_MAP_SETTINGS }
     try {
       const live = await getJson<Places>('/api/places', undefined, 4000)
       state.buildings = live.buildings
@@ -237,6 +244,16 @@ export async function loadData() {
     state.ready = true
   } catch (e) {
     state.error = `地图数据加载失败：${(e as Error).message}`
+  }
+}
+
+/** 给旧版导入的课程补上可导航楼栋；新导入会在预览确认时直接写入。 */
+export function hydratePlanPlaces() {
+  const index = buildRoomIndex(state.buildings, state.groups, discovery.events)
+  for (const item of plan.items) {
+    if (item.deleted || item.place || !item.room) continue
+    const hit = resolveRoomPlace(item.room, index)
+    if (hit) updateItem(item.id, { place: hit.building })
   }
 }
 
@@ -426,6 +443,11 @@ export function setMapView(mode: MapPrefs['mode']) {
   if (state.panel !== 'home' || state.selected || state.route.open || state.chip) showPanel('home')
   else if (mode === 'mine') fitToday()
   if (mode === 'all') mapApi.home()
+}
+/** 全校地图看哪天的活动 */
+export function setAllScope(scope: DayScope) {
+  state.allScope = scope
+  if (state.panel !== 'home' || state.selected || state.route.open) showPanel('home')
 }
 /** 我的地图看哪天：今天、明天或本周 */
 export function setMyScope(scope: 'today' | 'tomorrow' | 'week') {

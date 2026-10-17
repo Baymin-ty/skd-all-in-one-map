@@ -6,6 +6,7 @@ import { visibleEntrances } from './mapEntrances'
 import { outlineLatLngs } from './outlineGeometry'
 import { discovery } from './discoveryData'
 import { groupBuildings } from './groups'
+import { majorGate } from './placeCuration'
 vi.mock('./ui', () => ({ openSheet: vi.fn(), ui: { desktop: true, sheet: 388, anchors: [136, 388, 740] } }))
 import { chooseSearch, endFor, placeSelection, search, state } from './store'
 import { parcel } from './parcelStation'
@@ -68,6 +69,12 @@ describe('统一地点身份', () => {
   })
 })
 describe('按需要展示点位和入口', () => {
+  it('所有校门都属于常规地图展示的校门集合', () => {
+    const gates = places.buildings.filter((b) => b.cat === 'gate')
+    expect(gates.length).toBeGreaterThan(2)
+    expect(gates.every((gate) => majorGate(gate.id))).toBe(true)
+  })
+
   it('车库口不会因放大或普通详细展示出现；选中、筛选或导航时才显示', () => {
     const garage = places.pois.find((p) => p.cat === 'parking')!
     expect(poiPresentation(garage, { zoom: 20, detailed: true, emphasized: false })).toBe('hidden')

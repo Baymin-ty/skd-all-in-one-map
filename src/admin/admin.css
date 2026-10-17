@@ -49,20 +49,7 @@ textarea { resize: vertical; }
 .section-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 17px 20px; border-bottom: 1px solid var(--line); }
 .section-heading > div { display: flex; align-items: center; gap: 9px; }
 .count-tag { display: inline-flex; font-size: 12px; color: #7a905f; background: #f0f5e9; padding: 2px 7px; border-radius: 4px; }
-.data-grid { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(280px, .8fr); gap: 20px; }
-.data-side { display: flex; flex-direction: column; gap: 20px; }
-.event-sync-card { padding: 22px; }
-.event-sync-card p { font-size: 13px; color: #85986d; line-height: 1.8; margin: 10px 0 12px; }
-.event-sync-stats { display: flex; flex-wrap: wrap; gap: 8px 14px; margin: 12px 0 16px; color: #69864c; font-size: 12px; }
-.breakdown { padding: 24px; }
-.breakdown > div + div { margin-top: 22px; }
-.breakdown > div > div:first-child { display: flex; align-items: center; justify-content: space-between; font-size: 13px; color: #6a8254; }
-.breakdown span { display: flex; align-items: center; gap: 8px; }
-.breakdown i { display: inline-block; width: 7px; height: 7px; border-radius: 2px; }
-.bar-track { height: 5px; background: #eef4e4; border-radius: 3px; margin-top: 10px; overflow: hidden; }
-.bar-track span { height: 100%; min-width: 2px; border-radius: 3px; }
-.export-card, .quality-card { padding: 22px; }
-.export-card p, .quality-card p { font-size: 13px; color: #85986d; line-height: 1.8; margin: 10px 0 18px; }
+.quality-card p { font-size: 13px; color: #85986d; line-height: 1.8; margin: 10px 0 18px; }
 .quality-card > button { display: flex; justify-content: space-between; align-items: center; text-align: left; gap: 12px; width: 100%; border-bottom: 1px solid #edf2e3; background: transparent; padding: 12px 0; font-size: 13px; color: #69864c; }
 .quality-card > button:hover { color: #2e612f; }
 /* One workspace: directory, map, and a persistent detail / editing panel. */
@@ -361,7 +348,6 @@ input, select, textarea { border-radius: 7px; border-color: #dce4df; }
   .detail-facts { margin-left: 18px; margin-right: 18px; }
   .detail-footer { padding: 10px 16px; }
   .selection-outside { display: none; }
-  .data-grid { grid-template-columns: 1fr; }
   .admin-dialog { padding: 24px; }
   .admin-dialog h2 { font-size: 20px; }
   .create-options > button { gap: 10px; padding: 16px 12px; }
@@ -379,3 +365,19 @@ input, select, textarea { border-radius: 7px; border-color: #dce4df; }
 .login-cta { background: #28634e; border-color: #28634e; color: #fff; }
 .login-cta:hover { background: #1c503d; }
 .admin-toast.error { background: #9e3d37; }
+/* 地图数据：地上 / 地下两层共用一套目录 + 地图 + 详情布局，左上角切换 */
+.layer-switch { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin-bottom: 16px; padding: 4px; border-radius: 10px; background: #f1f4f2; }
+.layer-switch button { display: flex; align-items: center; gap: 9px; padding: 8px 10px; border-radius: 7px; background: transparent; color: #6f7f75; text-align: left; }
+.layer-switch button > .svgi { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 7px; background: #e6ece8; font-size: 15px; }
+.layer-switch button span { min-width: 0; }
+.layer-switch b, .layer-switch small { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.layer-switch b { font-size: 13px; font-weight: 600; }
+.layer-switch small { font-size: 10px; color: #98a59d; }
+.layer-switch button:hover:not(.active) { color: #3d5246; }
+.layer-switch button.active { background: #fff; color: #1f4d3a; box-shadow: 0 1px 4px #253f2514; }
+.layer-switch button.active > .svgi { background: #e3f0e8; color: #28634e; }
+.layer-switch button.underground.active > .svgi { background: #f1e7f9; color: #8a4cba; }
+@media (max-width: 680px) {
+  .layer-switch { grid-column: 1 / -1; margin-bottom: 4px; }
+  .layer-switch button { padding: 6px 8px; }
+}

@@ -3,7 +3,7 @@ import { nowTick, timestamp } from './campusTime'
 import { crowdAt } from './crowd'
 import type { CampusEvent, Canteen } from './discoveryTypes'
 import { lateLegs, nextStep, suggestEvents, suggestMeals, type PlanContext } from './planner'
-import { addItem, endMin, fromMin, initPlan, itemFromEvent, itemsOn, plan, weekdayOf, type PlanItem } from './today'
+import { addItem, endMin, fromMin, initPlan, itemFromEvent, itemsOn, itemsOnIncludingEvents, plan, weekdayOf, type PlanItem } from './today'
 
 const canteen = (id: string, place: string, hours: [string, string, 'lunch' | 'dinner' | 'allday'][], extra: Partial<Canteen['outlets'][number]> = {}): Canteen => ({
   id, zh: id, en: id, place, pos: [0, 0],
@@ -26,6 +26,17 @@ describe('我的今天：时间线', () => {
     expect(itemsOn(items, '2026-10-16').map((i) => i.id)).toEqual(['weekly'])
     expect(itemsOn(items, '2026-10-23').map((i) => i.id)).toEqual(['weekly'])
     expect(itemsOn(items, '2026-10-17').map((i) => i.id)).toEqual(['once'])
+  })
+  it('按校历教学周过滤限定周次的课程', () => {
+    const limited = item({ id: 'week-2', date: undefined, weekdays: [1], weeks: [2], term: '2026-autumn' })
+    expect(itemsOn([limited], '2026-09-14')).toHaveLength(0)
+    expect(itemsOn([limited], '2026-09-21')).toHaveLength(1)
+  })
+  it('把活动数据自动并入当天时间线，并避免和已导入活动重复', () => {
+    const events = [event({ id: 'campus-1', start: '2026-10-16T12:00', end: '2026-10-16T13:00' }), event({ id: 'campus-2', start: '2026-10-17T12:00', end: '2026-10-17T13:00' })]
+    const imported = { ...itemFromEvent(events[0]), id: 'saved-event', source: 'event' as const }
+    expect(itemsOnIncludingEvents([imported], events, '2026-10-16').map((i) => i.id)).toEqual(['saved-event'])
+    expect(itemsOnIncludingEvents([], events, '2026-10-16').map((i) => i.id)).toEqual(['event:campus-1'])
   })
   it('没填结束时间按类型估算；活动加入时跨天的只取开始那天', () => {
     expect(fromMin(endMin(item({ end: undefined })))).toBe('09:30')

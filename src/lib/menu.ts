@@ -111,6 +111,12 @@ export function dayHint(d: Dish, s?: Stall): { text: string; today: boolean } | 
   return { text: n ? dayName(n.date) + '供应' : '本期菜单已无后续安排', today: false }
 }
 
+/** List-only hint: past weekly-menu dishes do not need a warning tag. */
+export function visibleDayHint(d: Dish, s?: Stall): { text: string; today: boolean } | null {
+  const hint = dayHint(d, s)
+  return hint?.text === '本期菜单已无后续安排' ? null : hint
+}
+
 // ---------- search ----------
 export type MenuSort = 'best' | 'asc' | 'desc'
 export interface MenuFilter {

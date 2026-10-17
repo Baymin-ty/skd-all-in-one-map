@@ -42,33 +42,54 @@
 .blabel.lv-icon { gap: 0; padding: 3px; }
 .blabel.lv-icon > span, .blabel.lv-icon > em, .pmark:is(.lv-icon, .icon-only) > span, :is(.blabel, .pmark):is(.lv-icon, .icon-only) .ev { display: none; }
 
-/* 有活动的地点：名称下面挂一行「时间 + 短标题 + 还有几场」，地点和活动是同一个标签。
+/* 有活动的地点：名称下面挂一块白底活动区，地点和活动是同一个标签。
    颜色按紧迫程度：进行中绿、一小时内橙、24 小时内紫红，长期展览和更晚的淡色。 */
-.has-ev { --ev: #9b4f72; flex-wrap: wrap; row-gap: 3px; max-width: 236px; border-color: color-mix(in srgb, var(--ev) 50%, #fff); }
-.has-ev.ev-live { --ev: #1f9d55; }
-.has-ev.ev-soon { --ev: #d9861c; }
-.has-ev.ev-ongoing { --ev: #b0708c; }
-.has-ev.ev-later { --ev: #9d8692; }
-.has-ev .ev { flex-basis: 100%; display: flex; align-items: center; gap: 5px; min-width: 0; padding: 0 2px 1px; color: #3b2b33; font-size: 11.5px; font-weight: 600; }
-.has-ev .ev b { flex: none; display: inline-flex; align-items: center; gap: 4px; padding: 0 6px; border-radius: 6px; background: var(--ev); color: #fff; font-size: 11px; font-weight: 700; line-height: 18px; font-variant-numeric: tabular-nums; }
-.has-ev .ev-t { min-width: 0; max-width: 11em; overflow: hidden; text-overflow: ellipsis; }
-.has-ev .ev em { flex: none; padding: 0 5px; border-radius: 6px; background: color-mix(in srgb, var(--ev) 14%, #fff); color: var(--ev); font-size: 10.5px; font-style: normal; font-weight: 650; line-height: 17px; }
-.has-ev.ev-live .ev b::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: #fff; animation: ev-blink 1.6s ease-in-out infinite; }
+.has-ev { flex-wrap: wrap; row-gap: 4px; max-width: 240px; padding-bottom: 4px; }
+.ev { --ev: #9b4f72; }
+.ev.ev-live { --ev: #1f9d55; }
+.ev.ev-soon { --ev: #d9861c; }
+.ev.ev-ongoing { --ev: #a0607d; }
+.ev.ev-later { --ev: #8f7a86; }
+.has-ev .evs { flex-basis: 100%; display: flex; flex-direction: column; gap: 2px; min-width: 0; padding: 4px 6px; border-radius: 7px; background: #fff; box-shadow: inset 0 0 0 1px #00000008; color: #2d2a2c; font-size: 11.5px; font-weight: 600; }
+.has-ev .ev { display: flex; align-items: center; gap: 6px; min-width: 0; }
+/* 时间用浅底彩字，只有进行中用实色，地图上不再一片紫红 */
+.has-ev .ev b { flex: none; display: inline-flex; align-items: center; gap: 4px; padding: 0 5px; border-radius: 5px; background: color-mix(in srgb, var(--ev) 13%, #fff); color: var(--ev); font-size: 10.5px; font-weight: 700; line-height: 17px; font-variant-numeric: tabular-nums; }
+.has-ev .ev.ev-live b { background: var(--ev); color: #fff; }
+.has-ev .ev.ev-live b::before { content: ''; width: 5px; height: 5px; border-radius: 50%; background: #fff; animation: ev-blink 1.6s ease-in-out infinite; }
 @keyframes ev-blink { 50% { opacity: .3; } }
-.has-ev.sel .ev { color: #fff; }
-.has-ev.sel .ev em { background: #ffffff30; color: #fff; }
+/* 平时一行短标题；完整标题藏在里面，逐条列出时换上 */
+.has-ev .ev-t { min-width: 0; max-width: 12em; overflow: hidden; text-overflow: ellipsis; }
+.has-ev .ev-t::before { content: attr(data-short); }
+.has-ev .ev-t > span { display: none; }
+.has-ev .ev em { flex: none; margin-left: auto; padding: 0 5px; border-radius: 5px; background: #f1eef0; color: #7d6f77; font-size: 10px; font-style: normal; font-weight: 650; line-height: 16px; }
+.has-ev .ev-extra, .has-ev .ev-more { display: none; }
+.has-ev.lv-icon::after { content: ''; position: absolute; top: -4px; right: -4px; width: 10px; height: 10px; border: 2px solid #fff; border-radius: 50%; background: var(--ev-dot, #9b4f72); }
+.has-ev.ev-live { --ev-dot: #1f9d55; }
+.has-ev.ev-soon { --ev-dot: #d9861c; }
+.has-ev.ev-ongoing, .has-ev.ev-later { --ev-dot: #a0607d; }
+
+/* 活动雷达：逐条列出。时间在上、标题在下占满整宽，最多三行；卡片定宽，标题在里面换行，不会顶出白底 */
+.has-ev.lv-list { width: 256px; max-width: none; }
+.has-ev.lv-list .evs { gap: 0; padding: 2px 4px; }
+.has-ev.lv-list .ev { flex-direction: column; align-items: flex-start; gap: 3px; padding: 6px 4px; border-radius: 5px; }
+.has-ev.lv-list .ev + .ev { border-top: 1px solid #f0edef; }
+.has-ev.lv-list .ev-extra { display: flex; }
+.has-ev.lv-list .ev em { display: none; }
+.has-ev.lv-list .ev-t { align-self: stretch; max-width: none; white-space: normal; line-height: 17px; }
+.has-ev.lv-list .ev-t::before { content: none; }
+.has-ev.lv-list .ev-t > span { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.has-ev.lv-list .ev-more { display: block; padding: 4px 4px 3px; border-top: 1px solid #f0edef; color: #8a6a7b; font-size: 10.5px; }
+@media (hover: hover) { .has-ev.lv-list .ev:hover { background: #f6f3f5; } .has-ev.lv-list .ev-more:hover { color: #6d3f57; } }
 /* 一行：名称后面只跟时间 */
-.has-ev.lv-brief { flex-wrap: nowrap; }
-.has-ev.lv-brief .ev { flex-basis: auto; padding: 0; }
-.has-ev.lv-brief .ev-t { display: none; }
-/* 只剩图标：右上角圆点提示这里有活动 */
-.has-ev.lv-icon::after { content: ''; position: absolute; top: -4px; right: -4px; width: 10px; height: 10px; border: 2px solid #fff; border-radius: 50%; background: var(--ev); }
+.has-ev.lv-brief { flex-wrap: nowrap; padding-bottom: 3px; }
+.has-ev.lv-brief .evs { flex-basis: auto; padding: 0; background: none; box-shadow: none; }
+.has-ev.lv-brief .ev-t, .has-ev.lv-brief .ev em { display: none; }
 /* 布局测量使用静止尺寸，避免指针动画改变下一轮避让结果。 */
 .campus-map.label-layout .blabel, .campus-map.label-layout .pmark { transform: translate(-50%, -50%); transition: none; }
 
 @media (prefers-reduced-motion: reduce) {
   .map-opacity-cutout, .building-outline, .campus-map .blabel, .campus-map .pmark { transition: none; }
-  .has-ev.ev-live .ev b::before { animation: none; }
+  .has-ev .ev.ev-live b::before { animation: none; }
 }
 
 /* 命中框保持固定；鼠标只影响颜色与阴影。父标签临时隐藏时仍保留原布局。 */

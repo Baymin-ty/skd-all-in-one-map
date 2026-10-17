@@ -50,6 +50,9 @@ function normalize(id, body, old = {}, owner) {
     owner,
     status: old.status === 'cancelled' ? 'cancelled' : 'active',
     url: text(body.url ?? old.url, 500),
+    // 后台的隐藏与置顶顺序不随主办方修改而丢失
+    ...(old.hidden ? { hidden: true } : {}),
+    ...(old.pin ? { pin: old.pin } : {}),
   }
 }
 function updateEventCatalog(db, event, remove = false) {

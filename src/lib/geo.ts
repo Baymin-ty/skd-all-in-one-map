@@ -147,10 +147,10 @@ export function limitPan(map: L.Map, clamp: (c: L.Point, zoom: number) => L.Poin
   }
 }
 
-/** box 差不多铺满 size 像素视野的最小缩放级别：只用整数级，宁可超出 ~15% 也不要缩得比视野小很多 */
-export function fillZoom(map: L.Map, box: L.LatLngBounds, size: L.Point, min = 15, max = 18) {
+/** box 差不多铺满 size 像素视野的最小缩放级别：只用整数级；slack 越大越倾向放大一级（0.2 约超出 15%，0.7 约超出 60%） */
+export function fillZoom(map: L.Map, box: L.LatLngBounds, size: L.Point, min = 15, max = 18, slack = 0.2) {
   const nw = map.project(box.getNorthWest(), 17)
   const se = map.project(box.getSouthEast(), 17)
   const z = 17 + Math.log2(Math.min(size.x / (se.x - nw.x), size.y / (se.y - nw.y)))
-  return Math.min(max, Math.max(min, Math.floor(z + 0.2)))
+  return Math.min(max, Math.max(min, Math.floor(z + slack)))
 }

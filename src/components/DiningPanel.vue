@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { discovery, loadDiscovery } from '../lib/discoveryData'
-import { availableNow, dayHint, groupByCanteen, menuItems, priceShort, searchMenu, TAG_FILTERS, TAG_LABELS } from '../lib/menu'
+import { availableNow, groupByCanteen, menuItems, priceShort, searchMenu, TAG_FILTERS, TAG_LABELS, visibleDayHint } from '../lib/menu'
 import { nowTick, outletText } from '../lib/campusTime'
 import { CROWD_LABELS, crowdAt, crowdRevision } from '../lib/crowd'
 import { mapApi, navigateToPlace, openCanteen, placeSelection, state } from '../lib/store'
@@ -68,7 +68,7 @@ function selectCanteen(id: string) { filters.canteen = id; filters.outlet = ''; 
         <p class="result-caption" aria-live="polite">找到 {{ result.items.length }} 道菜<span v-if="parsed" class="parsed">已识别：{{ parsed }}</span></p>
         <div class="dish-results">
           <button v-for="x in rows" :key="x.o.id + x.d.id" type="button" class="dish-row tap" :class="{ sold: x.d.soldOut }" @click="filters.dish = x.d.id">
-            <DishThumb :d="x.d" :size="48" /><span class="grow"><b>{{ x.d.zh }}</b><small>{{ x.c.zh }} · {{ x.o.zh }}<template v-if="x.d.stall"> · {{ x.d.stall }}</template></small><span class="dish-tags"><span v-if="x.d.soldOut" class="mini">已售罄</span><span v-if="dayHint(x.d, x.s)" class="mini">{{ dayHint(x.d, x.s)?.text }}</span><span v-for="tag in (x.d.tags || []).slice(0, 2)" :key="tag" class="mini">{{ TAG_LABELS[tag] || tag }}</span></span></span><span class="price-column"><b>{{ priceShort(x.d) }}</b><small>{{ x.d.specs?.length ? x.d.specs.map((s) => s.zh).join(' / ') : x.d.unit }}</small><i :class="{ on: availableNow(x) }" :title="availableNow(x) ? '按菜单记录，当前供餐' : '当前供应未确认'" /></span>
+            <DishThumb :d="x.d" :size="48" /><span class="grow"><b>{{ x.d.zh }}</b><small>{{ x.c.zh }} · {{ x.o.zh }}<template v-if="x.d.stall"> · {{ x.d.stall }}</template></small><span class="dish-tags"><span v-if="x.d.soldOut" class="mini">已售罄</span><span v-if="visibleDayHint(x.d, x.s)" class="mini">{{ visibleDayHint(x.d, x.s)?.text }}</span><span v-for="tag in (x.d.tags || []).slice(0, 2)" :key="tag" class="mini">{{ TAG_LABELS[tag] || tag }}</span></span></span><span class="price-column"><b>{{ priceShort(x.d) }}</b><small>{{ x.d.specs?.length ? x.d.specs.map((s) => s.zh).join(' / ') : x.d.unit }}</small><i :class="{ on: availableNow(x) }" :title="availableNow(x) ? '按菜单记录，当前供餐' : '当前供应未确认'" /></span>
           </button>
         </div>
         <button v-if="result.items.length > shown" type="button" class="more-button" @click="shown += 40">再看 {{ Math.min(40, result.items.length - shown) }} 道菜</button>

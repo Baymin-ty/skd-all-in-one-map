@@ -246,10 +246,12 @@ function applyOverride(event, override) {
   if (override.hidden) output.hidden = true
   return output
 }
+/** 后台人工改过的字段：同步时以人工值为准。 */
+export const MANUAL_FIELDS = ['title', 'title_en', 'desc_en', 'place', 'room', 'start', 'end', 'allDay', 'floor', 'venueRaw', 'unmapped', 'organizer', 'speaker', 'category', 'url', 'status']
 function applyStoredManual(event) {
   const manual = event.manualOverrides
   if (!manual || typeof manual !== 'object') return event
-  return { ...event, ...Object.fromEntries(['title', 'place', 'room', 'start', 'end', 'floor', 'venueRaw', 'organizer', 'speaker', 'category'].filter((field) => Object.hasOwn(manual, field)).map((field) => [field, manual[field]])) }
+  return { ...event, ...Object.fromEntries(MANUAL_FIELDS.filter((field) => Object.hasOwn(manual, field)).map((field) => [field, manual[field]])) }
 }
 function mergeSyncedEvent(old, event, override) {
   const existingManual = old?.manualOverrides && typeof old.manualOverrides === 'object' ? old.manualOverrides : null

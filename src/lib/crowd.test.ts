@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'vitest'
 import { discovery } from './discoveryData'
-import { clearLiveCrowd, crowdAt, setLiveCrowd, type CrowdResponse } from './crowd'
+import { clearLiveCrowd, crowdAt, outletCrowd, setLiveCrowd, type CrowdResponse } from './crowd'
 
 const original = JSON.parse(JSON.stringify(discovery.canteens))
 
@@ -29,5 +29,22 @@ describe('crowdAt', () => {
   test('falls back to estimate when the live snapshot is stale', () => {
     setLiveCrowd({ c1: { level: 2, waitMin: 20, reports: 1, updatedAt: 0 } })
     expect(crowdAt('c1', 31 * 60_000)).toEqual(expect.objectContaining({ source: 'guess' }))
+  })
+})
+
+describe('outletCrowd', () => {
+  test('uses only that outlet\'s fresh feedback', () => {
+    setLiveCrowd({
+      o1: { level: 0, waitMin: 2, reports: 1, updatedAt: 1_000 },
+      o2: { level: 2, waitMin: 15, reports: 3, updatedAt: 1_000 },
+    })
+    expect(outletCrowd('o1', 2_000)).toEqual({ level: 0, waitMin: 2, source: 'live' })
+    expect(outletCrowd('o2', 2_000)).toEqual({ level: 2, waitMin: 15, source: 'live' })
+  })
+
+  test('falls back to the estimate without feedback or when it is stale', () => {
+    setLiveCrowd({ o1: { level: 2, waitMin: 20, reports: 1, updatedAt: 0 } })
+    expect(outletCrowd('o1', 31 * 60_000).source).toBe('guess')
+    expect(outletCrowd('o3', 31 * 60_000).source).toBe('guess')
   })
 })

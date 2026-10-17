@@ -5,7 +5,7 @@ import { CROWD_LABELS, crowdAt } from '../lib/crowd'
 import { discovery } from '../lib/discoveryData'
 import { lateLegs, nextStep, suggestEvents, suggestMeals, type PlanContext } from '../lib/planner'
 import { navigateToPlace, openEvent, placeName, placeSelection, select, toast } from '../lib/store'
-import { addItem, endMin, fromMin, isWeeklyClass, itemFromEvent, itemsOn, nowMinute, plan, PLAN_KINDS, removeItem, startMin, type PlanItem } from '../lib/today'
+import { addItem, endMin, fromMin, isWeeklyClass, itemFromEvent, itemsOnIncludingEvents, nowMinute, plan, PLAN_KINDS, removeItem, startMin, withDiscoveryEvents, type PlanItem } from '../lib/today'
 import { walkMinutes } from '../lib/walkTime'
 import { account } from '../lib/account'
 import { openProfile } from '../lib/profile'
@@ -18,9 +18,9 @@ const days = computed(() => [0, 1, 2].map((n) => {
   return { date, label: n === 0 ? '今天' : n === 1 ? '明天' : `${Number(date.slice(5, 7))}/${Number(date.slice(8))} ${dayName(date)}` }
 }))
 const ctx = computed((): PlanContext => ({
-  date: plan.date, now: nowTick.value, items: plan.items, canteens: discovery.canteens, events: discovery.events, walk: walkMinutes, crowd: crowdAt,
+  date: plan.date, now: nowTick.value, items: withDiscoveryEvents(plan.items, discovery.events), canteens: discovery.canteens, events: discovery.events, walk: walkMinutes, crowd: crowdAt,
 }))
-const day = computed(() => itemsOn(plan.items, plan.date))
+const day = computed(() => itemsOnIncludingEvents(plan.items, discovery.events, plan.date))
 const now = computed(() => nowMinute(plan.date, nowTick.value))
 const legs = computed(() => lateLegs(ctx.value))
 const step = computed(() => nextStep(ctx.value))
@@ -29,6 +29,7 @@ const mealCrowdLabel = computed(() => meals.value.some((s) => s.crowd.source ===
 const freeEvents = computed(() => suggestEvents(ctx.value))
 const editing = ref<PlanItem | 'new' | null>(null)
 const classCount = computed(() => plan.items.filter(isWeeklyClass).length)
+const autoEvent = (i: PlanItem) => !!i.eventId && i.id.startsWith('event:')
 
 const status = (i: PlanItem) => endMin(i) <= now.value ? 'past' : startMin(i) <= now.value ? 'now' : 'next'
 const where = (i: PlanItem) => {
@@ -42,6 +43,7 @@ function show(i: PlanItem) {
   if (sel) select(sel)
 }
 function remove(i: PlanItem) {
+  if (autoEvent(i)) return
   removeItem(i.id)
   toast(i.weekdays?.length ? '已删除这门课（每周的都删除了）' : '已删除')
 }
@@ -106,14 +108,13 @@ const leaveText = computed(() => {
             <span v-if="i.note" class="meta">{{ i.note }}</span>
             <span class="stop-actions">
               <button v-if="i.place" type="button" class="text-link" @click="navigateToPlace(i.place)">到这去</button>
-              <button type="button" class="text-link" @click="editing = i">编辑</button>
-              <button type="button" class="text-link danger" @click="remove(i)">删除</button>
+              <template v-if="!autoEvent(i)"><button type="button" class="text-link" @click="editing = i">编辑</button><button type="button" class="text-link danger" @click="remove(i)">删除</button></template>
             </span>
           </div>
         </li>
       </template>
     </ol>
-    <div v-else-if="editing !== 'new'" class="empty"><Ico name="calendar" /><p>{{ plan.date === dateKey() ? '今天' : '这天' }}还没有安排</p><p class="muted">先加上课，或者从活动雷达把感兴趣的活动加进来</p></div>
+    <div v-else-if="editing !== 'new'" class="empty"><Ico name="calendar" /><p>{{ plan.date === dateKey() ? '今天' : '这天' }}还没有安排</p><p class="muted">活动会自动显示在日程里，也可以手动添加课程或待办</p></div>
 
     <TodayItemForm v-if="editing" :key="editing === 'new' ? 'new' : editing.id" :item="editing === 'new' ? null : editing" :date="plan.date" @done="editing = null" />
     <button v-else type="button" class="act add-btn" @click="editing = 'new'"><Ico name="plus" />添加安排</button>

@@ -2,13 +2,15 @@ import { computed, nextTick, reactive, toRaw } from 'vue'
 import type { Building, Campus, Places, Poi, LngLat, Entrance, UndergroundConnector, UndergroundMap, UndergroundConnectorKind } from '../lib/types'
 import { PLACE_COLORS, POI_CATS } from '../lib/catalog'
 import type { IconName } from '../lib/icons'
-import { DEFAULT_MAP_SETTINGS, validMapSettings } from '../lib/mapSettings'
+import { DEFAULT_MAP_SETTINGS } from '../lib/mapSettings'
 import {
   addNode, autoBindEntrances, bindEntrance, connect, createStreetViewPoint, graphFromMap, graphToMap, importSketch, planStreetViewPathInterpolation, mergeNodes, moveNode, removeEdge, removeNode,
   roundPos, splitEdge, ugId, unbindEntrance, type UgStreetViewPoint, type UndergroundGraph,
 } from '../lib/undergroundGraph'
 export type Kind = 'building' | 'poi'
-export type View = 'overview' | 'underground' | 'rain' | 'appearance' | 'data' | 'events'
+/** overview / underground / rain 是「地图数据」的地上、地下、遮雨三层 */
+export type View = 'overview' | 'underground' | 'rain' | 'events' | 'dishes' | 'data'
+export const VIEWS: View[] = ['overview', 'underground', 'rain', 'events', 'dishes', 'data']
 export type Asset = { kind: Kind; data: Building | Poi }
 export type UndergroundSelection = { kind: 'node' | 'edge' | 'entrance' | 'point'; id: string }
 /** 选择/拖动、画道路、放出入口、点哪删哪 */
@@ -16,7 +18,7 @@ export type UndergroundTool = 'select' | 'road' | 'entrance' | 'point' | 'interp
 interface UndergroundHistory { graph: UndergroundGraph; active: string | null }
 export const admin = reactive({
   ready: false, loading: false, error: '', offline: false, loggedIn: false, token: '',
-  view: (['overview', 'underground', 'appearance', 'data', 'events'].includes(location.hash.slice(1)) ? location.hash.slice(1) : 'overview') as View,
+  view: ((VIEWS as string[]).includes(location.hash.slice(1)) ? location.hash.slice(1) : 'overview') as View,
   places: { categories: {} as Places['categories'], buildings: [], pois: [] } as Places, campus: null as Campus | null,
   search: '', category: '', kind: (location.hash === '#buildings' ? 'building' : location.hash === '#pois' ? 'poi' : '') as Kind | '',
   selected: null as Asset | null, draft: null as Asset | null,
@@ -25,8 +27,9 @@ export const admin = reactive({
   loginOpen: false, notice: '', noticeTone: 'ok' as 'ok' | 'error', saving: false, savedAt: '',
   draftBaseline: '', draftVersion: 0, editError: '', positionSet: true, selectedVertex: null as number | null, outlinePart: 0,
   geometryPast: [] as Geometry[], geometryFuture: [] as Geometry[],
+  /** 地图显示是固定配置（public/data/map-settings.json），后台只读 */
   mapSettings: { ...DEFAULT_MAP_SETTINGS }, mapSettingsDraft: { ...DEFAULT_MAP_SETTINGS },
-  settingsReady: false, settingsSaving: false, settingsError: '',
+  settingsReady: true, settingsSaving: false, settingsError: '',
   underground: null as UndergroundMap | null, undergroundGraph: null as UndergroundGraph | null,
   undergroundBaseline: '', undergroundSelected: null as UndergroundSelection | null,
   undergroundTool: 'select' as UndergroundTool, undergroundEntranceKind: 'ramp' as UndergroundConnectorKind,
@@ -52,6 +55,8 @@ export const canRedo = computed(() => admin.geometryFuture.length > 0 && !admin.
 export const undergroundDirty = computed(() => !!admin.undergroundGraph && JSON.stringify(admin.undergroundGraph) !== admin.undergroundBaseline)
 export const undergroundCanUndo = computed(() => admin.undergroundPast.length > 0 && !admin.undergroundSaving)
 export const undergroundCanRedo = computed(() => admin.undergroundFuture.length > 0 && !admin.undergroundSaving)
+export const settingsDirty = computed(() => (Object.keys(DEFAULT_MAP_SETTINGS) as (keyof typeof DEFAULT_MAP_SETTINGS)[])
+  .some((key) => admin.mapSettingsDraft[key] !== admin.mapSettings[key]))
 export const draftOutline = computed(() => {
   const b = admin.draft?.kind === 'building' ? admin.draft.data as Building : null
   return (admin.outlinePart ? b?.parts?.[admin.outlinePart - 1] : b?.poly) ?? []
@@ -88,8 +93,6 @@ function editorAuthorized(action: () => void) {
 }
 export function closeLogin() { pendingEditorAction = null; admin.loginOpen = false }
 
-export const settingsDirty = computed(() => (Object.keys(DEFAULT_MAP_SETTINGS) as (keyof typeof DEFAULT_MAP_SETTINGS)[])
-  .some((key) => admin.mapSettingsDraft[key] !== admin.mapSettings[key]))
 export const assets = computed<Asset[]>(() => [
   ...admin.places.buildings.map((data) => ({ kind: 'building' as const, data })),
   ...admin.places.pois.map((data) => ({ kind: 'poi' as const, data })),
@@ -158,18 +161,9 @@ export async function load() {
       const data = (selected.kind === 'building' ? admin.places.buildings : admin.places.pois).find((item) => item.id === selected.data.id)
       admin.selected = data ? { kind: selected.kind, data } : null
     }
-    await loadMapSettings()
     admin.ready = true; admin.savedAt = new Date().toLocaleTimeString('zh-CN', { hour12: false })
   } catch (e) { admin.error = (e as Error).message }
   finally { admin.loading = false }
-}
-export async function loadMapSettings() {
-  admin.settingsError = ''; admin.settingsReady = false
-  try {
-    const settings = await request<unknown>('/api/map-settings')
-    if (!validMapSettings(settings)) throw new Error('地图显示设置格式不正确')
-    admin.mapSettings = { ...settings }; admin.mapSettingsDraft = { ...settings }; admin.settingsReady = true
-  } catch (e) { admin.settingsError = `无法读取显示设置：${(e as Error).message}` }
 }
 
 const SKETCH_KEY = 'campus.underground.sketch'
@@ -460,18 +454,6 @@ export async function saveUnderground() {
   } catch (e) { admin.undergroundError = `保存失败：${(e as Error).message}` }
   finally { admin.undergroundSaving = false }
 }
-export async function saveMapSettings() {
-  if (admin.settingsSaving || !admin.settingsReady || !authorized()) return
-  if (!validMapSettings(admin.mapSettingsDraft)) { admin.settingsError = '请输入 0–100 之间的百分比'; return }
-  admin.settingsSaving = true; admin.settingsError = ''
-  try {
-    const settings = await request<unknown>('/api/map-settings', { method: 'PUT', body: JSON.stringify(admin.mapSettingsDraft) })
-    if (!validMapSettings(settings)) throw new Error('服务器返回的设置格式不正确')
-    admin.mapSettings = { ...settings }; admin.mapSettingsDraft = { ...settings }
-    notify('显示设置已保存，前台刷新后生效')
-  } catch (e) { admin.settingsError = `保存失败：${(e as Error).message}` }
-  finally { admin.settingsSaving = false }
-}
 export async function login(token: string) {
   await request('/api/auth', { method: 'POST', headers: { Authorization: `Bearer ${token}` } })
   admin.token = token; admin.loggedIn = true; admin.loginOpen = false
@@ -496,14 +478,15 @@ export function discard() {
   if (draftDirty.value && !confirm('放弃当前未保存的修改？')) return false
   closeDraft(); return true
 }
+/** 其他页面（活动、菜品）登记的未保存检查；返回 false 表示用户选择留下 */
+export const leaveGuards = new Set<() => boolean>()
 export function navigate(view: View) {
+  if (view === admin.view) return
   if (!discard()) return
-  if (admin.settingsSaving) return
-  if (settingsDirty.value && !confirm('地图显示设置还未保存，放弃这些修改？')) return
   if (admin.undergroundSaving) return
   if (undergroundDirty.value && !confirm('地下标注还未保存，放弃这些修改？')) return
   if (undergroundDirty.value && admin.underground) resetUnderground(admin.underground)
-  admin.mapSettingsDraft = { ...admin.mapSettings }
+  for (const guard of leaveGuards) if (!guard()) return
   admin.view = view; location.hash = view
 }
 export function selectAsset(a: Asset) {

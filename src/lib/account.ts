@@ -18,7 +18,7 @@ export const account = reactive({
   open: false,
   /** email → code 登录；name 是首次登录（或从其他入口）起昵称 */
   step: 'email' as 'email' | 'code' | 'name',
-  email: '',
+  email: 'name@shanghaitech.edu.cn',
   code: '',
   name: '',
   busy: false,
@@ -59,12 +59,8 @@ export async function requestLoginCode(email = account.email) {
   account.email = email.trim().toLowerCase()
   account.error = ''
   account.message = ''
-  // The server remains the source of truth for allowed domains.  DEMO_MODE
-  // seeds accounts with @demo.test addresses so the local walkthrough can
-  // exercise the same code path without sending mail; production still
-  // rejects those addresses in /api/account/code.
-  if (!/^[^\s@]+@(shanghaitech\.edu\.cn|demo\.test)$/i.test(account.email)) {
-    account.error = '请输入 @shanghaitech.edu.cn 校内邮箱（演示模式可用 @demo.test）'
+  if (!/^[^\s@]+@[a-z0-9.-]+\.[a-z]{2,}$/i.test(account.email)) {
+    account.error = '请输入有效的邮箱地址'
     return false
   }
   account.busy = true

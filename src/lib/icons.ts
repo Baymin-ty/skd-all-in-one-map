@@ -30,6 +30,7 @@ export const ICONS = {
   parking: p('<rect x="3" y="3" width="18" height="18" rx="4"/><path d="M9.5 17V7h3.5a3 3 0 0 1 0 6H9.5"/>'),
   life: p('<path d="M5 8h14l-1 12H6z"/><path d="M9 8V6a3 3 0 0 1 6 0v2"/>'),
   home: p('<path d="M4 9l8-6 8 6v11H4z"/><path d="M4 14h16"/>'),
+  parcel: p('<path d="m7.5 4.3 9 5.1"/><path d="M21 8a2 2 0 0 0-1-1.7l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.7l7 4a2 2 0 0 0 2 0l7-4a2 2 0 0 0 1-1.7Z"/><path d="m3.3 7 8.7 5 8.7-5M12 22V12"/>'),
   walk: p('<circle cx="13" cy="4" r="2"/><path d="M9 21l2.5-7L14 16v5M7.5 11l2.5-3.5 3.5 1 2.5 3M11.5 14l-1-4"/>'),
   pin: p('<path d="M12 21s-7-6.2-7-11.5A7 7 0 0 1 19 9.5C19 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/>'),
   search: p('<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>'),

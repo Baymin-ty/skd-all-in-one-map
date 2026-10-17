@@ -1,3 +1,4 @@
+// 地图显示的三层透明度是固定配置：改 public/data/map-settings.json 后重新构建即可，前台与后台共用。
 import defaults from '../../public/data/map-settings.json'
 
 export type MapSettings = typeof defaults

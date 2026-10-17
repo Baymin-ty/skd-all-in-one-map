@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { timestamp } from './campusTime'
-import { agendaEntries, agendaStops, minutesUntil, prefersMine, startsInText, upNext, weekDates } from './myMap'
+import { agendaEntries, agendaStops, minutesUntil, startsInText, upNext, weekDates } from './myMap'
 import type { PlanItem } from './today'
 
 const item = (patch: Partial<PlanItem>): PlanItem => ({ id: Math.random().toString(36), kind: 'class', title: '课', start: '08:15', end: '09:55', source: 'manual', ...patch })
@@ -64,11 +64,4 @@ describe('我的地图：按地点归并安排', () => {
     expect(startsInText(tomorrow, FRIDAY_10)).toBe('明天 09:00')
   })
 
-  it('登录、或本机已有安排和常用地点时默认显示我的地图', () => {
-    expect(prefersMine(true, [])).toBe(true)
-    expect(prefersMine(false, [])).toBe(false)
-    expect(prefersMine(false, [item({ deleted: true })])).toBe(false)
-    expect(prefersMine(false, [item({})])).toBe(true)
-    expect(prefersMine(false, [], 1)).toBe(true)
-  })
 })

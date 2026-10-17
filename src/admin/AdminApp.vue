@@ -5,38 +5,33 @@ import Ico from '../components/Ico.vue'
 import PlaceWorkspace from './PlaceWorkspace.vue'
 import UndergroundWorkspace from './UndergroundWorkspace.vue'
 import RainNetworkWorkspace from './RainNetworkWorkspace.vue'
-import MapAppearance from './MapAppearance.vue'
 import TimeMachineLauncher from './TimeMachineLauncher.vue'
 import EventWorkspace from './EventWorkspace.vue'
+import DishWorkspace from './DishWorkspace.vue'
+import SystemPanel from './SystemPanel.vue'
 import AccountDialog from '../components/AccountDialog.vue'
 import { loadPipeline, pipeline } from './eventPipeline'
 import { rainDirty } from './rainStore'
 import {
-  admin, assets, cancelRemove, category, closeLogin, confirmRemove, create, draftDirty, edit,
-  exportData, load, loadUnderground, login, logout, missingEntrances, navigate, notify,
-  restore, setKind, settingsDirty, undergroundDirty, type Kind, type View,
+  admin, cancelRemove, closeLogin, confirmRemove, create, draftDirty,
+  load, loadUnderground, login, logout, navigate, notify,
+  restore, setKind, undergroundDirty, VIEWS, type Kind, type View,
 } from './store'
 
-const nav: { view: View; label: string; icon: IconName; description: string }[] = [
-  { view: 'overview', label: '地点管理', icon: 'pin', description: '查找地点，在地图上定位，随时修改信息与位置。' },
-  { view: 'underground', label: '地下标注', icon: 'road', description: '标记地下道路（紫色）和出入口（红色），拖动调整，右键删除。' },
-  { view: 'rain', label: '避雨路网', icon: 'road', description: '编辑独立的雨天可走地面栅格版本。' },
-  { view: 'events', label: '活动', icon: 'calendar', description: '活动数据自动从官网和通知邮件更新；可疑条目在这里审核后上线。' },
-  { view: 'appearance', label: '地图显示', icon: 'eye', description: '调整地图的显示效果，并实时查看预览。' },
-  { view: 'data', label: '数据与备份', icon: 'chart', description: '查看地点收录情况，导出校园地图数据。' },
+const nav: { view: View; views: View[]; label: string; icon: IconName; description: string }[] = [
+  { view: 'overview', views: ['overview'], label: '地点管理', icon: 'pin', description: '查找地点，在地图上定位，随时修改信息与位置。' },
+  { view: 'underground', views: ['underground'], label: '地下标注', icon: 'road', description: '标记地下道路（紫色）和出入口（红色），拖动调整，右键删除。' },
+  { view: 'rain', views: ['rain'], label: '避雨路网', icon: 'road', description: '编辑独立的雨天可走地面栅格版本。' },
+  { view: 'events', views: ['events'], label: '活动管理', icon: 'calendar', description: '整理官网与邮件抓取来的活动：修改、置顶、隐藏、审核，并管理同学讨论。' },
+  { view: 'dishes', views: ['dishes'], label: '菜品管理', icon: 'dining', description: '按食堂维护菜单：菜名、价格规格、供应餐次、标签和售罄状态。' },
+  { view: 'data', views: ['data'], label: '数据与备份', icon: 'chart', description: '服务运行状态、各类数据规模与关键配置，导出 JSON 副本。' },
 ]
 const pendingReview = computed(() => pipeline.status?.review.pending ?? 0)
-const current = computed(() => nav.find((n) => n.view === admin.view) || nav[0])
+const current = computed(() => nav.find((n) => n.views.includes(admin.view)) || nav[0])
+const mapPage = computed(() => admin.view === 'overview' || admin.view === 'underground')
 const password = ref(''), loginError = ref(''), signingIn = ref(false)
 const loginDialog = ref<HTMLDialogElement>(), deleteDialog = ref<HTMLDialogElement>(), createDialog = ref<HTMLDialogElement>()
-const breakdown = computed(() => {
-  const result = new Map<string, { zh: string; color: string; n: number }>()
-  for (const a of assets.value) {
-    const c = category(a), key = `${a.kind}:${c.key}`, old = result.get(key)
-    result.set(key, { zh: `${a.kind === 'building' ? '建筑' : '点位'} · ${c.zh}`, color: c.color, n: (old?.n || 0) + 1 })
-  }
-  return [...result.values()].sort((a, b) => b.n - a.n)
-})
+const system = ref<InstanceType<typeof SystemPanel>>()
 function startCreate(kind: Kind) { createDialog.value?.close(); create(kind) }
 async function submitLogin() {
   if (signingIn.value) return
@@ -46,22 +41,23 @@ async function submitLogin() {
   finally { signingIn.value = false }
 }
 function navigateAdmin(view: View) {
-  if (rainDirty.value && !confirm('避雨路网还未保存，放弃这些修改？')) return
+  if (admin.view === 'rain' && rainDirty.value && !confirm('避雨路网还未保存，放弃这些修改？')) return
   navigate(view)
 }
 async function refresh() {
-  if (draftDirty.value || settingsDirty.value || undergroundDirty.value || rainDirty.value || admin.saving || admin.settingsSaving || admin.undergroundSaving) return notify('请先保存或撤销当前修改')
+  if (draftDirty.value || undergroundDirty.value || rainDirty.value || admin.saving || admin.undergroundSaving) return notify('请先保存或撤销当前修改')
   await load()
+  if (admin.view === 'data') await system.value?.reload()
   notify(admin.error ? admin.error : admin.offline ? '服务未连接，当前显示离线数据' : '数据已更新')
 }
 function beforeUnload(e: BeforeUnloadEvent) {
-  if (draftDirty.value || settingsDirty.value || undergroundDirty.value || rainDirty.value || admin.saving || admin.settingsSaving || admin.undergroundSaving) { e.preventDefault(); e.returnValue = '' }
+  if (draftDirty.value || undergroundDirty.value || rainDirty.value || admin.saving || admin.undergroundSaving) { e.preventDefault(); e.returnValue = '' }
 }
 function hashChange() {
   const hash = location.hash.slice(1)
   if (hash === 'buildings' || hash === 'pois') {
     navigate('overview'); setKind(hash === 'buildings' ? 'building' : 'poi')
-  } else if (nav.some((n) => n.view === hash) && hash !== admin.view) navigate(hash as View)
+  } else if ((VIEWS as string[]).includes(hash) && hash !== admin.view) navigate(hash as View)
   if (location.hash !== `#${admin.view}`) location.hash = admin.view
 }
 watch(() => admin.loginOpen, (value) => {
@@ -84,7 +80,7 @@ onBeforeUnmount(() => {
     <header class="app-header">
       <a href="/admin/" class="admin-brand"><span class="brand-mark"><Ico name="building" /></span><span>上科大一图通<small>地图管理工作台</small></span></a>
       <nav class="admin-nav" aria-label="管理导航">
-        <button v-for="item in nav" :key="item.view" :class="{ active: admin.view === item.view }" :aria-current="admin.view === item.view ? 'page' : undefined" @click="navigateAdmin(item.view)"><Ico :name="item.icon" />{{ item.label }}<span v-if="item.view === 'events' && pendingReview" class="nav-badge" :title="`${pendingReview} 条活动待审核`">{{ pendingReview }}</span></button>
+        <button v-for="item in nav" :key="item.view" :class="{ active: item.views.includes(admin.view) }" :aria-current="item.views.includes(admin.view) ? 'page' : undefined" @click="!item.views.includes(admin.view) && navigateAdmin(item.view)"><Ico :name="item.icon" />{{ item.label }}<span v-if="item.view === 'events' && pendingReview" class="nav-badge" :title="`${pendingReview} 条活动待审核`">{{ pendingReview }}</span></button>
       </nav>
       <div class="header-links">
         <TimeMachineLauncher /><a href="/" target="_blank" rel="noopener">查看前台<Ico name="external" /></a>
@@ -93,11 +89,11 @@ onBeforeUnmount(() => {
         <button v-else class="account-button login-cta" @click="admin.loginOpen = true"><Ico name="lock" />管理员登录</button>
       </div>
     </header>
-    <main class="admin-main" :class="{ 'map-page': admin.view === 'overview' || admin.view === 'underground' }">
-      <header v-if="admin.view !== 'overview' && admin.view !== 'underground'" class="page-toolbar">
+    <main class="admin-main" :class="{ 'map-page': mapPage }">
+      <header v-if="!mapPage" class="page-toolbar">
         <div><h1>{{ current.label }}</h1><p>{{ current.description }}</p></div>
         <div class="toolbar-actions">
-          <button v-if="admin.view !== 'events'" class="button secondary refresh-button" title="刷新数据" aria-label="刷新数据" :disabled="admin.loading || admin.saving" @click="refresh"><Ico name="refresh" /><span>刷新</span></button>
+          <button v-if="admin.view === 'data'" class="button secondary refresh-button" title="刷新数据" aria-label="刷新数据" :disabled="admin.loading || admin.saving" @click="refresh"><Ico name="refresh" /><span>刷新</span></button>
         </div>
       </header>
       <div v-if="admin.offline" class="offline-banner" role="status">数据服务未连接，当前为只读。<button class="text-button" @click="refresh">重新连接</button></div>
@@ -107,16 +103,9 @@ onBeforeUnmount(() => {
         <PlaceWorkspace v-if="admin.view === 'overview'" @create="createDialog?.showModal()" @refresh="refresh" />
         <UndergroundWorkspace v-else-if="admin.view === 'underground'" />
         <RainNetworkWorkspace v-else-if="admin.view === 'rain'" />
-        <MapAppearance v-else-if="admin.view === 'appearance'" />
         <EventWorkspace v-else-if="admin.view === 'events'" />
-          <div v-else class="data-grid">
-            <section class="data-card"><header class="section-heading"><h2>分类分布</h2><span class="count-tag">{{ assets.length }} 项</span></header><div class="breakdown"><div v-for="c in breakdown" :key="c.zh"><div><span><i :style="{ background: c.color }" />{{ c.zh }}</span><b>{{ c.n }}</b></div><div class="bar-track"><span :style="{ width: `${c.n / Math.max(1, assets.length) * 100}%`, background: c.color }" /></div></div></div></section>
-            <div class="data-side">
-              <section class="data-card event-sync-card"><div class="section-title"><h2>活动数据</h2><span class="count-tag">{{ pipeline.status ? `${pipeline.status.catalog.total} 场` : '需登录' }}</span></div><p>官网和通知邮件会定时自动更新活动，运行记录和待审核条目都在「活动」页面。</p><button class="button secondary" @click="navigate('events')"><Ico name="calendar" />{{ pendingReview ? `去审核 ${pendingReview} 条活动` : '查看活动数据管道' }}</button></section>
-              <section class="data-card export-card"><h2>导出数据</h2><p>保存全部建筑、轮廓、出入口和点位的 JSON 副本。</p><button class="button secondary" @click="exportData"><Ico name="download" />导出全部数据</button></section>
-              <section class="data-card quality-card"><div class="section-title"><h2>待补充出入口</h2><span class="count-tag">{{ missingEntrances.length }}</span></div><p>补充入口，让导航带到楼门口。</p><button v-for="b in missingEntrances.slice(0, 8)" :key="b.id" @click="edit({ kind: 'building', data: b })"><span>{{ b.name.zh }}</span><Ico name="edit" /></button><p v-if="!missingEntrances.length">全部建筑已标注入口。</p></section>
-            </div>
-          </div>
+        <DishWorkspace v-else-if="admin.view === 'dishes'" />
+        <SystemPanel v-else ref="system" />
       </template>
     </main>
     <dialog ref="createDialog" class="admin-dialog create-dialog" aria-labelledby="create-title" @click="(e) => { if (e.target === createDialog) createDialog?.close() }">

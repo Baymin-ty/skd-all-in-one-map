@@ -25,6 +25,10 @@ export interface CampusEvent {
   status?: 'active' | 'cancelled'
   cancelledAt?: number
   url?: string
+  /** 后台置顶顺序（1 最靠前），前台活动列表先显示 */
+  pin?: number
+  /** 后台隐藏；服务端已过滤，静态快照里也不显示 */
+  hidden?: boolean
 }
 
 export type Meal = 'breakfast' | 'lunch' | 'dinner' | 'allday' | 'night'

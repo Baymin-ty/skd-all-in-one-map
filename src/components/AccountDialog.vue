@@ -3,7 +3,7 @@ import { computed } from 'vue'
 import { account, closeAccount, requestLoginCode, submitNickname, verifyLoginCode } from '../lib/account'
 import Ico from './Ico.vue'
 
-const TITLES = { email: '校园账号登录', code: '输入邮箱验证码', name: '给自己起个昵称' }
+const TITLES = { email: '邮箱登录', code: '输入邮箱验证码', name: '给自己起个昵称' }
 const title = computed(() => TITLES[account.step])
 function submit() {
   if (account.step === 'email') void requestLoginCode()
@@ -19,11 +19,11 @@ function submit() {
         <button class="account-close" type="button" aria-label="关闭" :disabled="account.busy" @click="closeAccount"><Ico name="close" /></button>
         <span class="account-mark"><Ico :name="account.step === 'name' ? 'edit' : 'users'" /></span>
         <h2 id="account-title">{{ title }}</h2>
-        <p v-if="account.step === 'email'">使用校内邮箱登录，昵称、课表和寝室都跟着账号走，换设备也不丢。</p>
+        <p v-if="account.step === 'email'">使用邮箱登录，昵称、课表和寝室都跟着账号走，换设备也不丢。</p>
         <p v-else-if="account.step === 'code'">验证码已发送到 <b>{{ account.email }}</b>，10 分钟内有效。</p>
         <p v-else>登录成功！发笔记、评论时会显示这个昵称，之后可以在「我的」里修改。</p>
         <form @submit.prevent="submit">
-          <label v-if="account.step === 'email'">校内邮箱<input v-model="account.email" type="email" autocomplete="email" placeholder="name@shanghaitech.edu.cn" required :disabled="account.busy" /></label>
+          <label v-if="account.step === 'email'">邮箱地址<input v-model="account.email" type="email" autocomplete="email" placeholder="name@shanghaitech.edu.cn" required :disabled="account.busy" /></label>
           <label v-else-if="account.step === 'code'">6 位验证码<input v-model="account.code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="000000" required :disabled="account.busy" /></label>
           <label v-else>昵称<input v-model="account.name" autocomplete="nickname" minlength="2" maxlength="16" placeholder="2–16 个字，不能和别人重名" required :disabled="account.busy" /></label>
           <p v-if="account.error" class="account-error" role="alert">{{ account.error }}</p>
@@ -32,7 +32,7 @@ function submit() {
           <button v-if="account.step === 'code'" type="button" class="account-back" :disabled="account.busy" @click="account.step = 'email'; account.error = ''">换一个邮箱</button>
           <button v-if="account.step === 'name'" type="button" class="account-back" :disabled="account.busy" @click="closeAccount">稍后再说（起好昵称前不能发笔记和评论）</button>
         </form>
-        <small v-if="account.step !== 'name'">仅接受 @shanghaitech.edu.cn 校内邮箱。</small>
+        <small v-if="account.step !== 'name'">默认填入上科大邮箱，也可以改成其他邮箱。</small>
       </section>
     </div>
   </Teleport>

@@ -75,6 +75,7 @@ describe('标签候选位置与精简层级', () => {
   it('层级按给定顺序尝试，未知值忽略，缺省只有完整一级', () => {
     expect(labelLevels('full brief icon')).toEqual(['full', 'brief', 'icon'])
     expect(labelLevels('brief icon')).toEqual(['brief', 'icon'])
+    expect(labelLevels('list full brief icon')).toEqual(['list', 'full', 'brief', 'icon'])
     expect(labelLevels('full bogus')).toEqual(['full'])
     expect(labelLevels(undefined)).toEqual(['full'])
     expect(labelLevels('')).toEqual(['full'])

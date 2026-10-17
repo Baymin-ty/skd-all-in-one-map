@@ -29,9 +29,8 @@ export function normalizeEmail(value) {
 
 export function allowedEmail(value, demoMode = process.env.DEMO_MODE === 'true') {
   const email = normalizeEmail(value)
-  if (!/^[^\s@]{1,120}@[a-z0-9.-]{3,190}$/.test(email)) return false
-  const domain = email.slice(email.lastIndexOf('@') + 1)
-  return domain === 'shanghaitech.edu.cn' || domain.endsWith('.shanghaitech.edu.cn') || (demoMode && domain === 'demo.test')
+  if (!/^[^\s@]{1,120}@(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(email)) return false
+  return true
 }
 
 export function maskEmail(value) {
@@ -247,7 +246,7 @@ export function installAccount(app, db, options = {}) {
   accountRouter.post('/code', async (req, res, next) => {
     try {
       const email = normalizeEmail(req.body?.email)
-      if (!allowedEmail(email, demoMode)) fail(400, '请输入有效的上科大校园邮箱')
+      if (!allowedEmail(email, demoMode)) fail(400, '请输入有效的邮箱地址')
       rateIp(req)
       const current = now(), previous = db.prepare('SELECT created_at FROM login_codes WHERE email=? ORDER BY created_at DESC,id DESC LIMIT 1').get(email)
       if (previous && current - previous.created_at < CODE_COOLDOWN) fail(429, '验证码发送得太频繁，请稍后再试')

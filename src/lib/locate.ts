@@ -30,6 +30,7 @@ const REROUTE_STEP = 10
 
 let watchId: number | null = null
 let compass = false
+let headingAsked = false
 let routedAt: LngLat | null = null
 let arrivedAt = ''
 let walkTimer = 0
@@ -40,11 +41,20 @@ export function myLocationEnd(): RouteEnd | null {
   return locator.status === 'on' && locator.pos ? { name: '我的位置', point: locator.pos, live: true } : null
 }
 
+/** 打开页面时静默申请定位：只显示蓝点，不移动地图，也不弹不支持定位的提示 */
+export function locateOnLoad() {
+  if (locator.status !== 'off' || mockParam() !== null) return
+  if (!('geolocation' in navigator) || !window.isSecureContext) return
+  locator.status = 'locating'
+  watchId = navigator.geolocation.watchPosition(onPosition, onError, { enableHighAccuracy: true, maximumAge: 3000, timeout: 20000 })
+}
+
 export function startLocating() {
   locator.follow = true
+  // iOS 的方向权限只能在点击时申请，开页自动定位时还没拿到
+  if (!headingAsked) requestHeading()
   if (locator.status === 'on' && locator.pos) return mapApi.focus(locator.pos)
   if (locator.status === 'locating') return
-  requestHeading()
   const mock = mockParam()
   if (mock !== null) {
     const [lng, lat] = mock.split(',').map(Number)
@@ -57,6 +67,8 @@ export function startLocating() {
     locator.status = 'unavailable'
     return toast(window.isSecureContext ? '这个浏览器不支持定位' : '定位需要通过 HTTPS 打开本站')
   }
+  // 开页时可能已经在后台定位（例如人在校外）：换成用户主动的一次，提示照常给
+  if (watchId != null) navigator.geolocation.clearWatch(watchId)
   locator.status = 'locating'
   watchId = navigator.geolocation.watchPosition(onPosition, onError, { enableHighAccuracy: true, maximumAge: 3000, timeout: 20000 })
 }
@@ -69,6 +81,7 @@ export function stopLocating() {
   window.removeEventListener('deviceorientation', onOrientation as EventListener)
   Object.assign(locator, { status: 'off', pos: null, accuracy: 0, heading: null, follow: false, mock: false, simulating: false })
   compass = false
+  headingAsked = false
 }
 
 /** 模拟定位（演示用）：直接把自己放到底图上的某一点 */
@@ -112,18 +125,20 @@ function onPosition(p: GeolocationPosition) {
   update(gpsToMap(longitude, latitude, state.campus?.warp), accuracy)
 }
 function onError(e: GeolocationPositionError) {
+  // 开页自动定位失败不打扰，用户点定位按钮时才提示
+  const asked = locator.follow
   if (e.code === e.PERMISSION_DENIED) {
     stopLocating()
     locator.status = 'denied'
-    toast('没有定位权限，请在浏览器设置里允许本站使用位置')
-  } else if (locator.status === 'locating') toast('暂时拿不到定位，到室外开阔处再试')
+    if (asked) toast('没有定位权限，请在浏览器设置里允许本站使用位置')
+  } else if (asked && locator.status === 'locating') toast('暂时拿不到定位，到室外开阔处再试')
 }
 
 function update(pos: LngLat, accuracy: number) {
   const first = locator.status !== 'on'
   locator.accuracy = accuracy
   if (state.campus && !pointInPoly(pos, state.campus.boundary)) {
-    if (locator.status !== 'outside') toast('你现在不在校园里，地图上不显示你的位置')
+    if (locator.status !== 'outside' && locator.follow) toast('你现在不在校园里，地图上不显示你的位置')
     locator.status = 'outside'
     locator.pos = null
     return
@@ -163,6 +178,7 @@ function onOrientation(e: DeviceOrientationEvent & { webkitCompassHeading?: numb
 }
 /** iOS 要在点击时请求方向权限；拿不到就退回用 GPS 的行进方向 */
 async function requestHeading() {
+  headingAsked = true
   const D = window.DeviceOrientationEvent as unknown as { requestPermission?: () => Promise<string> } | undefined
   try {
     if (D?.requestPermission && (await D.requestPermission()) !== 'granted') return

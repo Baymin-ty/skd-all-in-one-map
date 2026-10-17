@@ -59,9 +59,11 @@ export function labelSlots(width: number, height: number, previous?: string): La
 }
 
 /** 内容由多到少的显示层级：完整 → 一行 → 只留图标，放不下才整体藏起来。 */
-export type LabelLevel = 'full' | 'brief' | 'icon'
+/** list：活动雷达里把这个地点的几场活动逐条列出；full：名称 + 一行活动；brief：名称 + 时间；icon：只剩图标 */
+export type LabelLevel = 'list' | 'full' | 'brief' | 'icon'
+const LEVELS: readonly string[] = ['list', 'full', 'brief', 'icon']
 export function labelLevels(spec: string | undefined): LabelLevel[] {
-  const levels = (spec || 'full').split(' ').filter((l): l is LabelLevel => l === 'full' || l === 'brief' || l === 'icon')
+  const levels = (spec || 'full').split(' ').filter((l): l is LabelLevel => LEVELS.includes(l))
   return levels.length ? levels : ['full']
 }
 

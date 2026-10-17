@@ -81,11 +81,6 @@ export function upNext(items: PlanItem[], now: number, days = 7) {
 /** 离这一项开始还有几分钟（负数表示已经开始） */
 export const minutesUntil = (entry: AgendaEntry, now: number) => Math.round((timestamp(entry.date) + startMin(entry.item) * 60_000 - now) / 60_000)
 
-/** 打开时默认显示我的地图：登录了，或者这台设备上已经有安排、常用地点 */
-export function prefersMine(loggedIn: boolean, items: PlanItem[], places = 0) {
-  return loggedIn || places > 0 || items.some((i) => !i.deleted)
-}
-
 /** 「还有 25 分钟」「明天 08:15」这类相对时间 */
 export function startsInText(entry: AgendaEntry, now: number) {
   const min = minutesUntil(entry, now)

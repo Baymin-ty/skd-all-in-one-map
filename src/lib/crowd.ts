@@ -67,6 +67,11 @@ export function crowdAt(canteen: string, t: number): Crowd {
   return liveCrowd || estimate(t)
 }
 
+/** 单个档口：有这个档口 30 分钟内的反馈就用反馈，否则按下课时间估算（各档口的估算相同） */
+export function outletCrowd(outlet: string, t: number): Crowd {
+  return aggregate(live[outlet] ? [live[outlet]] : [], t) || estimate(t)
+}
+
 export async function loadCrowd(fetcher: typeof fetch = fetch): Promise<boolean> {
   try {
     const at = demoClockEnabled.value ? `?at=${encodeURIComponent(String(nowTick.value))}` : ''

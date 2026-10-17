@@ -2,14 +2,17 @@ import { describe, expect, it, vi } from 'vitest'
 import { MAX_BYTES, parseScheduleImage } from './schedule.mjs'
 
 const image = `data:image/png;base64,${Buffer.from('not-a-real-png-but-a-bounded-fixture').toString('base64')}`
-const response = (content, status = 200) => new Response(JSON.stringify({ choices: [{ message: { content } }] }), { status, headers: { 'Content-Type': 'application/json' } })
+const response = (content, status = 200, finish_reason = 'stop') => new Response(JSON.stringify({ choices: [{ finish_reason, message: { content } }] }), { status, headers: { 'Content-Type': 'application/json' } })
 
 describe('schedule vision parser', () => {
   it('sends a bounded image and validates the structured class response', async () => {
     const fetcher = vi.fn(async (_url, init) => {
       const request = JSON.parse(init.body)
       expect(request.model).toBe('deepseek-flash')
-      expect(request.response_format).toEqual({ type: 'json_object' })
+      expect(request.max_tokens).toBe(8192)
+      expect(request.thinking).toEqual({ type: 'disabled' })
+      expect(request.response_format).toBeUndefined()
+      expect(request.messages[0].content[0].text).toContain('只返回 JSON')
       expect(request.messages[0].content[1].image_url.url).toBe(image)
       return response(JSON.stringify({ classes: [{ title: '算法导论', weekday: 2, start: '08:00', end: '09:40', room: '1A-108', weeks: [1, 2], teacher: '李老师' }], warnings: [] }))
     })
@@ -31,6 +34,19 @@ describe('schedule vision parser', () => {
     const oversized = `data:image/png;base64,${Buffer.alloc(MAX_BYTES + 1).toString('base64')}`
     await expect(parseScheduleImage(oversized, { apiKey: 'test-key' })).rejects.toThrow('不能超过 4 MB')
     await expect(parseScheduleImage(image, { apiKey: 'test-key', fetcher: async () => response('{bad') })).rejects.toThrow('有效 JSON')
+  })
+
+  it('reports truncated or empty JSON output clearly', async () => {
+    await expect(parseScheduleImage(image, { apiKey: 'test-key', fetcher: async () => response('{"classes":[', 200, 'length') })).rejects.toThrow('输出过短')
+    await expect(parseScheduleImage(image, { apiKey: 'test-key', fetcher: async () => response('', 200, 'stop') })).rejects.toThrow('返回为空')
+  })
+
+  it('retries once when JSON mode returns empty content', async () => {
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(response(''))
+      .mockResolvedValueOnce(response(JSON.stringify({ classes: [{ title: '物理', weekday: 3, start: '10:00', end: '11:40', room: '' }], warnings: [] })))
+    await expect(parseScheduleImage(image, { apiKey: 'test-key', fetcher })).resolves.toMatchObject({ classes: [{ title: '物理' }] })
+    expect(fetcher).toHaveBeenCalledTimes(2)
   })
 
   it('turns an upstream timeout into a readable error', async () => {

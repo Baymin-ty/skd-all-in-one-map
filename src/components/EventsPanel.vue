@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { discovery, EVENT_CATS, EVENT_RANGES, eventsIn, loadDiscovery } from '../lib/discoveryData'
-import { dayLabel, eventStatus, evStart, icsFor, STATUS_LABELS, timeRange } from '../lib/campusTime'
+import { dateKey, dayLabel, eventStatus, evStart, icsFor, STATUS_LABELS, timeRange } from '../lib/campusTime'
 import { fitEvents, navigateToPlace, placeName, placeSelection, select, state, toast } from '../lib/store'
 import { addItem, itemFromEvent, plan } from '../lib/today'
 import { buildLink, openShare } from '../lib/deepLink'
@@ -24,7 +24,10 @@ const categoryName = computed(() => {
 })
 const groups = computed(() => {
   const map = new Map<string, typeof list.value>()
-  for (const e of list.value.slice(0, shown.value)) {
+  // 后台置顶的活动排在最前面单独一组（往期列表不置顶）
+  const pinned = state.radar.range === 'past' ? [] : list.value.filter((e) => e.pin).sort((a, b) => a.pin! - b.pin!)
+  if (pinned.length) map.set(isEnglish.value ? 'Featured' : '置顶推荐', pinned)
+  for (const e of list.value.filter((item) => !pinned.includes(item)).slice(0, shown.value)) {
     const day = dayLabel(evStart(e))
     if (!map.has(day)) map.set(day, [])
     map.get(day)!.push(e)
@@ -53,7 +56,7 @@ function share() {
     ...e.place ? [{ label: '导航到会场', url: buildLink({ kind: 'to', place: e.place, room: e.room || undefined }), hint: '扫码后直接导航到活动地点' }] : [],
   ] })
 }
-const planned = computed(() => !!event.value && plan.items.some((i) => !i.deleted && i.eventId === event.value!.id))
+const planned = computed(() => !!event.value && (plan.items.some((i) => !i.deleted && i.eventId === event.value!.id) || dateKey(evStart(event.value)) === plan.date))
 watch(event, (value) => { if (value) void loadCheckins(value.id) }, { immediate: true })
 function addToToday() {
   if (!event.value || planned.value) return

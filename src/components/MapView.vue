@@ -13,13 +13,13 @@ import {
   collapsedLabelGroups, labelFits, labelLevels, labelPresentation, labelSlots, labelsOverlap, poiPresentation, shiftRect,
   type LabelLevel, type LabelRect, type LabelSlot,
 } from '../lib/mapLabels'
-import { EVENT_PRIO, eventsByPlace, eventShortTitle, eventWhen, type PlaceEvents } from '../lib/mapEvents'
+import { EVENT_PRIO, eventsByPlace, eventShortTitle, eventTier, eventWhen, type PlaceEvents } from '../lib/mapEvents'
 import { landmark, majorGate, facilityBuilding } from '../lib/placeCuration'
 import { visibleEntrances } from '../lib/mapEntrances'
 import { createLabelInteraction } from '../lib/mapLabelInteraction'
 import { createLabelHover } from '../lib/mapLabelHover'
-import { buildingLabelCategory, mapLabelColor, poiLabelCategory } from '../lib/mapLabelCategories'
-import { discovery, eventsAhead, eventsIn } from '../lib/discoveryData'
+import { buildingLabelCategory, labelShown, mapLabelColor, poiLabelCategory } from '../lib/mapLabelCategories'
+import { discovery, eventsIn } from '../lib/discoveryData'
 import { clockText, dateKey, dayName, dayStart, eventStatus, evStart, nowTick, STATUS_LABELS, timeRange } from '../lib/campusTime'
 import type { CampusEvent } from '../lib/discoveryTypes'
 import { walkablePaths } from '../lib/route'
@@ -30,7 +30,9 @@ import {
 import type { Building, LngLat } from '../lib/types'
 import { covered, ui } from '../lib/ui'
 import Ico from './Ico.vue'
+import { parcel } from '../lib/parcelStation'
 import MapLabelControls from './MapLabelControls.vue'
+import CampusMapToggle from './CampusMapToggle.vue'
 import { mountTodayLayer } from '../lib/todayLayer'
 import { poiIcon } from '../lib/catalog'
 import { mountLocateLayer } from '../lib/locateLayer'
@@ -197,10 +199,12 @@ interface MarkerSpec {
   shift?: boolean
 }
 
-/** 点到标签里的活动那一行：一场直接打开，多场先列出这里的活动；点名称照常打开地点 */
+/** 点到某一场活动直接打开它；点「还有几场」或收起后的活动行，一场直接打开、多场先列出这里的活动；点名称照常打开地点 */
 function pickLabel(selection: Selection, event: L.LeafletMouseEvent) {
   const target = event.originalEvent?.target
-  const events = selection.kind !== 'group' && target instanceof Element && target.closest('.ev') ? mapEvents.get(selection.id) : undefined
+  const row = target instanceof Element ? target.closest<HTMLElement>('[data-ev]') : null
+  if (row?.dataset.ev && !state.route.picking && !tm.open && row.closest('.lv-list')) { openEvent(row.dataset.ev); return }
+  const events = selection.kind !== 'group' && target instanceof Element && target.closest('.evs') ? mapEvents.get(selection.id) : undefined
   if (events && !state.route.picking && !tm.open) openPlaceEvents(selection.id, events)
   else pick(selection)
 }
@@ -271,7 +275,9 @@ function updateHoverLabel() {
       if (g) labelMarkers.get(`group:${g.id}`)?.getElement()?.firstElementChild?.classList.add('hover-suppressed')
     }
     // 已完整显示的标签只变颜色；被避让、精简或按分类隐藏的标签临时完整展示。
-    if (!node || REDUCED.some((c) => node.classList.contains(c))) {
+    // 活动雷达里没能逐条列出活动的标签也算精简过
+    const listable = state.panel === 'events' && !!node?.querySelector('.evs')
+    if (!node || REDUCED.some((c) => node.classList.contains(c)) || listable && !node.classList.contains('lv-list')) {
       const b = hovered.kind === 'building' ? buildingById(hovered.id) : undefined
       const p = hovered.kind === 'poi' ? state.pois.find((p) => p.id === hovered!.id) : undefined
       const g = hovered.kind === 'group' ? groupById(hovered.id) : undefined
@@ -286,7 +292,7 @@ function updateHoverLabel() {
         const anchor: LngLat = base ? [base.getLatLng().lng, base.getLatLng().lat] : pos
         const kept = node ? [...node.classList].filter((c) => !LAYOUT_CLASSES.includes(c)).join(' ') : `${p ? 'pmark' : 'blabel'}${g ? ' group' : ''}`
         const hoverMarker = syncMarker(hoverMarkers, hoverLabelLayer, hovered, anchor, {
-          html, cls: `${kept} hover-label is-hovered`, prio: null, color: mapLabelColor(category), title: name, pane: 'label-hover-pane',
+          html, cls: `${kept}${listable ? ' lv-list' : ''} hover-label is-hovered`, prio: null, color: mapLabelColor(category), title: name, pane: 'label-hover-pane',
         })
         const hoverNode = hoverMarker.getElement()?.firstElementChild as HTMLElement | undefined
         const placed = node && !node.classList.contains('clash') ? node : undefined
@@ -316,7 +322,7 @@ function drawLabels() {
     const matching = mapHighlights.value.has(b.id)
     const ev = mapEvents.get(b.id)
     // 选中、批量筛选和活动都是用户正在看的内容，不受分类开关影响，免得筛选和开关互相打架。
-    if (!state.labelVisibility[category] && !sel && !groupSelected && !matching && !ev) continue
+    if (!labelShown(state.labelVisibility, category) && !sel && !groupSelected && !matching && !ev) continue
     const focused = !!g && g.id === focusGroup
     const routeEnd = state.route.open && [state.route.from, state.route.to].some((end) => end?.place?.kind === 'building' && end.place.id === b.id)
     if (b.cat === 'gate' && !majorGate(b.id) && map.getZoom() < 19 && !sel && !matching && !routeEnd && !ev) continue
@@ -363,7 +369,7 @@ function drawPois() {
     const sel = state.selected?.kind === 'poi' && state.selected.id === p.id
     const matching = mapHighlights.value.has(p.id)
     const ev = mapEvents.get(p.id)
-    if (!state.labelVisibility[category] && !sel && !matching && !ev) continue
+    if (!labelShown(state.labelVisibility, category) && !sel && !matching && !ev) continue
     const routeEnd = state.route.open && [state.route.from, state.route.to].some((end) => end?.place?.kind === 'poi' && end.place.id === p.id)
     // 交通分类由用户明确打开后显示；其余设施沿用缩放分层与入口规则。
     const presentation = category === 'transport'
@@ -383,10 +389,21 @@ function drawPois() {
   declutter()
 }
 
-/** 有活动的地点：名称下面挂一行「时间 + 短标题 + 还有几场」，地点和活动是同一个标签，不再互相挤掉 */
-function eventLine({ lead, tier, events }: PlaceEvents) {
-  return `<span class="ev"><b>${escapeHtml(eventWhen(lead, tier))}</b><span class="ev-t">${escapeHtml(eventShortTitle(lead.title))}</span>`
-    + `${events.length > 1 ? `<em>+${events.length - 1}</em>` : ''}</span>`
+/** 活动雷达里每个地点最多逐条列出几场 */
+const LIST_ROWS = 3
+/**
+ * 有活动的地点：名称下面挂一块活动区，地点和活动是同一个标签，不再互相挤掉。
+ * 平时只露第一行「时间 + 短标题 + 还有几场」；活动雷达里（lv-list）逐条列出，标题最多两行。
+ */
+function eventLine({ events }: PlaceEvents) {
+  const rows = events.slice(0, LIST_ROWS).map((e, i) => {
+    const tier = eventTier(e)
+    return `<span class="ev ev-${tier}${i ? ' ev-extra' : ''}" data-ev="${escapeHtml(e.id)}"><b>${escapeHtml(eventWhen(e, tier))}</b>`
+      + `<span class="ev-t" data-short="${escapeHtml(eventShortTitle(e.title))}"><span>${escapeHtml(e.title)}</span></span>`
+      + `${!i && events.length > 1 ? `<em>+${events.length - 1}</em>` : ''}</span>`
+  }).join('')
+  const more = events.length > LIST_ROWS ? `<span class="ev-more">还有 ${events.length - LIST_ROWS} 场 ›</span>` : ''
+  return `<span class="evs">${rows}${more}</span>`
 }
 const eventTitle = (place: string, { lead, events }: PlaceEvents) =>
   `${place} · ${events.length > 1 ? `${events.length} 场活动，最近一场：` : ''}${lead.title}`
@@ -396,6 +413,8 @@ const eventTitle = (place: string, { lead, events }: PlaceEvents) =>
  * 普通地点：重要的缩成图标，其余直接让位。
  */
 function labelLevelsFor(prio: number, ev?: PlaceEvents) {
+  // 活动雷达里活动就是主角：先试逐条列出，放不下再一级级收
+  if (ev && state.panel === 'events') return map.getZoom() <= 16 ? 'list brief icon' : 'list full brief icon'
   if (ev) return map.getZoom() <= 16 || (ev.tier === 'ongoing' || ev.tier === 'later') && map.getZoom() < 18 ? 'brief icon' : 'full brief icon'
   return prio >= ICON_FALLBACK_PRIO ? 'full icon' : 'full'
 }
@@ -423,15 +442,16 @@ function declutter() {
     if (!el.value) return
     el.value.classList.add('label-layout')
     const nodes = [...el.value.querySelectorAll<HTMLElement>('[data-prio]')]
-    for (const n of nodes) n.classList.remove('clash', 'lv-brief', 'lv-icon')
+    for (const n of nodes) n.classList.remove('clash', 'lv-list', 'lv-brief', 'lv-icon')
     // 同级按地点排序，结果不随图层插入顺序变化
     nodes.sort((a, b) => Number(b.dataset.prio) - Number(a.dataset.prio) || (a.dataset.place ?? '').localeCompare(b.dataset.place ?? ''))
     const bounds = el.value.getBoundingClientRect()
     const cov = covered()
     const viewport: LabelRect = { left: bounds.left + cov.l + 8, right: bounds.right - cov.r - 8,
       top: bounds.top + cov.t + 8, bottom: bounds.bottom - (ui.desktop || ui.overlay ? cov.b : ui.sheet) - 8 }
-    const placed: LabelRect[] = [mapTools.value]
-      .filter((node): node is HTMLDivElement => !!node && node.offsetParent !== null)
+    // 右侧按钮和桌面浮在地图上的分类条都不让标签压上去
+    const placed: LabelRect[] = [mapTools.value, document.querySelector<HTMLElement>('.map-chips-float')]
+      .filter((node): node is HTMLElement => !!node && node.offsetParent !== null)
       .map((node) => node.getBoundingClientRect())
     const gapX = map.getZoom() <= 17 ? 16 : 10
     const gapY = 8
@@ -439,6 +459,7 @@ function declutter() {
     const hits = (r: LabelRect, level: LabelLevel = 'full') => !labelFits(r, viewport)
       || placed.some((q) => level === 'icon' ? labelsOverlap(r, q, 6, 4) : labelsOverlap(r, q, gapX, gapY))
     const setLevel = (n: HTMLElement, level: LabelLevel) => {
+      n.classList.toggle('lv-list', level === 'list')
       n.classList.toggle('lv-brief', level === 'brief')
       n.classList.toggle('lv-icon', level === 'icon')
     }
@@ -511,13 +532,9 @@ function drawEntrances() {
 let mapEvents = new Map<string, PlaceEvents>()
 function drawEvents() {
   if (!map) return
-  // 时光机有自己的活动图层；导航、菜单和「我的今天」时地图让给它们
-  // 我的地图只突出自己的安排，全校活动等切回全校地图或打开活动雷达再看
-  const hidden = tm.open || state.route.open || state.panel === 'dining' || state.panel === 'canteen' || mineFocus.value
-  // 活动雷达里跟随筛选，不受「活动」标签开关影响；其他时候常驻显示进行中和未来 24 小时内的活动
-  const radar = state.panel === 'events'
-  const list = hidden || !radar && !state.labelVisibility.events ? []
-    : radar ? eventsIn(state.radar.range, state.radar.cat, state.radar.place) : eventsAhead(24)
+  // 地图就是地图：活动只在「活动」页挂到地点上，时光机有自己的活动图层
+  const hidden = tm.open || state.route.open || state.panel !== 'events'
+  const list = hidden ? [] : eventsIn(state.radar.range, state.radar.cat, state.radar.place)
   const selected = discovery.events.find((e) => e.id === state.eventId)
   const active = !hidden && selected?.place ? selected : undefined
   const byPlace = eventsByPlace(list)
@@ -738,7 +755,7 @@ function home(animate = true) {
   const bounds = L.latLngBounds(state.campus!.boundary.map(toLatLng))
   const nw = map.project(bounds.getNorthWest(), 17)
   const se = map.project(bounds.getSouthEast(), 17)
-  const z = Math.min(17, Math.max(map.getMinZoom(), Math.round(17 + Math.log2(Math.max(size.x / (se.x - nw.x), size.y / (se.y - nw.y))))))
+  const z = Math.max(map.getMinZoom(), Math.min(17, Math.round(17 + Math.log2(Math.max(size.x / (se.x - nw.x), size.y / (se.y - nw.y))))))
   map.stop()
   const pt = map.project(bounds.getCenter(), z).subtract(visibleOffset())
   map.setView(map.unproject(clampCenter(pt, z), z), z, animate ? { animate: true, duration: 0.5 } as L.ZoomPanOptions : { animate: false })
@@ -748,7 +765,8 @@ function limitZoomOut() {
   const size = map.getSize().subtract([cov.l + cov.r, 0])
   // 媒体查询可能先于 Leaflet 的 resize 回调触发，不能用旧宽度减去新侧栏宽度计算缩放。
   if (size.x <= 0 || size.y <= 0) return
-  map.setMinZoom(fillZoom(map, L.latLngBounds(state.campus!.boundary.map(toLatLng)), size, 15, 17))
+  // 宁可裁掉校园边缘，也不让校园缩成屏幕中间的一小块
+  map.setMinZoom(fillZoom(map, L.latLngBounds(state.campus!.boundary.map(toLatLng)), size, 15, 19, 0.7))
   minZoom.value = map.getMinZoom()
 }
 let keepInside = () => {}
@@ -897,15 +915,16 @@ watch(() => ui.desktop, () => {
 
 // 右侧按钮：手机上跟着底部面板走，面板拉高时藏起来
 const toolsBottom = computed(() => (ui.desktop ? 24 : Math.min(ui.sheet, ui.anchors[1]) + 12))
-const toolsHidden = computed(() => tm.open || !ui.desktop && ui.sheet > ui.anchors[1] + 40)
+// 快递站平面图有自己的缩放按钮，打开时校园地图的按钮让开
+const toolsHidden = computed(() => tm.open || parcel.open || !ui.desktop && ui.sheet > ui.anchors[1] + 40)
 </script>
 
 <template>
   <div ref="el" class="map campus-map" role="application" aria-label="校园地图" />
   <div ref="mapTools" class="map-tools" :class="{ hidden: toolsHidden }" :style="{ bottom: toolsBottom + 'px' }">
+    <CampusMapToggle />
     <MapLabelControls v-model="state.labelVisibility" @layout="declutter" />
     <LocateButton />
-    <button type="button" class="fab" :title="mineFocus ? '回到我的各站' : '回到全校'" :aria-label="mineFocus ? '回到我的各站' : '回到全校'" @click="mineFocus ? fitToday() : mapApi.home()"><Ico name="home" /></button>
     <div v-if="ui.desktop" class="zoom">
       <button type="button" aria-label="放大" :disabled="zoom >= 20" @click="map.zoomIn()"><Ico name="plus" /></button>
       <button type="button" aria-label="缩小" :disabled="zoom <= minZoom" @click="map.zoomOut()"><Ico name="minus" /></button>

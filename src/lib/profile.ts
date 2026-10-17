@@ -1,9 +1,9 @@
+import { computed } from 'vue'
 import { account } from './account'
 import type { IconName } from './icons'
 import { labelsForMode, normalizeMapPrefs, removeMapPlace, upsertMapPlace, type MapPlace, type MapPrefs } from './mapPrefs'
-import { prefersMine } from './myMap'
 import { fitToday, mapApi, placeName, placeSelection, showPanel, state } from './store'
-import { initPlan, plan } from './today'
+import { initPlan, isWeeklyClass, plan } from './today'
 import { setUserData, readUserData } from './userData'
 
 /**
@@ -14,17 +14,19 @@ export type HomeRole = 'dorm' | 'lab' | 'office'
 export const HOME_ROLES: { role: HomeRole; zh: string; hint: string; icon: IconName }[] = [
   { role: 'dorm', zh: '寝室', hint: '首页出现「回寝室」，一键导航', icon: 'housing' },
   { role: 'lab', zh: '实验室', hint: '首页出现「去实验室」', icon: 'academic' },
-  { role: 'office', zh: '办公室', hint: '常去的办公或自习地点', icon: 'building' },
 ]
 
 /** 「我的」页内的分区，从别处跳过来时直接滚到对应位置 */
 export const profileUi = { focus: '' as '' | 'places' | 'schedule' }
 
+/** 有自己的东西可看：登录了，或者这台设备上导入过课表。有就默认看我的地图，地图右侧出现「全校」开关 */
+export const hasMyMap = computed(() => !!account.me || plan.items.some(isWeeklyClass))
+const defaultMode = (): MapPrefs['mode'] => hasMyMap.value ? 'mine' : 'all'
+
 export function applyMapPrefs() {
   const prefs = normalizeMapPrefs(readUserData('map', null), [...state.buildings, ...state.pois].map((item) => item.id))
-  // 每次打开（以及登录、退出后）按身份决定默认看哪张图，不沿用上次手动切换的结果：
-  // 登录了或者这台设备上有课表、常用地点 → 我的地图，否则全校地图。
-  prefs.mode = prefersMine(!!account.me, plan.items, prefs.places.length) ? 'mine' : 'all'
+  // 每次打开（以及登录、退出后）都按身份回到默认：有课表或登录了看我的地图，否则看全校；上次切到哪张不记
+  prefs.mode = defaultMode()
   state.mapPrefs = prefs
   state.labelVisibility = labelsForMode(prefs)
   if (state.panel === 'home' && !state.selected && !state.route.open && !state.chip) {
@@ -33,11 +35,9 @@ export function applyMapPrefs() {
   }
 }
 
-/** 地图数据还没加载完时先定下看哪张图，免得打开时先闪一下全校地图 */
+/** 地图数据还没加载完时先定下看哪张图，免得打开时先闪一下另一张 */
 export function presetMapMode() {
-  const raw = readUserData<{ places?: unknown[] } | null>('map', null)
-  const mode = prefersMine(!!account.me, plan.items, Array.isArray(raw?.places) ? raw.places.length : 0) ? 'mine' : 'all'
-  state.mapPrefs = { ...state.mapPrefs, mode }
+  state.mapPrefs = { ...state.mapPrefs, mode: defaultMode() }
 }
 
 /** 登录或退出后换成当前身份的课表和地点 */

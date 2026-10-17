@@ -6,12 +6,11 @@ import BottomSheet from './components/BottomSheet.vue'
 import MapView from './components/MapView.vue'
 import SearchBar from './components/SearchBar.vue'
 import SidePanel from './components/SidePanel.vue'
-import { endFor, loadData, navigateToPlace, openEvent, openRoom, placeSelection, select, setEnd, showPanel, state } from './lib/store'
-import { openShare, parseDeepLink, share } from './lib/deepLink'
-import { startLocating } from './lib/locate'
+import { endFor, hydratePlanPlaces, loadData, navigateToPlace, openEvent, openRoom, placeSelection, select, setEnd, showPanel, state } from './lib/store'
+import { parseDeepLink, share } from './lib/deepLink'
+import { locateOnLoad, startLocating } from './lib/locate'
 import ShareDialog from './components/ShareDialog.vue'
 import TimeMachine from './components/TimeMachine.vue'
-import Ico from './components/Ico.vue'
 import { openTimeMachine, tm } from './lib/timeMachine'
 import { loadDiscovery } from './lib/discoveryData'
 import { loadCrowd } from './lib/crowd'
@@ -20,10 +19,12 @@ import { initPlan } from './lib/today'
 import { computeAnchors, measureSafeArea, setSideWidth, SIDEBAR_W, ui } from './lib/ui'
 import AccountDialog from './components/AccountDialog.vue'
 import NavTabs from './components/NavTabs.vue'
+import MapChips from './components/MapChips.vue'
 import { loadAccount } from './lib/account'
 import { loadUserData } from './lib/userData'
 import { applyMapPrefs, presetMapMode } from './lib/profile'
 import { parcel } from './lib/parcelStation'
+import BuildingExplorer from './components/BuildingExplorer.vue'
 
 // 快递站货架平面图用得少，点开时再加载
 const ParcelPlan = defineAsyncComponent(() => import('./components/ParcelPlan.vue'))
@@ -53,6 +54,7 @@ onMounted(async () => {
   window.addEventListener('resize', computeAnchors)
   clock = window.setInterval(() => { nowTick.value = demoNow() }, simulated && speed.value > 1 ? 1_000 : 30_000)
   await Promise.all([loadData(), loadDiscovery(), loadCrowd()])
+  hydratePlanPlaces()
   applyMapPrefs()
   crowdClock = window.setInterval(() => { void loadCrowd() }, 60_000)
   // 分享链接：?event= 活动详情，?place= 地点详情，?to= 直接导航（起点用我的位置），?timemachine 全屏播放活动
@@ -74,6 +76,7 @@ onMounted(async () => {
       startLocating()
     }
   }
+  locateOnLoad()
 })
 onBeforeUnmount(() => { clearInterval(clock); clearInterval(crowdClock); topObserver.disconnect(); window.removeEventListener('resize', computeAnchors) })
 
@@ -105,13 +108,10 @@ function resizeByKey(e: KeyboardEvent) {
   else return
   e.preventDefault()
 }
-function shareSite() {
-  openShare({ title: '上科大一图通', links: [{ label: '首页', url: `${window.location.origin}/`, hint: '用手机扫码打开校园地图' }] })
-}
 </script>
 
 <template>
-  <div class="app" :class="{ desktop: ui.desktop, 'resizing-side': ui.resizingSide }" :style="{ '--side-w': ui.sideW + 'px' }" :inert="!!community.target || parcel.open">
+  <div class="app" :class="{ desktop: ui.desktop, 'resizing-side': ui.resizingSide }" :style="{ '--side-w': ui.sideW + 'px' }" :inert="!!community.target || (parcel.open && !ui.desktop)">
     <MapView v-if="state.ready" />
     <div v-else class="boot">
       <p v-if="state.error" class="muted">{{ state.error }}</p>
@@ -127,15 +127,19 @@ function shareSite() {
         <a href="/" class="rail-logo" title="上科大一图通" @click.prevent="showPanel('home')"><img src="/favicon.svg" alt="上科大一图通" width="34" height="34" /></a>
         <NavTabs vertical />
         <span class="grow" />
-        <button type="button" class="rail-tool" title="手机扫码使用" @click="shareSite"><Ico name="grid" /><span>扫码</span></button>
       </nav>
       <aside class="sidebar" :class="{ away: tm.open }" :inert="tm.open">
         <div class="side-head">
           <div class="brand"><b>上科大一图通</b><small>校园地图 · 活动 · 食堂</small></div>
           <SearchBar />
         </div>
-        <div class="side-scroll"><SidePanel v-if="state.ready" /></div>
+        <div class="side-scroll">
+          <div v-show="!parcel.open" class="side-content"><SidePanel v-if="state.ready" /></div>
+          <!-- 快递站打开时，平面图的常用位置和结果卡片放到这里，右边只换地图 -->
+          <div v-show="parcel.open" id="parcel-side" />
+        </div>
       </aside>
+      <MapChips v-if="state.ready && !tm.open && !parcel.open && state.panel === 'home' && !state.route.open && !state.route.picking" class="map-chips-float" />
       <div
         v-show="!tm.open"
         class="side-resizer"
@@ -164,6 +168,7 @@ function shareSite() {
     <CommunityDialog v-if="community.target" :key="community.target.type + community.target.id" :target="community.target" />
     <AccountDialog />
     <ParcelPlan v-if="parcel.open" />
+    <BuildingExplorer />
 
     <div v-if="state.route.picking" class="pick-hint" role="status" :style="ui.desktop ? undefined : { top: ui.topH + 4 + 'px' }">
       {{ state.route.network === 'underground' ? '地下标注模式：在窗口中逐点标记道路或上下连接点' : `点地图上的楼、点位或任意位置作为${state.route.picking === 'from' ? '起点' : '终点'}` }}
@@ -184,9 +189,6 @@ function shareSite() {
 .rail { position: absolute; z-index: 1003; top: 0; bottom: 0; left: 0; width: var(--rail-w); display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 14px 0 16px; background: #fbfbfc; border-right: 1px solid var(--line); transition: transform 0.35s cubic-bezier(0.2, 0.8, 0.2, 1); }
 .rail-logo { display: grid; place-items: center; width: 44px; height: 44px; margin-bottom: 8px; border-radius: 12px; }
 .rail .nav-tabs { width: 100%; }
-.rail-tool { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 4px 0; border: 0; background: none; color: var(--ink-3); font-size: 10.5px; cursor: pointer; }
-.rail-tool .svgi { display: grid; place-items: center; width: 40px; height: 30px; border-radius: 999px; font-size: 18px; color: var(--ink-2); }
-@media (hover: hover) { .rail-tool:hover .svgi { background: var(--bg-2); } }
 .sidebar { position: absolute; z-index: 1002; top: 0; bottom: 0; left: var(--rail-w); width: calc(var(--side-w) - var(--rail-w)); background: #fff; box-shadow: 2px 0 18px #0000001c; display: flex; flex-direction: column; transition: transform 0.35s cubic-bezier(0.2, 0.8, 0.2, 1); }
 /* 时光机全屏：侧栏滑出，保留里面的浏览状态 */
 .sidebar.away, .rail.away { transform: translateX(calc(-1 * var(--side-w) - 20px)); }
@@ -200,13 +202,14 @@ function shareSite() {
 .side-head { padding: 16px 14px 10px; border-bottom: 1px solid var(--line); }
 .side-head :deep(.pillbtn) { box-shadow: none; background: var(--bg-2); }
 .side-head :deep(.pillbtn:focus-within) { box-shadow: 0 0 0 2px var(--blue); background: #fff; }
-.side-head :deep(.chip) { box-shadow: none; background: var(--bg-2); }
-.side-head :deep(.chip.on) { background: var(--ink); }
-.side-head :deep(.map-mode) { box-shadow: none; background: var(--bg-2); }
 .brand { display: flex; align-items: baseline; gap: 8px; margin: 0 2px 12px; color: var(--ink); }
 .brand b { font-size: 17px; letter-spacing: -0.01em; }
 .brand small { color: var(--ink-3); font-size: 12px; }
-.side-scroll { flex: 1; overflow-y: auto; padding-top: 4px; }
+/* 桌面分类条浮在地图左上角，宽度不够时横向滑动 */
+.map-chips-float { position: absolute; z-index: 1001; top: 14px; left: calc(var(--side-w) + 14px); right: 160px; flex: none; }
+.side-scroll { flex: 1; display: flex; flex-direction: column; overflow-y: auto; padding-top: 4px; }
+/* 撑满侧栏高度，首页的版权行才能贴底 */
+.side-content { flex: 1 0 auto; display: flex; flex-direction: column; }
 .pick-hint {
   position: absolute; z-index: 1003; top: calc(env(safe-area-inset-top) + 120px); left: 50%; transform: translateX(-50%);
   display: flex; align-items: center; gap: 10px; max-width: calc(100% - 24px); padding: 8px 8px 8px 14px; border-radius: 999px;

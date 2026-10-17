@@ -16,6 +16,7 @@ import { homePlace, isFavorite, openProfile, setHomePlace, toggleFavorite } from
 import { displayText, t } from '../lib/i18n'
 import { isParcelStation, openParcelPlan, parcel } from '../lib/parcelStation'
 import { planSvg } from '../lib/parcelPlanSvg'
+import { EXPLORER_BUILDING_ID, openBuildingExplorer } from '../lib/buildingExplorer'
 
 const b = computed(() => (state.selected?.kind === 'building' ? buildingById(state.selected.id) : undefined))
 const poi = computed(() => (state.selected?.kind === 'poi' ? poiById(state.selected.id) : undefined))
@@ -95,6 +96,7 @@ function favorite() {
 
     <div class="actions">
       <button type="button" class="act primary" @click="routeHere('to')"><Ico name="walk" />{{ t('event.navigate') }}</button>
+      <button v-if="b?.id === EXPLORER_BUILDING_ID" type="button" class="act" @click="openBuildingExplorer"><Ico name="door" />去楼内看看</button>
       <button v-if="parcelStation" type="button" class="act" @click="openShelves"><Ico name="grid" />快递站地图</button>
       <button type="button" class="act" @click="routeHere('from')">从这出发</button>
       <button v-if="canteen" type="button" class="act" @click="openCanteen(canteen.id)"><Ico name="book" />食堂与菜单</button>

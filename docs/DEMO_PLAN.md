@@ -11,7 +11,7 @@
 
 ### 已拍板的产品约束
 
-- 登录使用校内邮箱验证码，仅接受 `@shanghaitech.edu.cn`（演示模式额外接受 `@demo.test`）；验证码由服务器通过环境变量配置的 SMTP 发送，演示模式打印到后端日志。
+- 登录使用邮箱验证码，默认预填 `@shanghaitech.edu.cn`，也接受其他有效邮箱；验证码由服务器通过环境变量配置的 SMTP 发送，演示模式打印到后端日志。
 - 地图、活动、菜单和交流区浏览无需登录；发布笔记、评论、图片和签到需要先完成校园账号登录。
 - 主办方入口位于 `/admin/` 的「活动」页，使用校园账号和 `organizer` / `admin` 角色鉴权；原有管理口令继续用于地图维护。
 - 课表截图识别使用 DeepSeek Flash，服务端从 `SCHEDULE_VISION_API_KEY`（兼容 `DEEPSEEK_API_KEY`）读取密钥，默认模型为 `deepseek-flash`；接口地址可用 `SCHEDULE_VISION_BASE_URL` 覆盖。
@@ -111,7 +111,7 @@
   - `accounts(user_id PK → community_users, email UNIQUE, role TEXT DEFAULT 'student', created_at)`，`role` 取 `student | organizer | admin`
   - `login_codes(email, code_hash, expires_at, tries, created_at)`
 - 接口：
-  - `POST /api/account/code { email }`：只接受 `@shanghaitech.edu.cn` 及其子域（`DEMO_MODE` 下另外接受 `@demo.test`）。生成 6 位验证码，10 分钟有效，只存哈希；同一邮箱 1 分钟一次，同一 IP 每小时 10 次
+  - `POST /api/account/code { email }`：接受有效邮箱地址。生成 6 位验证码，10 分钟有效，只存哈希；同一邮箱 1 分钟一次，同一 IP 每小时 10 次
   - `POST /api/account/verify { email, code }`：最多试 5 次。邮箱已经有账号时，把会话切到那个账号；当前匿名用户没绑定过账号、并且发过内容的，内容合并过去
   - `GET /api/account/me` → `{ id, name, email（打码）, role }`；未登录返回 `null`
   - `POST /api/account/logout`：作废当前会话，换发一个新的匿名会话
