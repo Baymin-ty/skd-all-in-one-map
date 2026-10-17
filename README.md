@@ -99,6 +99,8 @@ npm run dev
 **管理口令**：第一次启动后端会随机生成，写在 `server/.admin-password`（只有本机可读，已 gitignore）；
 也可以启动前设 `ADMIN_PASSWORD=…`。楼宇和点位共同保存在 `server/map.db`。首次启动会从静态数据初始化；后续以数据库为准。现有点位数据库会自动增加楼宇表，保留已有点位修改。
 
+`server/map.db` 和 `server/demo.db` 不提交到 GitHub：前者还包含账号、会话、社区内容、图片和活动同步状态，后者是演示库。后台地下路网需要发布到仓库时，运行 `npm run data:export`，只会把 `underground.map` 同步到 `public/data/underground.json`，不会导出运行时用户数据。楼宇、点位和地图显示设置仍需经过静态数据评审后再发布。线上部署仍需持久化并备份 `server/map.db`。
+
 活动自动更新的官网数据源默认开启；通知邮件数据源需要额外设置 `EVENT_IMAP_URL=imaps://账号:授权码@服务器:993`。可选环境变量包括 `EVENT_IMAP_MAILBOX`、`EVENT_MAIL_SENDERS`、`EVENT_IMAP_SINCE_DAYS`、`EVENT_IMAP_INTERVAL_MIN`、`EVENT_OFFICIAL_INTERVAL_MIN` 和 `EVENT_SYNC_ON_START`，详见 `.env.example`。163 等邮箱使用授权码，不要填写网页登录密码。没有配置 IMAP 时，后台会显示该数据源未配置，不影响官网活动同步。
 
 测试：`npm run build && npm test`。覆盖导航、楼群、地下候选路网、活动解析与数据管道，以及管理 API 的鉴权、点位与楼宇增删改、几何校验、重启持久化、空库不重复初始化、前后台独立入口。API 测试使用临时数据库和随机本地端口，不修改工作数据库。

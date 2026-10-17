@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "data": "node scripts/prepare-data.mjs",
+    "data:export": "node scripts/export-map-snapshot.mjs",
     "dev": "vite",
     "server": "node server/index.mjs",
     "build": "vue-tsc -b && vite build",

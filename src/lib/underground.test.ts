@@ -32,9 +32,9 @@ describe('地下图层数据校验', () => {
     const map = JSON.parse(readFileSync(new URL('../../public/data/underground.json', import.meta.url), 'utf8')) as UndergroundMap
     expect(validateUndergroundMap(map, JSON.parse(readFileSync(new URL('../../public/data/campus.json', import.meta.url), 'utf8')))).toEqual([])
     expect(map.sources).toHaveLength(6)
-    expect(map.roads).toHaveLength(18)
-    expect(map.connectors).toHaveLength(16)
-    expect(map.roads.every((road) => road.status === 'candidate')).toBe(true)
+    expect(map.roads).toHaveLength(78)
+    expect(map.connectors).toHaveLength(26)
+    expect(map.roads.every((road) => road.status === 'confirmed')).toBe(true)
   })
 
   it('接受带来源、道路和候选上下点的地下图', () => {
