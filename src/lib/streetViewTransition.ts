@@ -4,7 +4,7 @@
  * 叠加径向运动模糊 + 轻微色散 + 中段曝光提亮 + 暗角，easeInOutCubic，1700ms。
  * 后退时把同一段动画倒放（from/to 互换、进度 1→0），即“倒退着走回去”。
  */
-export const TRANSITION_MS = 1700
+export const TRANSITION_MS = 800
 export const REDUCED_MOTION_MS = 400
 /** 消失点（uv，y 向上），参考页统一使用 [0.5, 0.56]。 */
 export const VANISH_POINT: [number, number] = [0.5, 0.56]
@@ -42,7 +42,7 @@ vec3 sampleFit(sampler2D tex, vec2 p, float aspect, vec2 off){
 }
 vec3 radialBlur(sampler2D tex, float aspect, vec2 uv, vec2 c, float scale, float amount){
   vec2 dir = uv - c;
-  const int N = 14;
+  const int N = 8;
   vec3 acc = vec3(0.0);
   float wsum = 0.0;
   float ca = 0.0035 * amount * 60.0;
@@ -71,7 +71,7 @@ void main(){
     float e = easeInOutCubic(t);
     float speed = sin(3.1415926 * t);
     float blurAmt = 0.10 * speed;
-    float scaleA = mix(1.0 + uIdle, 6.0, pow(e, 1.55));
+    float scaleA = mix(1.0 + uIdle, 4.0, pow(e, 1.55));
     float scaleB = mix(0.22, 1.0, pow(e, 0.72));
     vec3 colA = radialBlur(uTexA, uAspectA, uv, uCenter, scaleA, blurAmt);
     vec3 colB = radialBlur(uTexB, uAspectB, uv, uCenter, scaleB, blurAmt);

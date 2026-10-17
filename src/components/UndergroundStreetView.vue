@@ -41,7 +41,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 @media (max-width:700px){.street-view{padding:12px}}
 /* 仿 Google 街景：箭头经 3D 透视平铺在地面上 */
 .ground-nav{position:absolute;left:50%;bottom:4%;transform:translateX(-50%);perspective:520px;display:flex;flex-direction:column;align-items:center;pointer-events:none}
-.ground-plane{display:flex;flex-direction:column;align-items:center;gap:6px;transform:rotateX(64deg);transform-style:preserve-3d}
+.ground-plane{display:flex;flex-direction:column;align-items:center;gap:56px;transform:rotateX(64deg);transform-style:preserve-3d}
 .ground-arrow{pointer-events:auto;background:none;padding:0;border-radius:50%;display:grid;place-items:center;transition:transform .18s ease,opacity .18s ease}
 .ground-arrow svg{width:100%;height:100%;overflow:visible}
 .ground-arrow path{fill:rgba(255,255,255,.82);stroke:rgba(0,0,0,.45);stroke-width:3;stroke-linejoin:round;filter:drop-shadow(0 4px 3px rgba(0,0,0,.55))}
@@ -51,6 +51,6 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 .ground-arrow:hover path,.ground-arrow:focus-visible path{fill:#fff;stroke:#2f6fd6}
 .ground-arrow:focus-visible{outline:3px solid #6aa8ff;outline-offset:4px}
 .exit-label{margin-bottom:-10px;padding:4px 10px;border-radius:999px;background:rgba(0,0,0,.6);font-size:13px;white-space:nowrap}
-@media (max-width:700px){.ground-arrow{padding:0 6px}.ground-arrow.forward{width:110px;height:140px}.ground-arrow.back{width:90px;height:130px}}
+@media (max-width:700px){.ground-plane{gap:90px}.ground-arrow{padding:0 6px}.ground-arrow.forward{width:110px;height:140px}.ground-arrow.back{width:90px;height:130px}}
 @media (prefers-reduced-motion:reduce){.ground-arrow{transition:none}.ground-arrow:hover,.ground-arrow:focus-visible{transform:none}}
 </style>
