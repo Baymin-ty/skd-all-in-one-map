@@ -8,6 +8,7 @@ const CODE_COOLDOWN = 60_000
 const IP_WINDOW = 60 * 60_000
 const IP_LIMIT = 10
 const CODE_TRIES = 5
+const SMTP_TIMEOUT = 10_000
 const DATA_LIMIT = 200 * 1024
 const DATA_KEYS = new Set(['today', 'map', 'prefs'])
 
@@ -172,7 +173,8 @@ async function defaultSendCode(email, code, demoMode) {
   if (!smtpUrl || !from) fail(503, '发信服务暂未配置')
   let nodemailer
   try { nodemailer = (await import('nodemailer')).default } catch { fail(503, '发信服务暂未安装') }
-  const transport = nodemailer.createTransport(smtpUrl)
+  // Bound every SMTP phase so a stalled server cannot hold the request for minutes.
+  const transport = nodemailer.createTransport({ url: smtpUrl, connectionTimeout: SMTP_TIMEOUT, greetingTimeout: SMTP_TIMEOUT, socketTimeout: SMTP_TIMEOUT })
   await transport.sendMail({ from, to: email, subject: '上科大一图通登录验证码', text: `你的登录验证码是 ${code}，10 分钟内有效。` })
 }
 
@@ -219,7 +221,11 @@ export function installAccount(app, db, options = {}) {
       if (previous && current - previous.created_at < CODE_COOLDOWN) fail(429, '验证码发送得太频繁，请稍后再试')
       const code = String(generateCode()).padStart(6, '0')
       if (!/^\d{6}$/.test(code)) fail(500, '验证码生成失败')
-      await sendCode(email, code)
+      try { await sendCode(email, code) } catch (error) {
+        if (error instanceof AccountError) throw error
+        console.error('[account] 验证码邮件发送失败', error)
+        fail(503, '验证码邮件发送失败，请稍后再试')
+      }
       db.exec('BEGIN IMMEDIATE')
       try {
         db.prepare('DELETE FROM login_codes WHERE email=?').run(email)

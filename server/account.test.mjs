@@ -7,13 +7,13 @@ import { join } from 'node:path'
 import { installCommunity } from './community.mjs'
 import { installAccount } from './account.mjs'
 
-let db, app, server, base, folder, sent, code, time
+let db, app, server, base, folder, sent, code, time, sendFailure
 const headers = { 'Content-Type': 'application/json', 'X-Community-Request': '1' }
 async function start() {
   db = new DatabaseSync(join(folder, 'test.db'))
   app = express()
   installCommunity(app, db, process.cwd(), { fetchAI: async () => new Response('{}') })
-  installAccount(app, db, { demoMode: false, now: () => time, sendCode: async (email, value) => { sent = { email, value }; code = value } })
+  installAccount(app, db, { demoMode: false, now: () => time, generateCode: () => code, sendCode: async (email, value) => { if (sendFailure) throw sendFailure; sent = { email, value }; code = value } })
   app.use((err, _req, res, _next) => res.status(err.status || 500).json({ error: err.message }))
   await new Promise((resolve) => { server = app.listen(0, '127.0.0.1', resolve) })
   base = `http://127.0.0.1:${server.address().port}`
@@ -37,7 +37,7 @@ async function verify(email, value, cookie) {
   return call('/api/account/verify', 'POST', { email, code: value }, cookie)
 }
 
-beforeEach(async () => { folder = mkdtempSync(join(tmpdir(), 'campus-account-')); time = Date.now(); sent = null; code = '123456'; await start() })
+beforeEach(async () => { folder = mkdtempSync(join(tmpdir(), 'campus-account-')); time = Date.now(); sent = null; sendFailure = null; code = '123456'; await start() })
 afterEach(stop)
 
 describe('account login and user data API', () => {
@@ -48,18 +48,19 @@ describe('account login and user data API', () => {
     expect((await requestCode('student@example.com')).status).toBe(400)
   })
 
-  test('binds an anonymous session and keeps its post after verification', async () => {
+  test('binds an anonymous session to a new account so it can post', async () => {
     const session = await createSession()
     const topic = '/api/community/topics/event/o-1/posts'
     db.prepare('INSERT OR IGNORE INTO community_topics VALUES (?, ?, ?, ?)').run('event:o-1', 'event', '活动', '{}')
-    const post = await call(topic, 'POST', { title: '我的笔记', content: '内容' }, session.cookie)
-    expect(post.status).toBe(201)
+    expect((await call(topic, 'POST', { title: '我的笔记', content: '内容' }, session.cookie)).status).toBe(401)
     expect((await requestCode('student@shanghaitech.edu.cn', session.cookie)).status).toBe(200)
     const verified = await verify('student@shanghaitech.edu.cn', code, session.cookie)
     expect(verified.status).toBe(200)
-    const me = await (await call('/api/account/me', 'GET', undefined, verified.headers.get('set-cookie').split(';')[0])).json()
-    expect(me.email).toBe('s*****t@shanghaitech.edu.cn')
-    expect((await (await call(topic, 'GET', undefined, verified.headers.get('set-cookie').split(';')[0])).json()).total).toBe(1)
+    const cookie = verified.headers.get('set-cookie').split(';')[0]
+    const me = await (await call('/api/account/me', 'GET', undefined, cookie)).json()
+    expect(me).toMatchObject({ id: session.user.id, email: 's*****t@shanghaitech.edu.cn' })
+    expect((await call(topic, 'POST', { title: '我的笔记', content: '内容' }, cookie)).status).toBe(201)
+    expect((await (await call(topic, 'GET', undefined, cookie)).json()).total).toBe(1)
   })
 
   test('rejects the sixth wrong code and does not verify an expired code', async () => {
@@ -71,23 +72,36 @@ describe('account login and user data API', () => {
     expect((await verify('student@shanghaitech.edu.cn', code, session.cookie)).status).toBe(400)
   })
 
-  test('switches an anonymous session to an existing account and preserves its posts', async () => {
+  test('switches an anonymous session to an existing account and preserves its reactions', async () => {
     const first = await createSession()
     await requestCode('first@shanghaitech.edu.cn', first.cookie)
     const firstLogin = await verify('first@shanghaitech.edu.cn', code, first.cookie)
     const firstCookie = firstLogin.headers.get('set-cookie').split(';')[0]
     const firstId = (await (await call('/api/account/me', 'GET', undefined, firstCookie)).json()).id
+    db.prepare('INSERT OR IGNORE INTO community_topics VALUES (?, ?, ?, ?)').run('event:o-2', 'event', '活动', '{}')
+    const post = await call('/api/community/topics/event/o-2/posts', 'POST', { title: '保留', content: '内容' }, firstCookie)
+    expect(post.status).toBe(201)
+    const postId = (await post.json()).id
     await call('/api/account/logout', 'POST', {}, firstCookie)
     const anonymous = await createSession()
-    db.prepare('INSERT OR IGNORE INTO community_topics VALUES (?, ?, ?, ?)').run('event:o-2', 'event', '活动', '{}')
-    const post = await call('/api/community/topics/event/o-2/posts', 'POST', { title: '保留', content: '匿名内容' }, anonymous.cookie)
-    expect(post.status).toBe(201)
+    expect((await call(`/api/community/posts/${postId}/reactions/save`, 'PUT', { active: true }, anonymous.cookie)).status).toBe(200)
     time += 61_000
     await requestCode('first@shanghaitech.edu.cn', anonymous.cookie)
     const switched = await verify('first@shanghaitech.edu.cn', code, anonymous.cookie)
     const switchedCookie = switched.headers.get('set-cookie').split(';')[0]
     expect((await switched.json()).id).toBe(firstId)
-    expect((await (await call('/api/community/topics/event/o-2/posts', 'GET', undefined, switchedCookie)).json()).total).toBe(1)
+    expect(await (await call(`/api/community/posts/${postId}`, 'GET', undefined, switchedCookie)).json()).toMatchObject({ mine: true, saved: true })
+    expect(db.prepare('SELECT count(*) AS n FROM community_users WHERE id=?').get(anonymous.user.id).n).toBe(0)
+  })
+
+  test('reports a mail delivery failure as 503 without consuming the cooldown', async () => {
+    sendFailure = new Error('connect ETIMEDOUT')
+    const failed = await requestCode('student@shanghaitech.edu.cn')
+    expect(failed.status).toBe(503)
+    expect(await failed.json()).toEqual({ error: '验证码邮件发送失败，请稍后再试' })
+    expect(db.prepare('SELECT count(*) AS n FROM login_codes').get().n).toBe(0)
+    sendFailure = null
+    expect((await requestCode('student@shanghaitech.edu.cn')).status).toBe(200)
   })
 
   test('enforces the per-email cooldown before sending another code', async () => {
