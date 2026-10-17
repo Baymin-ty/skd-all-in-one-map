@@ -122,6 +122,10 @@ describe('迁移的数据与入口联动', () => {
       }
     }
   })
+  it('快递货架结果排在所有其他类型之前', () => {
+    expect(search('11')[0]).toMatchObject({ sel: { kind: 'parcel' }, name: '快递站 · 11 号货架' })
+    expect(search('货架')[0].sel.kind).toBe('parcel')
+  })
   it('全局菜品搜索直接打开正确菜品及窗口', () => {
     const hit = search('牛肉面').find((x) => x.sel.kind === 'dish')!
     expect(hit).toBeDefined()

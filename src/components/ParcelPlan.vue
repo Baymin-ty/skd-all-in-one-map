@@ -58,7 +58,6 @@ const rotated = computed(() => turned.value ?? (!side.value && vh.value > vw.val
 let map: L.Map | undefined
 let art: SVGSVGElement | undefined
 let overlay: L.SVGOverlay | undefined
-const pins = L.layerGroup()
 let flyTimer = 0
 
 /** 地图被搜索栏、结果卡片挡住的边距（px） */
@@ -118,9 +117,7 @@ function focusResult(animate = true, gentle = false) {
   if (gentle) {
     const { size, p } = visibleArea()
     const a = map.containerPointToLatLng([p.l, p.t]), b = map.containerPointToLatLng([size.x - p.r, size.y - p.b])
-    // 上方留出小旗的高度
-    const pin = 40 / 2 ** map.getZoom()
-    if (x >= a.lng && x + w <= b.lng && y - pin >= -a.lat && y + h <= -b.lat) return
+    if (x >= a.lng && x + w <= b.lng && y >= -a.lat && y + h <= -b.lat) return
     map.panTo(centerFor([x, y, w, h], map.getZoom()), { animate: animate && !reduceMotion })
     return
   }
@@ -128,7 +125,7 @@ function focusResult(animate = true, gentle = false) {
   show([x + w / 2 - sw / 2, y + h / 2 - sh / 2, sw, sh], animate, FOCUS_MAX_ZOOM)
 }
 
-/** 标红命中的格子，上方插一个小旗；格子太多（例如全部智能柜）就不插旗 */
+/** 标红命中的格子 */
 function highlight() {
   if (!art || !map) return
   const items = result.value.items
@@ -139,17 +136,6 @@ function highlight() {
     g.classList.toggle('on', on)
     // 提到最上层，呼吸光不被旁边的格子盖住；房间不提，免得盖住里面的门
     if (on && !g.classList.contains('pp-room')) art.appendChild(g)
-  }
-  pins.clearLayers()
-  const clusters = new Map<string, ParcelItem[]>()
-  for (const item of items) clusters.set(item.group ?? item.id, [...clusters.get(item.group ?? item.id) ?? [], item])
-  if (clusters.size > 3) return
-  for (const [key, members] of clusters) {
-    const [x, y, w] = union(members)
-    const text = members.length > 1 ? key : short(members[0])
-    L.marker(L.latLng(-y, x + w / 2), {
-      icon: L.divIcon({ className: 'pp-pin', html: `<span>${text}</span>`, iconSize: [0, 0] }), interactive: false, keyboard: false,
-    }).addTo(pins)
   }
 }
 
@@ -234,7 +220,6 @@ onMounted(async () => {
     crs: L.CRS.Simple, zoomSnap: 0, zoomDelta: 0.5, wheelPxPerZoomLevel: 110, minZoom: -4, maxZoom: 2.2,
     attributionControl: false, zoomControl: false, bounceAtZoomLimits: false, maxBoundsViscosity: 0.85,
   })
-  pins.addTo(map)
   if (head.value) headObserver.observe(head.value)
   map.on('click', (e: L.LeafletMouseEvent) => {
     const hit = itemAt([e.latlng.lng, -e.latlng.lat], rotated.value, 16 / 2 ** map!.getZoom())
@@ -403,13 +388,4 @@ button { cursor: pointer; font: inherit; }
   .side .pp-legend { display: none; }
 }
 
-/* 搜到时格子上方的小旗：屏幕上大小固定，缩小看全图也找得到 */
-:global(.pp-pin) { position: relative; }
-:global(.pp-pin span) {
-  position: absolute; left: 0; bottom: 7px; transform: translateX(-50%); padding: 3px 10px; border-radius: 999px; background: var(--brand); color: #fff;
-  font-size: 14px; font-weight: 750; line-height: 1.35; white-space: nowrap; box-shadow: 0 3px 10px #0000003d; animation: pp-drop 0.35s cubic-bezier(0.2, 0.9, 0.3, 1.3);
-}
-:global(.pp-pin span::after) { content: ''; position: absolute; left: 50%; bottom: -5px; margin-left: -6px; border: 6px solid transparent; border-bottom: 0; border-top-color: var(--brand); }
-@keyframes pp-drop { from { opacity: 0; transform: translate(-50%, -10px); } }
-@media (prefers-reduced-motion: reduce) { :global(.pp-pin span) { animation: none; } }
 </style>

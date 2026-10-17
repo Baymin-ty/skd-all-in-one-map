@@ -365,6 +365,7 @@ export function search(q: string): SearchHit[] {
   const station = state.buildings.find(isParcelStation) ?? state.pois.find(isParcelStation)
   const shelf = station && parcelSearchHint(q)
   const parcel: SearchHit[] = shelf ? [{ sel: { kind: 'parcel', id: station.id, query: q.trim() }, name: shelf.name, sub: shelf.sub, icon: 'grid' }] : []
+  // 快递货架权重最高：只要命中货架号或货架关键词，就永远排在其他类型之前。
   return [...parcel, ...rooms, ...places, ...events, ...dining.slice(0, 5), ...distribution, ...dishes]
 }
 

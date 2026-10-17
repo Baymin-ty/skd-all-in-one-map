@@ -209,11 +209,16 @@ export function neighbors(item: ParcelItem, gap = 3) {
   })
 }
 
-/** 主搜索框：输入像取件码，或者写了「货架 / 取件 / 智能柜」时，给一条直达货架图的结果 */
+/**
+ * 主搜索框：输入像取件码、纯货架号，或者写了「货架 / 取件 / 智能柜」时，
+ * 给一条直达货架图的结果。纯数字只在确实命中货架或智能柜时出现，
+ * 避免把普通的教室号 / 活动数字误判成快递。
+ */
 export function parcelSearchHint(query: string): { name: string; sub: string } | null {
   const codeLike = /^\d{1,2}(?:\s*[-—–.]\s*\d{1,2})(?:\s*[-—–.]\s*\d{1,6}){0,2}$/.test(normalize(query))
+  const bareNumber = /^\d{1,2}\s*号?$/.test(normalize(query))
   const worded = /货架|取件|智能柜|快递柜|驿站/.test(query)
-  if (!codeLike && !worded) return null
+  if (!codeLike && !bareNumber && !worded) return null
   const r = findParcel(query)
   if (!r.items.length) return worded ? { name: '快递站货架平面图', sub: r.missing ? `图上没有 ${r.missing}，打开平面图看看` : '输入取件码，高亮对应货架' } : null
   return { name: `快递站 · ${resultTitle(r)}`, sub: r.layer ? `第 ${r.layer} 层 · 在货架平面图上高亮` : '在货架平面图上高亮' }

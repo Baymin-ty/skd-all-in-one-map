@@ -79,11 +79,16 @@ describe('快递站找货架', () => {
     expect(neighbors(parcelItem('s1-2')!).map((i) => i.id).sort()).toEqual(['mail', 's1-1'])
   })
 
-  it('主搜索框只在像取件码或提到货架时给出快递站结果', () => {
+  it('主搜索框优先识别货架号、取件码和货架关键词', () => {
     expect(parcelSearchHint('15-3-2045')).toEqual({ name: '快递站 · 15 号货架', sub: '第 3 层 · 在货架平面图上高亮' })
     expect(parcelSearchHint('3号智能柜')?.name).toBe('快递站 · 3 号智能柜')
     expect(parcelSearchHint('货架30')?.sub).toContain('图上没有 30 号货架')
-    expect(parcelSearchHint('15')).toBeNull()
+    expect(parcelSearchHint('11')).toEqual({ name: '快递站 · 11 号货架', sub: '在货架平面图上高亮' })
+    expect(parcelSearchHint('11号')).toEqual({ name: '快递站 · 11 号货架', sub: '在货架平面图上高亮' })
+    expect(parcelSearchHint('15')).toEqual({ name: '快递站 · 15 号货架', sub: '在货架平面图上高亮' })
+    expect(parcelSearchHint('36')?.name).toBe('快递站 · 36 号货架')
+    // 图上没有这个编号时，纯数字不抢占普通搜索；写了「货架」才提示缺号。
+    expect(parcelSearchHint('30')).toBeNull()
     expect(parcelSearchHint('1A-108')).toBeNull()
     expect(parcelSearchHint('2-302')).toBeNull()
   })
