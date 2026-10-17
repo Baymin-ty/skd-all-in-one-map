@@ -20,6 +20,10 @@ import { computeAnchors, measureSafeArea, setSideWidth, SIDEBAR_W, ui } from './
 import AccountDialog from './components/AccountDialog.vue'
 import NavTabs from './components/NavTabs.vue'
 import RailAccount from './components/RailAccount.vue'
+
+// 侧栏标题下的副标语：每次打开随机一句
+const SLOGANS = ['你的校园生活助手', '走遍校园都不怕']
+const slogan = SLOGANS[Math.floor(Math.random() * SLOGANS.length)]
 import MapChips from './components/MapChips.vue'
 import { loadAccount } from './lib/account'
 import { loadUserData } from './lib/userData'
@@ -133,7 +137,7 @@ function resizeByKey(e: KeyboardEvent) {
       </nav>
       <aside class="sidebar" :class="{ away: tm.open }" :inert="tm.open">
         <div class="side-head">
-          <div class="brand"><b>上科大一图通</b><small>校园地图 · 活动 · 食堂</small></div>
+          <div class="brand"><b>上科大一图通</b><small>{{ slogan }}</small></div>
           <SearchBar />
         </div>
         <div class="side-scroll">

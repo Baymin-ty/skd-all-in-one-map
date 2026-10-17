@@ -44,7 +44,7 @@ export { POI_CATS, PLACE_COLORS } from './catalog'
 export type Chip = 'dining' | 'academic' | 'housing' | 'sports' | 'service' | 'gate' | 'parking'
 export const CHIPS: { id: Chip; zh: string; icon: IconName }[] = [
   { id: 'dining', zh: '食堂', icon: 'dining' },
-  { id: 'academic', zh: '教学科研', icon: 'academic' },
+  { id: 'academic', zh: '学院', icon: 'academic' },
   { id: 'housing', zh: '住宿', icon: 'housing' },
   { id: 'sports', zh: '运动', icon: 'sports' },
   { id: 'service', zh: '服务', icon: 'service' },

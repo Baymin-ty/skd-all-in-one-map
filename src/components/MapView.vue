@@ -327,6 +327,8 @@ function drawLabels() {
     const ev = mapEvents.get(b.id)
     // 选中、批量筛选和活动都是用户正在看的内容，不受分类开关影响，免得筛选和开关互相打架。
     if (!labelShown(state.labelVisibility, category) && !sel && !groupSelected && !matching && !ev) continue
+    // 按类型筛选（chip）时只留这一类和选中项，其他种类（含活动标注）全部隐藏
+    if (state.chip && !sel && !groupSelected && !matching) continue
     const focused = !!g && g.id === focusGroup
     const routeEnd = state.route.open && [state.route.from, state.route.to].some((end) => end?.place?.kind === 'building' && end.place.id === b.id)
     if (b.cat === 'gate' && !majorGate(b.id) && map.getZoom() < 19 && !sel && !matching && !routeEnd && !ev) continue
@@ -346,7 +348,7 @@ function drawLabels() {
       title: ev ? eventTitle(b.name.zh, ev) : b.name.zh, levels: labelLevelsFor(prio, ev), shift: !sel,
     })
   }
-  if (!all) for (const g of collapsedLabelGroups(state.groups, expanded, shownChildren)) if (state.labelVisibility[g.cat]) {
+  if (!all) for (const g of collapsedLabelGroups(state.groups, expanded, shownChildren)) if (state.chip ? g.cat === state.chip : state.labelVisibility[g.cat]) {
     visible.add(`group:${g.id}`)
     drawGroupLabel(g)
   }
@@ -375,6 +377,7 @@ function drawPois() {
     const ev = mapEvents.get(p.id)
     if (!labelShown(state.labelVisibility, category) && !sel && !matching && !ev) continue
     const routeEnd = state.route.open && [state.route.from, state.route.to].some((end) => end?.place?.kind === 'poi' && end.place.id === p.id)
+    if (state.chip && !sel && !matching && !routeEnd) continue
     // 交通分类由用户明确打开后显示；其余设施沿用缩放分层与入口规则。
     const presentation = category === 'transport'
       ? map.getZoom() >= 19 || sel || matching || routeEnd ? 'full' : 'icon'
