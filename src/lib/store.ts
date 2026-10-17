@@ -1,4 +1,6 @@
 import { orderStreetViewPoints } from './streetViewOrder'
+// TEMP DEMO(indoor-503)
+import { demoIndoor503Arrived, demoIndoor503Points, type DemoStreetViewPoint } from './demoIndoor503'
 import { computed, reactive } from 'vue'
 import type { IconName } from './icons'
 import { groupBuildings, type BuildingGroup } from './groups'
@@ -120,7 +122,7 @@ export const state = reactive({
     result: null as RouteResult | null,
     undergroundResult: null as UndergroundRouteResult | null,
     /** Underground street-view navigation session. */
-    streetView: { active: false, open: false, pending: false, index: 0, points: [] as { id: string; pos: LngLat; imageUrl: string }[] },
+    streetView: { active: false, open: false, pending: false, index: 0, points: [] as DemoStreetViewPoint[] /* TEMP DEMO(indoor-503): 原类型 { id; pos; imageUrl }[] */ },
     failed: false,
   },
   toast: '',
@@ -226,6 +228,10 @@ export function openUndergroundStreetView() {
     state.route.streetView.pending = false
     return toast('这段地下路线暂无街景图片')
   }
+  // TEMP DEMO(indoor-503): 固定路线追加室内终段。
+  const r = state.route
+  if (r.from && r.to && fixedUndergroundConnectorsForRoute(r.from, r.to)) points.push(...demoIndoor503Points(points.at(-1)!.pos))
+  demoIndoor503Arrived.value = false
   state.route.streetView = { active: true, open: true, pending: false, index: 0, points }
   // 初始视野直接落在第一个街景点，避免整条路线 fit 后首个点落在小地图边缘甚至视口外。
   mapApi.focusStreetView(points[0].pos)
@@ -241,22 +247,41 @@ export function stopStreetViewNavigation() {
   const s = state.route.streetView
   s.active = false
   s.open = false
+  demoIndoor503Arrived.value = false // TEMP DEMO(indoor-503)
   s.pending = false
   // 不在这里 fit：此时地图仍是街景小窗尺寸；MapView 在容器恢复全尺寸后再适配整条路线。
 }
 export function nextStreetViewPoint() {
   const s = state.route.streetView
   if (!s.open) return
-  if (s.index >= s.points.length - 1) return stopStreetViewNavigation()
+  if (s.index >= s.points.length - 1) {
+    // TEMP DEMO(indoor-503): 室内终段最后一张 → 到达浮层，随后关闭整个导航。
+    if (s.points.at(-1)?.minimap?.kind === 'plan') return finishDemoIndoor503()
+    return stopStreetViewNavigation()
+  }
   s.index++
-  mapApi.focusStreetView(s.points[s.index].pos)
+  if (s.points[s.index].minimap?.kind !== 'plan') mapApi.focusStreetView(s.points[s.index].pos) // TEMP DEMO(indoor-503): 平面图点不动地图
+}
+// TEMP DEMO(indoor-503)
+let demoArrivedTimer = 0
+export function finishDemoIndoor503() {
+  if (demoIndoor503Arrived.value) {
+    clearTimeout(demoArrivedTimer)
+    demoIndoor503Arrived.value = false
+    stopStreetViewNavigation()
+    closeRoute()
+    return
+  }
+  demoIndoor503Arrived.value = true
+  demoArrivedTimer = window.setTimeout(() => { if (demoIndoor503Arrived.value) finishDemoIndoor503() }, 1500)
 }
 export function advanceUndergroundStreetView() { nextStreetViewPoint() }
 export function previousStreetViewPoint() {
   const s = state.route.streetView
   if (!s.open) return
+  if (demoIndoor503Arrived.value) return // TEMP DEMO(indoor-503)
   s.index = Math.max(0, s.index - 1)
-  mapApi.focusStreetView(s.points[s.index].pos)
+  if (s.points[s.index].minimap?.kind !== 'plan') mapApi.focusStreetView(s.points[s.index].pos) // TEMP DEMO(indoor-503)
 }
 export function previousUndergroundStreetView() { previousStreetViewPoint() }
 
@@ -747,11 +772,12 @@ const TEACHING_TO_MATERIAL1_ROUTE: FixedUndergroundConnectors = {
 
 function fixedUndergroundConnectorsForRoute(from: RouteEnd, to: RouteEnd): FixedUndergroundConnectors | undefined {
   const teaching = (end: RouteEnd) => (end.place?.kind === 'building' && end.place.id === 'edb12f3d') || end.name.includes('教学中心')
-  const material1 = (end: RouteEnd) => (end.place?.kind === 'building' && end.place.id === 'ded84a6d') || end.name.includes('物质1') || end.name.includes('物质学院1号楼')
-  return teaching(from) && material1(to) ? TEACHING_TO_MATERIAL1_ROUTE : undefined
+  // 固定规则仅针对“物质学院1号楼 503”这个目的地（房间终点的 name 形如 “物质1 503”）。
+  const material1Room503 = (end: RouteEnd) => end.place?.kind === 'building' && end.place.id === 'ded84a6d' && /(^|\s)503$/.test(end.name.trim())
+  return teaching(from) && material1Room503(to) ? TEACHING_TO_MATERIAL1_ROUTE : undefined
 }
 
-/** 临时调试入口：直接复现教学中心 → 物质1的避雨街景路线。 */
+/** 临时调试入口：直接复现教学中心 → 物质学院1号楼 503 的避雨街景路线。 */
 export function startStreetViewDebugRoute() {
   const matches = (b: (typeof state.buildings)[number], text: string) => b.name.zh === text || b.short?.zh === text || b.aliases?.includes(text)
   const from = state.buildings.find((b) => matches(b, '教学中心'))
@@ -764,8 +790,10 @@ export function startStreetViewDebugRoute() {
   // 调试时把“教学中心”的起点向东偏移一点，落到图 1 所示的入口一侧；不改变正式入口选择逻辑。
   const debugFrom: LngLat = [from.center[0] + 0.00035, from.center[1]]
   setEnd('from', { name: from.name.zh, point: debugFrom })
-  setEnd('to', { name: to.name.zh, point: to.center })
-  toast('已启动：教学中心 → 物质1')
+  const toEnd = endFor({ kind: 'building', id: to.id })
+  if (!toEnd) return toast('调试路线地点尚未加载')
+  setEnd('to', { ...toEnd, name: `${toEnd.name} 503` })
+  toast('已启动：教学中心 → 物质学院1号楼 503')
 }
 
 export function openRoute() {
