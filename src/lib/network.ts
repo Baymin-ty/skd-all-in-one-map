@@ -5,6 +5,8 @@ export function validSurfaceGrid(value: unknown, base: SurfaceGrid): value is Su
   return !!g && typeof g === 'object' && g.x0 === base.x0 && g.y0 === base.y0 && g.dx === base.dx && g.dy === base.dy && Array.isArray(g.rows) && g.rows.length === base.rows.length && g.rows.every((row) => typeof row === 'string' && row.length === base.rows[0].length && [...row].every((c) => c === '0' || c === '1' || c === '2'))
 }
 export function copyGrid(grid: SurfaceGrid): SurfaceGrid { return { ...grid, rows: [...grid.rows] } }
+/** 普通路网草稿转成避雨版本：可走字符（0/2）统一成 0，其余统一成 1。 */
+export function toRainDraft(grid: SurfaceGrid): SurfaceGrid { return { ...grid, rows: grid.rows.map((row) => [...row].map((c) => (c === '0' || c === '2' ? '0' : '1')).join('')) } }
 export function paintGrid(grid: SurfaceGrid, row: number, col: number, walkable: boolean, brushSize = 1, mask?: SurfaceGrid): SurfaceGrid {
   const out = copyGrid(grid)
   const rows = out.rows.length

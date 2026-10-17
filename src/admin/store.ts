@@ -113,19 +113,37 @@ export const entrances = computed(() => admin.places.buildings.reduce((n, b) => 
 export const missingEntrances = computed(() => admin.places.buildings.filter((b) => b.cat !== 'gate' && !b.entrances?.length))
 export const mapControl = { focus: (_a: Asset) => {}, home: () => {} }
 let timer = 0
+/** 请求失败原因：调用方（如 saveRain）需要区分「可重试的超时/断网/503」与「重试也没用的 4xx」 */
+export class ApiError extends Error {
+  readonly kind: 'timeout' | 'network' | 'http'
+  readonly status: number
+  readonly timeoutMs: number
+  constructor(message: string, kind: ApiError['kind'], status = 0, timeoutMs = 0) {
+    super(message)
+    this.name = 'ApiError'; this.kind = kind; this.status = status; this.timeoutMs = timeoutMs
+  }
+}
+const elapsedSeconds = (startedAt: number) => ((Date.now() - startedAt) / 1000).toFixed(1)
 export function notify(message: string, tone: 'ok' | 'error' = 'ok') { admin.notice = message; admin.noticeTone = tone; clearTimeout(timer); timer = window.setTimeout(() => admin.notice = '', tone === 'error' ? 6000 : 3800) }
-export async function request<T>(url: string, init?: RequestInit): Promise<T> {
-  const ctl = new AbortController(); const timeout = setTimeout(() => ctl.abort(), 7000)
+export async function request<T>(url: string, init?: RequestInit, options?: { timeoutMs?: number }): Promise<T> {
+  // 默认 7000ms 不变；只有避雨路网保存这类可能卡在数据库写锁上的请求会传更大的超时。
+  const timeoutMs = options?.timeoutMs ?? 7000
+  const startedAt = Date.now()
+  const ctl = new AbortController(); const timeout = setTimeout(() => ctl.abort(), timeoutMs)
   try {
     const res = await fetch(url, { ...init, signal: ctl.signal, headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${admin.token}`, ...init?.headers } })
     if (res.status === 204) return undefined as T
     const data = await res.json().catch(() => ({}))
     if (!res.ok) {
       if (res.status === 401 && admin.loggedIn) { logout(); admin.loginOpen = true }
-      throw new Error(data.error || `请求失败（${res.status}）`)
+      throw new ApiError(data.error || `请求失败（${res.status}）`, 'http', res.status)
     }
     return data
-  } catch (e) { if (e instanceof DOMException && e.name === 'AbortError') throw new Error('连接超时，请检查服务后重试'); if (e instanceof TypeError) throw new Error('无法连接数据服务，请检查服务后重试'); throw e }
+  } catch (e) {
+    if (e instanceof DOMException && e.name === 'AbortError') throw new ApiError(`连接超时（等待 ${elapsedSeconds(startedAt)} 秒），请检查服务后重试`, 'timeout', 0, timeoutMs)
+    if (e instanceof TypeError) throw new ApiError(`无法连接数据服务（等待 ${elapsedSeconds(startedAt)} 秒），请检查服务后重试`, 'network', 0, timeoutMs)
+    throw e
+  }
   finally { clearTimeout(timeout) }
 }
 export async function load() {

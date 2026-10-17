@@ -277,6 +277,8 @@ if (existsSync(dist)) app.use(express.static(dist))
 app.use((err, _req, res, _next) => {
   if (err.name === 'SurfaceNetworkError' || err instanceof BadRequest || err.type === 'entity.parse.failed') return res.status(400).json({ error: err.message || (err instanceof BadRequest ? err.message : 'JSON 格式不正确') })
   if (err.type === 'entity.too.large') return res.status(413).json({ error: '数据过大，请减少内容后重试' })
+  // 业务侧显式声明的 status（如 static.db 写锁被占用的 503）优先于兜底 500，且必须把原文透给前端。
+  if (Number.isInteger(err.status) && err.status >= 400 && err.status < 600) return res.status(err.status).json({ error: err.message || '服务器出错了' })
   console.error(err)
   res.status(500).json({ error: '服务器出错了' })
 })

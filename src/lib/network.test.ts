@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { copyGrid, paintGrid, validSurfaceGrid } from './network'
+import { copyGrid, paintGrid, toRainDraft, validSurfaceGrid } from './network'
 const grid = { x0: 1, y0: 2, dx: .1, dy: .1, rows: ['010', '111'] }
 describe('避雨地面栅格', () => {
   it('校验坐标、尺寸和字符，并可复制成独立版本', () => {
@@ -23,6 +23,14 @@ describe('避雨地面栅格', () => {
   it('画笔未改变任何格子时返回原对象', () => {
     const filled = { x0: 1, y0: 2, dx: .1, dy: .1, rows: ['000', '000'] }
     expect(paintGrid(filled, 1, 1, true, 3)).toBe(filled)
+  })
+  it('普通路网草稿转避雨版本时可走字符统一为 0，且幂等', () => {
+    const base = { x0: 1, y0: 2, dx: .1, dy: .1, rows: ['021', '120'] }
+    const draft = toRainDraft(base)
+    expect(draft.rows).toEqual(['001', '100'])
+    expect([draft.x0, draft.y0, draft.dx, draft.dy]).toEqual([1, 2, .1, .1])
+    expect(base.rows).toEqual(['021', '120'])
+    expect(toRainDraft(draft).rows).toEqual(draft.rows)
   })
   it('画笔可走时受普通路网 mask 限制，不能创建新路', () => {
     const base = { x0: 1, y0: 2, dx: .1, dy: .1, rows: ['010', '111'] }
