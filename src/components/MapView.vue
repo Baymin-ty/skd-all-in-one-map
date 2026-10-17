@@ -25,7 +25,7 @@ import type { CampusEvent } from '../lib/discoveryTypes'
 import { walkableCells } from '../lib/route'
 import {
   buildingById, endFor, expandedGroups, groupById, groupOf, mapApi, mapHighlights,
-  openEvent, PLACE_COLORS, POI_CATS, select, setEnd, showEventsAt, state, WALKWAY_COLOR, type Selection,
+  addUndergroundSketchPoint, openEvent, PLACE_COLORS, POI_CATS, select, setEnd, showEventsAt, state, toast, WALKWAY_COLOR, type Selection,
 } from '../lib/store'
 import type { Building, LngLat } from '../lib/types'
 import { covered, SIDEBAR_W, TOPBAR_H, ui } from '../lib/ui'
@@ -58,6 +58,8 @@ const hoverLabelLayer = L.layerGroup()
 const routeLayer = L.layerGroup()
 const entranceLayer = L.layerGroup()
 const crowdLayer = L.layerGroup()
+const undergroundLayer = L.layerGroup()
+const undergroundSketchLayer = L.layerGroup()
 /** 选中活动的标注卡片和脉冲圈；内容不变时不重建，免得每次刷新都重播动画 */
 const eventFocusLayer = L.layerGroup()
 let eventFocusKey = ''
@@ -149,10 +151,20 @@ function pick(sel: Selection) {
   // 时光机全屏时侧栏收起，点楼不打开详情
   if (tm.open) return
   const which = state.route.picking
+  if (which && state.route.network === 'underground') {
+    toast('请先在地下手绘窗口点击“开始手绘”')
+    return
+  }
   if (which && sel.kind !== 'group') {
     const end = endFor(sel)
     if (end) setEnd(which, end)
   } else select(sel, sel.kind === 'group')
+}
+
+function sketchPoint(event: L.LeafletMouseEvent) {
+  if (state.route.network !== 'underground' || !state.undergroundSketch.active) return false
+  addUndergroundSketchPoint(fromLatLng(event.latlng))
+  return true
 }
 
 function drawBuildings() {
@@ -160,7 +172,7 @@ function drawBuildings() {
   polys.clear()
   for (const b of state.buildings) {
     const p = L.polygon(outlineLatLngs(b), { ...styleFor(b), smoothFactor: 0, className: 'building-outline', bubblingMouseEvents: false })
-    p.on('click', () => pick({ kind: 'building', id: b.id }))
+    p.on('click', (event) => { if (!sketchPoint(event)) pick({ kind: 'building', id: b.id }) })
     p.on('mouseover', () => hover({ kind: 'building', id: b.id }))
     p.on('mouseout', (event) => leaveHover({ kind: 'building', id: b.id }, event))
     p.on('add', () => p.getElement()?.setAttribute('data-place', `building:${b.id}`))
@@ -227,7 +239,7 @@ function syncMarker(cache: Map<string, L.Marker>, layer: L.LayerGroup, selection
     node = document.createElement('div')
     marker = L.marker(toLatLng(pos), {
       icon: L.divIcon({ className: '', html: node, iconSize: [0, 0] }), keyboard: false, title, pane, bubblingMouseEvents: false,
-    }).on('click', (event) => pickLabel(selection, event))
+  }).on('click', (event) => { if (!sketchPoint(event)) pickLabel(selection, event) })
       .on('mouseover', () => hover(selection))
       .on('mouseout', (event) => leaveHover(selection, event))
       .addTo(layer)
@@ -419,7 +431,9 @@ function drawPoiTargets() {
     const selection: Selection = { kind: 'poi', id: p.id }
     L.circleMarker(toLatLng(p.pos), {
       radius: 10, stroke: false, fillOpacity: 0, pane: 'poi-hit-pane', className: 'poi-hit-target', bubblingMouseEvents: false,
-    }).on('mouseover', () => hover(selection)).on('mouseout', (event) => leaveHover(selection, event)).on('click', () => pick(selection))
+    }).on('mouseover', () => hover(selection)).on('mouseout', (event) => leaveHover(selection, event)).on('click', (event) => {
+      if (!sketchPoint(event)) pick(selection)
+    })
       .on('add', (e) => e.target.getElement()?.setAttribute('data-place', `poi:${p.id}`))
       .addTo(poiTargetLayer)
   }
@@ -582,6 +596,16 @@ function drawEventFocus(event: CampusEvent | undefined, others: number) {
 
 function drawRoute() {
   routeLayer.clearLayers()
+  const underground = state.route.undergroundResult
+  if (underground) {
+    const path = underground.path.map(toLatLng)
+    const casing: L.PolylineOptions = { color: '#fff', weight: 10, opacity: 0.95, lineCap: 'round', lineJoin: 'round', interactive: false }
+    L.polyline(path, casing).addTo(routeLayer)
+    L.polyline(path, { color: '#8156a8', weight: 5.5, dashArray: '10 7', lineCap: 'round', lineJoin: 'round', interactive: false }).addTo(routeLayer)
+    L.circleMarker(path[0], { radius: 7, color: '#8156a8', weight: 3, fillColor: '#fff', fillOpacity: 1, interactive: false }).addTo(routeLayer)
+    L.marker(path.at(-1)!, { icon: L.divIcon({ className: '', html: `<div class="rend underground-rend">${ICONS.pin}</div>`, iconSize: [0, 0] }), interactive: false, zIndexOffset: 1300 }).addTo(routeLayer)
+    return
+  }
   const r = state.route.result
   if (!r) return
   const casing: L.PolylineOptions = { color: '#fff', weight: 10, opacity: 0.95, lineCap: 'round', lineJoin: 'round', interactive: false }
@@ -613,7 +637,7 @@ function drawCrowd() {
   }
 }
 
-/** 路网：红 = 手绘图上的路，蓝 = OpenStreetMap 补的路，青 = 风雨长廊下 */
+/** 统一步行路网：蓝色 = 可走，青色 = 风雨长廊下；来源只在构建数据里保留。 */
 function toggleRoads(on: boolean) {
   if (!on) {
     roadLayer?.remove()
@@ -625,10 +649,33 @@ function toggleRoads(on: boolean) {
     for (const c of walkableCells())
       L.circleMarker(toLatLng(c.pos), {
         renderer, radius: c.covered ? 2.6 : 1.8, stroke: false, fillOpacity: 0.85, interactive: false,
-        fillColor: c.covered ? WALKWAY_COLOR : c.osm ? '#4f8bff' : '#ff4d4f',
+        fillColor: c.covered ? WALKWAY_COLOR : '#4f8bff',
       }).addTo(roadLayer)
   }
   roadLayer.addTo(map)
+}
+
+function drawUnderground() {
+  undergroundLayer.clearLayers()
+  // 图纸候选线暂时撤下，等现场确认后再导入正式地下路网。
+  undergroundLayer.remove()
+}
+
+function drawUndergroundSketch() {
+  undergroundSketchLayer.clearLayers()
+  if (!map) return
+  const paths = [...state.undergroundSketch.paths, ...(state.undergroundSketch.current.length > 1 ? [state.undergroundSketch.current] : [])]
+  for (const path of paths) {
+    L.polyline(path.map(toLatLng), {
+      color: '#a24bc4', weight: 5, opacity: 0.9, lineCap: 'round', lineJoin: 'round', interactive: false,
+      dashArray: state.undergroundSketch.current === path ? '8 6' : undefined,
+    }).addTo(undergroundSketchLayer)
+  }
+  for (const path of paths) {
+    for (const point of path) L.circleMarker(toLatLng(point), { radius: 3.5, color: '#fff', weight: 1.5, fillColor: '#a24bc4', fillOpacity: 1, interactive: false }).addTo(undergroundSketchLayer)
+  }
+  if (state.route.network === 'underground') undergroundSketchLayer.addTo(map)
+  else undergroundSketchLayer.remove()
 }
 
 function drawConstruction(layer: L.LayerGroup) {
@@ -716,7 +763,7 @@ onMounted(() => {
   updateOpacity()
   const extras = L.layerGroup().addTo(map)
   drawConstruction(extras)
-  ;[buildingLayer, poiTargetLayer, labelLayer, hoverLabelLayer, entranceLayer, routeLayer, poiLayer, eventFocusLayer, crowdLayer].forEach((l) => l.addTo(map))
+  ;[buildingLayer, poiTargetLayer, labelLayer, hoverLabelLayer, entranceLayer, routeLayer, poiLayer, eventFocusLayer, crowdLayer, undergroundLayer, undergroundSketchLayer].forEach((l) => l.addTo(map))
   drawBuildings()
   drawPoiTargets()
   fit(state.campus!.boundary, 17, false)
@@ -725,6 +772,8 @@ onMounted(() => {
   drawPois()
   drawEvents()
   drawCrowd()
+  drawUnderground()
+  drawUndergroundSketch()
   mapApi.fit = fit
   mapApi.focus = focus
   mapApi.home = () => fit(state.campus!.boundary, 17)
@@ -748,7 +797,15 @@ onMounted(() => {
   map.on('click', (e: L.LeafletMouseEvent) => {
     if (tm.open) { tm.focus = ''; return }
     const pos = fromLatLng(e.latlng)
-    if (state.route.picking) setEnd(state.route.picking, { name: '地图上的点', point: pos })
+    if (state.route.network === 'underground') {
+      if (state.undergroundSketch.active) {
+        addUndergroundSketchPoint(pos)
+        return
+      }
+      toast('请先在地下手绘窗口点击“开始手绘”')
+      return
+    }
+    if (state.route.picking && state.route.network === 'surface') setEnd(state.route.picking, { name: '地图上的点', point: pos })
     else if (state.selected) select(null)
   })
   if (import.meta.env.DEV) (window as unknown as { __map: L.Map }).__map = map
@@ -774,7 +831,7 @@ watch(() => [state.selected, state.chip, mapHighlights.value, state.room], () =>
   drawEntrances()
 })
 watch(() => state.pois, () => { drawPoiTargets(); drawPois() }, { deep: true })
-watch(() => state.route.result, drawRoute)
+watch(() => [state.route.result, state.route.undergroundResult], drawRoute)
 watch(() => [state.entranceBuilding, state.route.open, state.route.result, state.route.from, state.route.to], () => { drawEntrances(); drawLabels(); drawPois() })
 watch(() => [state.panel, state.eventId, state.radar.range, state.radar.cat, state.radar.place, state.route.open, discovery.events, nowTick.value, tm.open], drawEvents)
 watch(() => [state.panel, state.route.open, nowTick.value, crowdRevision.value, discovery.canteens, tm.open], drawCrowd)
@@ -798,6 +855,8 @@ watch(() => state.labelVisibility, () => {
 }, { deep: true })
 watch(() => state.mapSettings, restyle, { deep: true })
 watch(() => state.showRoads, toggleRoads)
+watch(() => [state.showUnderground, state.underground], drawUnderground, { deep: true })
+watch(() => [state.route.network, state.undergroundSketch.paths, state.undergroundSketch.current], drawUndergroundSketch, { deep: true })
 // 不用 :class 绑定：Vue 会整个覆盖 className，把 Leaflet 加在容器上的 class 冲掉
 watch(() => !!(state.route.picking), (on) => el.value?.classList.toggle('picking', on))
 watch(() => ui.sheet, () => {
@@ -849,6 +908,14 @@ const toolsHidden = computed(() => tm.open || !ui.desktop && ui.sheet > ui.ancho
 .map.picking, .map.picking .leaflet-interactive { cursor: crosshair; }
 .leaflet-marker-icon { background: none; border: 0; }
 .leaflet-control-attribution { font-size: 10px; }
+.ug-marker { position: absolute; transform: translate(-50%, -50%); display: flex; align-items: center; gap: 3px; white-space: nowrap; padding: 3px; border: 2px solid #b47a22; border-radius: 999px; background: #fff9e9; color: #8b5b17; box-shadow: 0 1px 5px #0003; font-size: 14px; }
+.ug-marker.confirmed { border-color: #287b55; background: #edf9f0; color: #287b55; }
+.ug-marker.rejected { border-color: #999; background: #f3f3f3; color: #999; }
+.ug-marker em { padding-right: 4px; color: #6b542c; font-size: 10px; font-style: normal; font-weight: 700; }
+.ug-marker.confirmed em { color: #287b55; }
+.ug-source-popup { display: grid; gap: 6px; min-width: 220px; }
+.ug-source-popup small { color: #6d746e; line-height: 1.45; }
+.ug-source-popup img { display: block; width: 100%; max-height: 180px; object-fit: cover; border-radius: 8px; }
 
 
 .map-tools { position: absolute; z-index: 1100; right: 12px; display: flex; flex-direction: column; gap: 10px; align-items: center; transition: bottom 0.25s, opacity 0.2s; }
@@ -886,6 +953,7 @@ const toolsHidden = computed(() => tm.open || !ui.desktop && ui.sheet > ui.ancho
 .emark span { padding-right: 5px; color: var(--ink); }
 .map.z17 .emark span { display: none; }
 .rend { position: absolute; transform: translate(-50%, -100%); color: #d93025; font-size: 34px; line-height: 0; filter: drop-shadow(0 2px 2px #0000004d); }
+.underground-rend { color: #8156a8; }
 .rend svg { fill: #fff; }
 /* 从教室号搜索进来：选中的楼名后面跟房间号 */
 .blabel .room-code { margin-left: 1px; padding: 1px 6px; border-radius: 6px; background: #ffffff30; font-style: normal; font-variant-numeric: tabular-nums; }

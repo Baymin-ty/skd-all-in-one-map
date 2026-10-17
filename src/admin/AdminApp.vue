@@ -7,20 +7,21 @@ import MapAppearance from './MapAppearance.vue'
 import TimeMachineLauncher from './TimeMachineLauncher.vue'
 import EventWorkspace from './EventWorkspace.vue'
 import AccountDialog from '../components/AccountDialog.vue'
+import { loadPipeline, pipeline } from './eventPipeline'
 import {
   admin, assets, cancelRemove, category, closeLogin, confirmRemove, create, draftDirty, edit,
-  exportData, load, login, logout, missingEntrances, navigate, notify, syncEventsNow,
+  exportData, load, login, logout, missingEntrances, navigate, notify,
   restore, setKind, settingsDirty, type Kind, type View,
 } from './store'
 
 const nav: { view: View; label: string; icon: IconName; description: string }[] = [
   { view: 'overview', label: '地点管理', icon: 'pin', description: '查找地点，在地图上定位，随时修改信息与位置。' },
+  { view: 'events', label: '活动', icon: 'calendar', description: '活动数据自动从官网和通知邮件更新；可疑条目在这里审核后上线。' },
   { view: 'appearance', label: '地图显示', icon: 'eye', description: '调整地图的显示效果，并实时查看预览。' },
   { view: 'data', label: '数据与备份', icon: 'chart', description: '查看地点收录情况，导出校园地图数据。' },
-  { view: 'events', label: '活动', icon: 'calendar', description: '主办方发布活动、设置地点并生成海报。' },
 ]
+const pendingReview = computed(() => pipeline.status?.review.pending ?? 0)
 const current = computed(() => nav.find((n) => n.view === admin.view) || nav[0])
-const eventSyncTime = (value: number | null) => value ? new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', dateStyle: 'short', timeStyle: 'short' }).format(value) : ''
 const password = ref(''), loginError = ref(''), signingIn = ref(false)
 const loginDialog = ref<HTMLDialogElement>(), deleteDialog = ref<HTMLDialogElement>(), createDialog = ref<HTMLDialogElement>()
 const breakdown = computed(() => {
@@ -61,8 +62,9 @@ watch(() => admin.loginOpen, (value) => {
 watch(() => admin.deleteTarget, (value) => { if (value) deleteDialog.value?.showModal(); else deleteDialog.value?.close() }, { flush: 'post' })
 onMounted(async () => {
   window.addEventListener('beforeunload', beforeUnload); window.addEventListener('hashchange', hashChange)
-  await load(); await restore()
+  await load(); await restore(); void loadPipeline(true)
 })
+watch(() => admin.loggedIn, (value) => { if (value) void loadPipeline(true) })
 onBeforeUnmount(() => {
   window.removeEventListener('beforeunload', beforeUnload); window.removeEventListener('hashchange', hashChange)
 })
@@ -73,16 +75,20 @@ onBeforeUnmount(() => {
     <header class="app-header">
       <a href="/admin/" class="admin-brand"><span class="brand-mark"><Ico name="building" /></span><span>上科大一图通<small>地图管理工作台</small></span></a>
       <nav class="admin-nav" aria-label="管理导航">
-        <button v-for="item in nav" :key="item.view" :class="{ active: admin.view === item.view }" :aria-current="admin.view === item.view ? 'page' : undefined" @click="navigate(item.view)"><Ico :name="item.icon" />{{ item.label }}</button>
+        <button v-for="item in nav" :key="item.view" :class="{ active: admin.view === item.view }" :aria-current="admin.view === item.view ? 'page' : undefined" @click="navigate(item.view)"><Ico :name="item.icon" />{{ item.label }}<span v-if="item.view === 'events' && pendingReview" class="nav-badge" :title="`${pendingReview} 条活动待审核`">{{ pendingReview }}</span></button>
       </nav>
-      <span v-if="admin.ready" class="connection-state" :class="{ offline: admin.offline }"><i />{{ admin.offline ? '离线只读' : '已连接' }}</span>
-      <div class="header-links"><TimeMachineLauncher /><a href="/" target="_blank" rel="noopener">查看前台<Ico name="external" /></a><button class="account-button" @click="admin.loggedIn ? logout() : admin.loginOpen = true"><Ico :name="admin.loggedIn ? 'users' : 'lock'" />{{ admin.loggedIn ? '退出登录' : '管理员登录' }}</button></div>
+      <div class="header-links">
+        <TimeMachineLauncher /><a href="/" target="_blank" rel="noopener">查看前台<Ico name="external" /></a>
+        <span v-if="admin.ready && admin.offline" class="connection-state offline"><i />离线只读</span>
+        <div v-if="admin.loggedIn" class="session-chip"><span><i />管理员已登录</span><button class="text-button" @click="logout">退出</button></div>
+        <button v-else class="account-button login-cta" @click="admin.loginOpen = true"><Ico name="lock" />管理员登录</button>
+      </div>
     </header>
     <main class="admin-main" :class="{ 'map-page': admin.view === 'overview' }">
       <header v-if="admin.view !== 'overview'" class="page-toolbar">
         <div><h1>{{ current.label }}</h1><p>{{ current.description }}</p></div>
         <div class="toolbar-actions">
-          <button class="button secondary refresh-button" title="刷新数据" aria-label="刷新数据" :disabled="admin.loading || admin.saving" @click="refresh"><Ico name="refresh" /><span>刷新</span></button>
+          <button v-if="admin.view !== 'events'" class="button secondary refresh-button" title="刷新数据" aria-label="刷新数据" :disabled="admin.loading || admin.saving" @click="refresh"><Ico name="refresh" /><span>刷新</span></button>
         </div>
       </header>
       <div v-if="admin.offline" class="offline-banner" role="status">数据服务未连接，当前为只读。<button class="text-button" @click="refresh">重新连接</button></div>
@@ -95,7 +101,7 @@ onBeforeUnmount(() => {
           <div v-else class="data-grid">
             <section class="data-card"><header class="section-heading"><h2>分类分布</h2><span class="count-tag">{{ assets.length }} 项</span></header><div class="breakdown"><div v-for="c in breakdown" :key="c.zh"><div><span><i :style="{ background: c.color }" />{{ c.zh }}</span><b>{{ c.n }}</b></div><div class="bar-track"><span :style="{ width: `${c.n / Math.max(1, assets.length) * 100}%`, background: c.color }" /></div></div></div></section>
             <div class="data-side">
-              <section class="data-card event-sync-card"><div class="section-title"><h2>官网活动同步</h2><span class="count-tag" :class="{ offline: !admin.loggedIn }">{{ admin.loggedIn ? (admin.eventSync.running ? '同步中' : '已连接') : '需登录' }}</span></div><p v-if="admin.eventSync.lastSyncAt">最近同步：{{ eventSyncTime(admin.eventSync.lastSyncAt) }}</p><p v-else>尚未同步官网活动。</p><p v-if="admin.eventSync.lastError" class="editor-error">{{ admin.eventSync.lastError }}</p><div class="event-sync-stats"><span>新增 {{ admin.eventSync.added }}</span><span>更新 {{ admin.eventSync.updated }}</span><span>取消 {{ admin.eventSync.cancelled }}</span></div><button class="button secondary" :disabled="!admin.loggedIn || admin.eventSync.running" @click="syncEventsNow">{{ admin.eventSync.running ? '同步中…' : '立即同步' }}</button></section>
+              <section class="data-card event-sync-card"><div class="section-title"><h2>活动数据</h2><span class="count-tag">{{ pipeline.status ? `${pipeline.status.catalog.total} 场` : '需登录' }}</span></div><p>官网和通知邮件会定时自动更新活动，运行记录和待审核条目都在「活动」页面。</p><button class="button secondary" @click="navigate('events')"><Ico name="calendar" />{{ pendingReview ? `去审核 ${pendingReview} 条活动` : '查看活动数据管道' }}</button></section>
               <section class="data-card export-card"><h2>导出数据</h2><p>保存全部建筑、轮廓、出入口和点位的 JSON 副本。</p><button class="button secondary" @click="exportData"><Ico name="download" />导出全部数据</button></section>
               <section class="data-card quality-card"><div class="section-title"><h2>待补充出入口</h2><span class="count-tag">{{ missingEntrances.length }}</span></div><p>补充入口，让导航带到楼门口。</p><button v-for="b in missingEntrances.slice(0, 8)" :key="b.id" @click="edit({ kind: 'building', data: b })"><span>{{ b.name.zh }}</span><Ico name="edit" /></button><p v-if="!missingEntrances.length">全部建筑已标注入口。</p></section>
             </div>
@@ -122,7 +128,7 @@ onBeforeUnmount(() => {
         <div class="dialog-actions"><button class="button secondary" :disabled="admin.saving" autofocus @click="cancelRemove">保留地点</button><button class="button destructive" :disabled="admin.saving" @click="confirmRemove">{{ admin.saving ? '删除中…' : '确认删除' }}</button></div>
       </template>
     </dialog>
-    <div v-if="admin.notice" class="admin-toast" role="status"><Ico name="check" />{{ admin.notice }}</div>
+    <div v-if="admin.notice" class="admin-toast" :class="admin.noticeTone" :role="admin.noticeTone === 'error' ? 'alert' : 'status'"><Ico :name="admin.noticeTone === 'error' ? 'close' : 'check'" />{{ admin.notice }}</div>
     <AccountDialog />
   </div>
 </template>

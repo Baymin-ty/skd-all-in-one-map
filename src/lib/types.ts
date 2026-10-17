@@ -61,3 +61,55 @@ export interface Places {
   buildings: Building[]
   pois: Poi[]
 }
+
+export type UndergroundStatus = 'candidate' | 'confirmed' | 'rejected'
+export type UndergroundMode = 'car' | 'walk'
+export type UndergroundConnectorKind = 'ramp' | 'stairs' | 'elevator' | 'unknown'
+
+export interface UndergroundSourceAnchor {
+  /** 图片中归一化的 x/y，范围 0..1 */
+  image: [number, number]
+  pos: LngLat
+}
+
+export interface UndergroundSource {
+  id: string
+  title: string
+  image: string
+  floor: number
+  anchors: UndergroundSourceAnchor[]
+  alignment?: 'approximate' | 'reviewed'
+  note?: string
+}
+
+export interface UndergroundRoad {
+  id: string
+  floor: number
+  mode: UndergroundMode
+  status: UndergroundStatus
+  path: LngLat[]
+  source?: string
+  direction?: 'in' | 'out' | 'both'
+  note?: string
+}
+
+export interface UndergroundConnector {
+  id: string
+  floorFrom: number
+  floorTo: number
+  kind: UndergroundConnectorKind
+  status: UndergroundStatus
+  pos: LngLat
+  source?: string
+  linkedPoiId?: string
+  note?: string
+}
+
+export interface UndergroundMap {
+  version: number
+  floor: number
+  bounds: [LngLat, LngLat]
+  sources: UndergroundSource[]
+  roads: UndergroundRoad[]
+  connectors: UndergroundConnector[]
+}

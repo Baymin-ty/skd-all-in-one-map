@@ -42,7 +42,7 @@ function safeEqual(a, b) {
   return aa.length === bb.length && timingSafeEqual(aa, bb)
 }
 
-export function installCheckin(app, db, root, { demoMode = process.env.DEMO_MODE === 'true' } = {}) {
+export function installCheckin(app, db, root, { demoMode = process.env.DEMO_MODE === 'true', isAdmin = () => false } = {}) {
   db.exec(`CREATE TABLE IF NOT EXISTS event_checkins (
     event_id TEXT NOT NULL,
     user_id TEXT NOT NULL REFERENCES community_users(id),
@@ -62,7 +62,7 @@ export function installCheckin(app, db, root, { demoMode = process.env.DEMO_MODE
   router.get('/:id/checkin-code', (req, res) => {
     const event = eventFrom(db, req.params.id)
     if (!event) return res.status(404).json({ error: '活动不存在' })
-    const me = accountFor(req, db)
+    const me = isAdmin(req) ? { id: 'admin', account: { role: 'admin' } } : accountFor(req, db)
     const owner = db.prepare('SELECT owner FROM custom_events WHERE id=?').get(req.params.id)?.owner
     if (!me?.account || !['admin', 'organizer'].includes(me.account.role) || (me.account.role === 'organizer' && owner !== me.id)) return res.status(403).json({ error: '只有活动主办方可以打开签到码' })
     const slot = slotOf(requestNow(req))

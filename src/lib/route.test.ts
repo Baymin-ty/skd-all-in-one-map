@@ -15,6 +15,12 @@ const target = (zh: string) => {
 beforeAll(() => initRouting(campus, places.buildings.filter((b) => b.walkway).map((b) => b.poly)))
 
 describe('步行导航', () => {
+  it('运行时只暴露一套路网，不区分 OSM 来源', () => {
+    const cells = walkableCells()
+    expect(cells.length).toBeGreaterThan(100)
+    expect(cells.every((cell) => !('osm' in cell))).toBe(true)
+  })
+
   it('两段风雨长廊下面都有可走的格子', () => {
     expect(walkableCells().filter((c) => c.covered).length).toBeGreaterThan(40)
   })

@@ -14,12 +14,11 @@ export const admin = reactive({
   selected: null as Asset | null, draft: null as Asset | null,
   deleteTarget: null as Asset | null, deleteError: '',
   mode: '' as '' | 'position' | 'polygon' | 'vertices' | 'entrance', showBuildings: true, showPois: true, labels: true,
-  loginOpen: false, notice: '', saving: false, savedAt: '',
+  loginOpen: false, notice: '', noticeTone: 'ok' as 'ok' | 'error', saving: false, savedAt: '',
   draftBaseline: '', draftVersion: 0, editError: '', positionSet: true, selectedVertex: null as number | null, outlinePart: 0,
   geometryPast: [] as Geometry[], geometryFuture: [] as Geometry[],
   mapSettings: { ...DEFAULT_MAP_SETTINGS }, mapSettingsDraft: { ...DEFAULT_MAP_SETTINGS },
   settingsReady: false, settingsSaving: false, settingsError: '',
-  eventSync: { lastSyncAt: null as number | null, added: 0, updated: 0, cancelled: 0, total: 0, warnings: [] as string[], lastError: '', running: false },
 })
 interface Geometry {
   positionSet: boolean
@@ -96,7 +95,7 @@ export const entrances = computed(() => admin.places.buildings.reduce((n, b) => 
 export const missingEntrances = computed(() => admin.places.buildings.filter((b) => !b.walkway && b.cat !== 'gate' && !b.entrances?.length))
 export const mapControl = { focus: (_a: Asset) => {}, home: () => {} }
 let timer = 0
-export function notify(message: string) { admin.notice = message; clearTimeout(timer); timer = window.setTimeout(() => admin.notice = '', 3800) }
+export function notify(message: string, tone: 'ok' | 'error' = 'ok') { admin.notice = message; admin.noticeTone = tone; clearTimeout(timer); timer = window.setTimeout(() => admin.notice = '', tone === 'error' ? 6000 : 3800) }
 export async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const ctl = new AbortController(); const timeout = setTimeout(() => ctl.abort(), 7000)
   try {
@@ -152,7 +151,6 @@ export async function login(token: string) {
   await request('/api/auth', { method: 'POST', headers: { Authorization: `Bearer ${token}` } })
   admin.token = token; admin.loggedIn = true; admin.loginOpen = false
   try { sessionStorage.setItem('campus.admin.token', token) } catch { /* 无存储时仅本次有效 */ }
-  await loadEventSyncStatus()
   const action = pendingEditorAction; pendingEditorAction = null; action?.()
 }
 export function logout() {
@@ -168,24 +166,6 @@ export function authorized() {
   return true
 }
 
-export async function loadEventSyncStatus() {
-  if (!admin.loggedIn || admin.offline) return
-  try { admin.eventSync = await request<typeof admin.eventSync>('/api/events/sync/status') }
-  catch (error) { admin.eventSync.lastError = (error as Error).message }
-}
-
-export async function syncEventsNow() {
-  if (!authorized() || admin.eventSync.running) return
-  admin.eventSync.running = true
-  try {
-    admin.eventSync = await request<typeof admin.eventSync>('/api/events/sync', { method: 'POST', body: '{}' })
-    notify(`活动已同步：新增 ${admin.eventSync.added}，更新 ${admin.eventSync.updated}，取消 ${admin.eventSync.cancelled}`)
-  } catch (error) {
-    admin.eventSync.running = false
-    admin.eventSync.lastError = (error as Error).message
-    notify(`活动同步失败：${admin.eventSync.lastError}`)
-  }
-}
 export function discard() {
   if (admin.saving) return false
   if (draftDirty.value && !confirm('放弃当前未保存的修改？')) return false

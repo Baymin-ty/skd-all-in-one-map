@@ -5,6 +5,7 @@ import { mkdtempSync, rmSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { installCommunity } from './community.mjs'
+import { installAccount } from './account.mjs'
 
 const root = resolve('.')
 const events = JSON.parse(readFileSync(join(root, 'public/data/events.json'), 'utf8'))
@@ -18,13 +19,19 @@ async function start() {
   db = new DatabaseSync(join(folder, 'test.db'))
   const app = express()
   installCommunity(app, db, root, { fetchAI })
+  installAccount(app, db, { demoMode: false, sendCode: async () => {} })
   app.use((err, _req, res, _next) => res.status(err.type === 'entity.too.large' ? 413 : 500).json({ error: 'request failed' }))
   await new Promise(resolve => { server = app.listen(0, '127.0.0.1', resolve) })
   base = `http://127.0.0.1:${server.address().port}/api/community`
 }
 async function stop() { await new Promise(resolve => server.close(resolve)); db.close() }
 const call = (path, method = 'GET', body, token = cookie, headers = {}) => fetch(base + path, { method, headers: { 'Content-Type': 'application/json', 'X-Community-Request': '1', ...(token ? { Cookie: token } : {}), ...headers }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) })
-async function newUser() { const res = await call('/session', 'POST', undefined, ''); return { cookie: res.headers.get('set-cookie').split(';')[0], user: await res.json() } }
+// 发帖、评论、传图都要求已登录且起好昵称的校园账号：直接给新会话绑定一条 accounts 记录
+async function newUser() {
+  const res = await call('/session', 'POST', undefined, ''), user = await res.json()
+  db.prepare('INSERT INTO accounts (user_id,email,role,created_at,nickname_at) VALUES (?,?,?,?,?)').run(user.id, `${user.id}@shanghaitech.edu.cn`, 'student', Date.now(), Date.now())
+  return { cookie: res.headers.get('set-cookie').split(';')[0], user }
+}
 async function createPost(path = eventPath, body = {}, token = cookie) { const res = await call(path + '/posts', 'POST', { title: '来分享活动见闻', content: '这是测试笔记内容，欢迎一起讨论。', tag: '分享', ...body }, token); expect(res.status).toBe(201); return res.json() }
 async function upload(token = cookie) {
   const data = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII='

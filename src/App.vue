@@ -107,7 +107,7 @@ function shareSite() {
     <AccountDialog />
 
     <div v-if="state.route.picking" class="pick-hint" role="status">
-      {{ `点地图上的楼、点位或任意位置作为${state.route.picking === 'from' ? '起点' : '终点'}` }}
+      {{ state.route.network === 'underground' ? '地下手绘模式：在窗口中点击“开始手绘”，再在地图上逐点标记道路' : `点地图上的楼、点位或任意位置作为${state.route.picking === 'from' ? '起点' : '终点'}` }}
       <button type="button" @click="cancelPick">取消</button>
     </div>
     <div v-if="demoClockEnabled && !hideDemoClock" class="demo-clock" role="status">演示时间 {{ clockText(nowTick) }}</div>

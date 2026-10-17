@@ -11,8 +11,9 @@ function accountFor(req, db) {
   const account = db.prepare('SELECT email, role FROM accounts WHERE user_id=?').get(session.id)
   return account ? { ...session, account } : null
 }
-function requireRole(req, res, db, roles = ['organizer', 'admin']) {
-  const me = accountFor(req, db)
+function requireRole(req, res, db, isAdmin, roles = ['organizer', 'admin']) {
+  // 后台管理口令与主办方校园账号都能管理活动；口令登录视为管理员。
+  const me = isAdmin(req) ? { id: 'admin', account: { role: 'admin' } } : accountFor(req, db)
   if (!me || !roles.includes(me.account.role)) { res.status(401).json({ error: '请使用主办方校园账号登录' }); return null }
   return me
 }
@@ -58,7 +59,7 @@ function updateEventCatalog(db, event, remove = false) {
   writeCatalog(db, events)
 }
 
-export function installOrganizer(app, db) {
+export function installOrganizer(app, db, { isAdmin = () => false } = {}) {
   db.exec(`CREATE TABLE IF NOT EXISTS custom_events (
     id TEXT PRIMARY KEY,
     owner TEXT NOT NULL,
@@ -77,13 +78,13 @@ export function installOrganizer(app, db) {
   const router = express.Router()
   router.use(express.json({ limit: '128kb' }))
   router.get('/', (req, res) => {
-    const me = requireRole(req, res, db)
+    const me = requireRole(req, res, db, isAdmin)
     if (!me) return
     const rows = db.prepare(me.account.role === 'admin' ? 'SELECT data FROM custom_events ORDER BY created_at DESC' : 'SELECT data FROM custom_events WHERE owner=? ORDER BY created_at DESC').all(...(me.account.role === 'admin' ? [] : [me.id]))
     res.json(rows.map((row) => JSON.parse(row.data)))
   })
   router.post('/', (req, res) => {
-    const me = requireRole(req, res, db)
+    const me = requireRole(req, res, db, isAdmin)
     if (!me) return
     let event
     try { event = normalize(`org-${randomUUID().slice(0, 12)}`, req.body || {}, {}, me.id) } catch (error) { return res.status(400).json({ error: error.message }) }
@@ -93,7 +94,7 @@ export function installOrganizer(app, db) {
     res.status(201).json(event)
   })
   router.put('/:id', (req, res) => {
-    const me = requireRole(req, res, db)
+    const me = requireRole(req, res, db, isAdmin)
     if (!me) return
     const row = db.prepare('SELECT data,owner FROM custom_events WHERE id=?').get(req.params.id)
     if (!row) return res.status(404).json({ error: '自定义活动不存在' })
@@ -105,7 +106,7 @@ export function installOrganizer(app, db) {
     res.json(event)
   })
   router.delete('/:id', (req, res) => {
-    const me = requireRole(req, res, db)
+    const me = requireRole(req, res, db, isAdmin)
     if (!me) return
     const row = db.prepare('SELECT data,owner FROM custom_events WHERE id=?').get(req.params.id)
     if (!row) return res.status(404).json({ error: '自定义活动不存在' })

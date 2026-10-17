@@ -194,14 +194,14 @@ export function convertOfficialEvent(raw, resolver) {
 
 export function convertOfficialResponse(body, resolver) {
   if (!body || !Array.isArray(body.data)) throw new Error('官网活动响应格式不正确')
-  const events = [], warnings = [], sourceIds = []
+  const events = [], warnings = [], sourceIds = [], failed = []
   for (const [index, raw] of body.data.entries()) {
     if (raw?.id != null) sourceIds.push(String(raw.id))
     try { events.push(convertOfficialEvent(raw, resolver)) }
-    catch (error) { warnings.push(`第 ${index + 1} 条活动未导入：${error.message}`) }
+    catch (error) { warnings.push(`第 ${index + 1} 条活动未导入：${error.message}`); failed.push({ raw, error: error.message }) }
   }
   if (!events.length && body.data.length) throw new Error(warnings[0] || '官网活动没有可导入记录')
-  return { events, warnings, sourceIds }
+  return { events, warnings, sourceIds, failed }
 }
 
 export function officialRequestBody(page, start, end) {
@@ -321,8 +321,10 @@ export function installEventSync(app, db, root, { authorize = (_req, _res, next)
     CREATE TABLE IF NOT EXISTS event_overrides (event_id TEXT PRIMARY KEY, place TEXT, room TEXT, start TEXT, end TEXT, hidden INTEGER, note TEXT, updated_by TEXT, updated_at INTEGER)`)
   let status = readStatus(db)
   let running = false
+  let failed = [], fetched = 0
   const sync = async () => {
-    if (running) return { ...status, running: true }
+    if (running) return { ...status, running: true, failed: [] }
+    failed = []; fetched = 0
     running = true; status = { ...status, running: true, lastError: '' }
     try {
       const windowStart = dateOffset(shanghaiDateKey(), -60)
@@ -332,6 +334,7 @@ export function installEventSync(app, db, root, { authorize = (_req, _res, next)
       if (!converted.events.length) throw new Error('官网活动转换结果为空，保留旧数据')
       const result = syncOfficialEvents(db, converted.events, { windowStart, windowEnd, seenSourceIds: converted.sourceIds, allowCancellations: converted.warnings.length === 0 })
       status = { ...status, ...result, warnings: converted.warnings, lastSyncAt: Date.now(), lastError: '', running: false }
+      failed = converted.failed; fetched = raw.length
       writeStatus(db, status)
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error)
@@ -340,11 +343,12 @@ export function installEventSync(app, db, root, { authorize = (_req, _res, next)
       writeStatus(db, status)
       console.error(`活动自动同步失败：${message}（${detail}）`)
     } finally { running = false }
-    return { ...status }
+    // failed 只交给调用方（待审核队列），不写进持久化状态。
+    return { ...status, failed, fetched }
   }
   app.get('/api/events/sync/status', authorize, (_req, res) => res.json({ ...status, running }))
   app.post('/api/events/sync', authorize, async (_req, res) => {
-    const result = await sync()
+    const { failed: _failed, fetched: _fetched, ...result } = await sync()
     if (result.lastError) return res.status(502).json(result)
     res.json(result)
   })

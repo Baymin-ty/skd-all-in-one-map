@@ -5,6 +5,7 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { applyOutlinePatches } from './outline-patches.mjs'
 import { curatePlaces } from './curate-places.mjs'
+import { normalizeRoadGrid } from './road-network.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const pack = resolve(process.argv[2] ?? join(root, '../上科大智慧地图_赛前准备包/datapack'))
@@ -22,6 +23,7 @@ campus.construction = (campus.construction ?? []).map((area) => {
   if (JSON.stringify(area) !== JSON.stringify(patch.before)) throw new Error(`在建区域已有修改：${area.name.zh}`)
   return patch.after
 })
+const unifiedCampus = normalizeRoadGrid(campus)
 
 function pointInPoly([x, y], poly) {
   let inside = false
@@ -53,7 +55,7 @@ const out = join(root, 'public/data')
 mkdirSync(out, { recursive: true })
 const curated = curatePlaces({ categories: places.categories, buildings, pois })
 writeFileSync(join(out, 'places.json'), JSON.stringify(curated))
-writeFileSync(join(out, 'campus.json'), JSON.stringify(campus))
+writeFileSync(join(out, 'campus.json'), JSON.stringify(unifiedCampus))
 cpSync(join(pack, 'tiles'), join(root, 'public/tiles'), { recursive: true })
 
 console.log(`楼宇 ${curated.buildings.length}（风雨长廊 ${curated.buildings.filter((b) => b.walkway).length}），校内点位 ${curated.pois.length}，瓦片已复制`)

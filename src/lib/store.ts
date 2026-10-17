@@ -2,6 +2,7 @@ import { computed, reactive } from 'vue'
 import type { IconName } from './icons'
 import { groupBuildings, type BuildingGroup } from './groups'
 import { findRoute, initRouting, type RouteResult, type Target } from './route'
+import type { UndergroundRouteResult } from './undergroundRoute'
 import { openSheet, ui } from './ui'
 import type { Building, Campus, I18nText, LngLat, PlaceCat, Places, Poi } from './types'
 
@@ -19,6 +20,7 @@ import { defaultMapLabels } from './mapLabelCategories'
 import { buildRoomIndex, findRooms, floorFromCode, type RoomHit } from './roomSearch'
 import { floorLabel } from './rooms'
 import { itemsOn, plan } from './today'
+import { validateUndergroundMap, type UndergroundMap } from './underground'
 export { POI_CATS, PLACE_COLORS, WALKWAY_COLOR } from './catalog'
 /** 顶部分类条：每个分类对应哪些楼、哪些点位 */
 export type Chip = 'dining' | 'academic' | 'housing' | 'sports' | 'service' | 'gate' | 'walkway' | 'parking'
@@ -48,6 +50,8 @@ export interface RouteEnd extends Target {
   place?: Selection
   /** 实时定位的「我的位置」，走动时跟着更新 */
   live?: boolean
+  /** 地下候选导航的 B1 连接点；地面端点不设置此字段。 */
+  undergroundConnectorId?: string
 }
 
 export const state = reactive({
@@ -58,6 +62,8 @@ export const state = reactive({
   groups: [] as BuildingGroup[],
   pois: [] as Poi[],
   campus: null as Campus | null,
+  underground: null as UndergroundMap | null,
+  undergroundErrors: [] as string[],
   mapSettings: { ...DEFAULT_MAP_SETTINGS },
   /** 后端连不上时只读，用打包进来的静态点位 */
   readonly: false,
@@ -78,14 +84,23 @@ export const state = reactive({
   /** 地图标签按类型独立显示；悬停或选中的地点临时显示标签。 */
   labelVisibility: defaultMapLabels(),
   showRoads: false,
+  showUnderground: false,
+  /** 地下图纸候选线已从地图撤下，先保留一个可手绘的空白草稿区。 */
+  undergroundSketch: {
+    active: false,
+    paths: [] as LngLat[][],
+    current: [] as LngLat[],
+  },
   route: {
     open: false,
+    network: 'surface' as 'surface' | 'underground',
     from: null as RouteEnd | null,
     to: null as RouteEnd | null,
     rain: false,
     /** 下一次点地图 = 设起点/终点 */
     picking: null as 'from' | 'to' | null,
     result: null as RouteResult | null,
+    undergroundResult: null as UndergroundRouteResult | null,
     failed: false,
   },
   toast: '',
@@ -156,8 +171,11 @@ export async function loadData() {
       getJson<Campus>('/data/campus.json'),
       getJson<unknown>('/api/map-settings', undefined, 4000).catch(() => DEFAULT_MAP_SETTINGS),
     ])
+    const underground = await getJson<UndergroundMap>('/data/underground.json').catch(() => null)
     state.categories = places.categories
     state.campus = campus
+    state.underground = underground
+    state.undergroundErrors = underground ? validateUndergroundMap(underground, campus) : []
     state.mapSettings = validMapSettings(mapSettings) ? mapSettings : { ...DEFAULT_MAP_SETTINGS }
     try {
       const live = await getJson<Places>('/api/places', undefined, 4000)
@@ -461,9 +479,86 @@ export function endFor(sel: Selection): RouteEnd | null {
   return null
 }
 
+const undergroundKindLabels = { ramp: '车库坡道', stairs: '楼梯候选', elevator: '电梯候选', unknown: '上下连接候选' } as const
+
+/** 把地下图层上的上下连接点变成 B1 导航端点。候选点只用于候选路线，不改变地面导航。 */
+export function undergroundEndFor(id: string): RouteEnd | null {
+  const connector = state.underground?.connectors.find((item) => item.id === id && item.status !== 'rejected')
+  if (!connector) return null
+  const status = connector.status === 'confirmed' ? '已确认' : '待核验'
+  return {
+    name: `${undergroundKindLabels[connector.kind]} · B1 · ${status}`,
+    point: connector.pos,
+    undergroundConnectorId: connector.id,
+  }
+}
+
+/** 切换地面/地下候选路网时清空旧端点，避免把不同楼层误拼成一条路线。 */
+export function setRouteNetwork(network: 'surface' | 'underground') {
+  const r = state.route
+  r.network = network
+  r.from = null
+  r.to = null
+  r.result = null
+  r.undergroundResult = null
+  r.failed = false
+  r.picking = network === 'surface' ? 'from' : null
+  r.open = true
+  if (network === 'underground') {
+    state.showUnderground = false
+    state.undergroundSketch.active = false
+    state.undergroundSketch.current = []
+  }
+  openSheet(1)
+}
+
+export function startUndergroundSketch() {
+  state.route.network = 'underground'
+  state.route.picking = null
+  state.route.from = null
+  state.route.to = null
+  state.route.result = null
+  state.route.undergroundResult = null
+  state.route.failed = false
+  state.undergroundSketch.active = true
+  state.undergroundSketch.current = []
+  state.showUnderground = false
+  openSheet(1)
+}
+
+export function addUndergroundSketchPoint(point: LngLat) {
+  if (!state.undergroundSketch.active) return
+  const last = state.undergroundSketch.current.at(-1)
+  if (last && Math.abs(last[0] - point[0]) < 0.000001 && Math.abs(last[1] - point[1]) < 0.000001) return
+  state.undergroundSketch.current.push(point)
+}
+
+export function finishUndergroundSketch() {
+  const current = state.undergroundSketch.current
+  if (current.length >= 2) state.undergroundSketch.paths.push([...current])
+  state.undergroundSketch.current = []
+  state.undergroundSketch.active = false
+}
+
+export function undoUndergroundSketch() {
+  if (state.undergroundSketch.active && state.undergroundSketch.current.length) {
+    state.undergroundSketch.current = state.undergroundSketch.current.slice(0, -1)
+    return
+  }
+  state.undergroundSketch.paths.pop()
+}
+
+export function clearUndergroundSketch() {
+  state.undergroundSketch.active = false
+  state.undergroundSketch.current = []
+  state.undergroundSketch.paths = []
+}
+
 export function openRoute(rain = false) {
   state.panel = 'home'
   state.route.open = true
+  state.route.network = 'surface'
+  state.route.undergroundResult = null
   if (rain) state.route.rain = true
   if (!state.route.from) state.route.picking = 'from'
   else if (!state.route.to) state.route.picking = 'to'
@@ -486,6 +581,13 @@ export function setEnd(which: 'from' | 'to', end: RouteEnd | null) {
 /** fit = false：边走边重算时不动地图 */
 export function computeRoute(fit = true) {
   const r = state.route
+  if (r.network === 'underground') {
+    r.result = null
+    r.undergroundResult = null
+    r.failed = false
+    return
+  }
+  r.undergroundResult = null
   if (!r.from || !r.to) {
     r.result = null
     r.failed = false
@@ -497,5 +599,5 @@ export function computeRoute(fit = true) {
 }
 
 export function closeRoute() {
-  Object.assign(state.route, { open: false, from: null, to: null, picking: null, result: null, failed: false })
+  Object.assign(state.route, { open: false, network: 'surface', from: null, to: null, picking: null, result: null, undergroundResult: null, failed: false })
 }

@@ -2,8 +2,8 @@ import type { Campus, LngLat } from './types'
 import { meters, polyDist } from './measure'
 
 /**
- * 步行导航：在数据包的步行栅格（250×172 格，每格约 5.4 m）上跑 8 邻接 Dijkstra。
- * 格子：'0' 手绘图上的路，'2' 从 OpenStreetMap 补的路（略贵，让路线优先走画出来的路），'1' 不能走。
+ * 步行导航：在数据包的统一步行栅格（250×172 格，每格约 5.4 m）上跑 8 邻接 Dijkstra。
+ * 构建阶段的手绘路和 OSM 补充路已经合并；运行时只关心「可走 / 不可走」，不再按来源改变路线。
  * 雨天模式下露天的格子更贵，路线会愿意绕一点去走风雨长廊。
  */
 export interface Target {
@@ -22,7 +22,6 @@ export interface RouteResult {
   minutes: number
 }
 
-const OSM_PENALTY = 1.25
 /** 露天路段在雨天的代价倍数：沿着长廊走时，愿意为每 2 m 长廊多绕 1 m 露天路 */
 export const RAIN_PENALTY = 2
 /** 2.5D 手绘图里长廊顶棚画得比地面偏北，轮廓外这么多米内的格子也算在长廊下 */
@@ -34,7 +33,7 @@ let H = 0
 let g: Campus['grid']
 let mx = 5.4
 let my = 5.4
-let walk = new Uint8Array(0) // 0 不能走，1 手绘路，2 OSM 补的路
+let walk = new Uint8Array(0) // 0 不能走，1 统一路网
 let covered = new Uint8Array(0)
 
 const cellOf = (p: LngLat) => [Math.floor((g.y0 - p[1]) / g.dy), Math.floor((p[0] - g.x0) / g.dx)] as const
@@ -52,15 +51,15 @@ export function initRouting(campus: Campus, walkways: LngLat[][]) {
   for (let i = 0; i < H; i++)
     for (let j = 0; j < W; j++) {
       const ch = g.rows[i][j]
-      walk[i * W + j] = ch === '0' ? 1 : ch === '2' ? 2 : 0
+      walk[i * W + j] = ch === '0' || ch === '2' ? 1 : 0
     }
   for (const poly of walkways) for (const c of cellsNear(poly, COVER_RADIUS)) covered[c] = 1
 }
 
 /** 所有可走格子，画路网用 */
 export function walkableCells() {
-  const out: { pos: LngLat; osm: boolean; covered: boolean }[] = []
-  for (let c = 0; c < walk.length; c++) if (walk[c]) out.push({ pos: posOf(c), osm: walk[c] === 2, covered: !!covered[c] })
+  const out: { pos: LngLat; covered: boolean }[] = []
+  for (let c = 0; c < walk.length; c++) if (walk[c]) out.push({ pos: posOf(c), covered: !!covered[c] })
   return out
 }
 
@@ -187,7 +186,6 @@ export function findRoute(from: Target, to: Target, rain = false): RouteResult |
       const v = i * W + j
       if (!inGrid(i, j) || !walk[v]) continue
       let step = Math.hypot(di * my, dj * mx)
-      if (walk[v] === 2) step *= OSM_PENALTY
       if (rain && !covered[v]) step *= RAIN_PENALTY
       if (dist[u] + step < dist[v]) {
         dist[v] = dist[u] + step

@@ -8,7 +8,8 @@ import { fileURLToPath } from 'node:url'
 import { loadEnvFile } from 'node:process'
 import { installCommunity } from './community.mjs'
 import { installCrowd } from './crowd.mjs'
-import { installEventSync } from './eventSync.mjs'
+import { installEventSync, loadVenueResolver } from './eventSync.mjs'
+import { installEventPipeline } from './eventPipeline.mjs'
 import { installAccount } from './account.mjs'
 import { installCheckin } from './checkin.mjs'
 import { installOrganizer } from './organizer.mjs'
@@ -100,10 +101,13 @@ function clean(table, p) {
     walkway: !!p.walkway, isNew: !!p.isNew,
   }
 }
-function requireAdmin(req, res, next) {
+function isAdmin(req) {
   const token = (req.get('authorization') ?? '').replace(/^Bearer /, '')
   const tokenDigest = token && digest(token)
-  if (tokenDigest && tokenDigest.length === passwordHash.length && timingSafeEqual(tokenDigest, passwordHash)) return next()
+  return !!tokenDigest && tokenDigest.length === passwordHash.length && timingSafeEqual(tokenDigest, passwordHash)
+}
+function requireAdmin(req, res, next) {
+  if (isAdmin(req)) return next()
   res.status(401).json({ error: '管理口令不正确或登录已失效' })
 }
 const app = express()
@@ -113,9 +117,12 @@ installCommunity(app, db, root)
 installAccount(app, db)
 app.use(express.json({ limit: '256kb' }))
 installCrowd(app, db)
-installEventSync(app, db, root, { authorize: requireAdmin })
-installCheckin(app, db, root)
-installOrganizer(app, db)
+// 官网同步由活动数据管道统一定时运行；/api/events/sync 仍保留给旧的手动入口。
+const venueResolver = loadVenueResolver(root)
+const eventSync = installEventSync(app, db, root, { authorize: requireAdmin, resolver: venueResolver, schedule: false, initialSync: false })
+const eventPipeline = installEventPipeline(app, db, { authorize: requireAdmin, eventSync, resolver: venueResolver })
+installCheckin(app, db, root, { isAdmin })
+installOrganizer(app, db, { isAdmin })
 installSchedule(app)
 app.use('/api', (_req, res, next) => { res.set('Cache-Control', 'no-store'); next() })
 app.get('/api/places', (_req, res) => res.json({ categories: seed.categories, buildings: list('buildings'), pois: list('pois') }))
@@ -168,4 +175,4 @@ app.use((err, _req, res, _next) => {
 })
 const server = app.listen(Number(process.env.PORT ?? 8790))
 server.once('listening', () => console.log(`http://localhost:${server.address()?.port ?? process.env.PORT ?? 8790}`))
-for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => server.close(() => { db.close(); process.exit(0) }))
+for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => { eventPipeline.close(); server.close(() => { db.close(); process.exit(0) }) })
