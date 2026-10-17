@@ -30,10 +30,10 @@ const room = computed(() => b.value && state.room?.building === b.value.id ? sta
 const canteen = computed(() => discovery.canteens.find((c) => c.place === place.value?.id))
 const events = computed(() => place.value ? eventsIn('upcoming', 'all', place.value.id) : [])
 /** 快递站：卡片里放货架平面图的缩略图和取件码输入框 */
-const parcelStation = computed(() => !!poi.value && isParcelStation(poi.value))
+const parcelStation = computed(() => !!place.value && isParcelStation(place.value))
 const parcelThumb = planSvg(false)
 function openShelves() {
-  if (poi.value) openParcelPlan(parcel.query, poi.value.id)
+  if (place.value) openParcelPlan(parcel.query, place.value.id)
 }
 const category = computed(() => CHIPS.find((c) => c.id === (b.value?.walkway ? 'walkway' : b.value?.cat || (poi.value?.cat === 'life' ? 'service' : poi.value?.cat))))
 

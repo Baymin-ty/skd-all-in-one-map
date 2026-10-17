@@ -2,7 +2,7 @@
   "version": 2,
   "reviewedOn": "2026-10-16",
   "reference": "public/tiles/19；BD-09；沿可见屋顶与立面，排除地面阴影；体育场分开勾选跑道和看台",
-  "reviewedCount": 65,
+  "reviewedCount": 66,
   "unchanged": [
     {
       "id": "6cccd83b",
@@ -159,6 +159,11 @@
     }
   ],
   "added": [
+    {
+      "id": "80ebccc2",
+      "name": "菜鸟驿站",
+      "reason": "按用户红框升级为矩形区域：z19 tile105759_28391.png 左上起像素 (45,58)、(100,58)、(100,243)、(45,243)"
+    },
     {
       "id": "c678e4ab",
       "name": "医务室",

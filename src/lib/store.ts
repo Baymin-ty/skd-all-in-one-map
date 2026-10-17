@@ -362,7 +362,7 @@ export function search(q: string): SearchHit[] {
     const diningPlaces = new Set(dining.filter((hit) => hit.sel.kind === 'canteen').map((hit) => discovery.canteens.find((c) => c.id === targetId(hit.sel))?.place))
     places = places.filter((hit) => !diningPlaces.has(targetId(hit.sel)))
   }
-  const station = state.pois.find(isParcelStation)
+  const station = state.buildings.find(isParcelStation) ?? state.pois.find(isParcelStation)
   const shelf = station && parcelSearchHint(q)
   const parcel: SearchHit[] = shelf ? [{ sel: { kind: 'parcel', id: station.id, query: q.trim() }, name: shelf.name, sub: shelf.sub, icon: 'grid' }] : []
   return [...parcel, ...rooms, ...places, ...events, ...dining.slice(0, 5), ...distribution, ...dishes]
@@ -519,10 +519,12 @@ export function chooseSearch(hit: SearchHit) {
       state.room = sel.room
     }
   } else if (sel.kind === 'parcel') {
-    const end = state.route.picking && endFor({ kind: 'poi', id: sel.id })
+    const station = placeSelection(sel.id)
+    if (!station) return
+    const end = state.route.picking && endFor(station)
     if (end) setEnd(state.route.picking!, end)
     else {
-      select({ kind: 'poi', id: sel.id })
+      select(station)
       openParcelPlan(sel.query, sel.id)
     }
   } else {

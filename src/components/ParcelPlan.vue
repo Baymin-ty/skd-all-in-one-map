@@ -6,7 +6,7 @@ import {
   closeParcelPlan, findParcel, neighbors, parcel, parcelItem, queryFor, resultTitle, shelfNumbers, type ParcelItem, type Rect,
 } from '../lib/parcelStation'
 import { itemAt, itemBox, planSize, planSvg } from '../lib/parcelPlanSvg'
-import { poiById } from '../lib/store'
+import { buildingById, poiById } from '../lib/store'
 import type { IconName } from '../lib/icons'
 import Ico from './Ico.vue'
 
@@ -43,7 +43,7 @@ const choices = computed(() => {
   const queries = items.map(queryFor)
   return items.length > 1 && items.length <= 8 && new Set(queries).size === items.length ? items : []
 })
-const poi = computed(() => poiById(parcel.poi))
+const station = computed(() => buildingById(parcel.poi) ?? poiById(parcel.poi))
 const short = (item: ParcelItem) => item.kind === 'shelf' ? item.label : item.kind === 'locker' ? item.label.replace('智能', '') : item.name
 watch(q, (v) => { parcel.query = v })
 
@@ -268,7 +268,7 @@ onBeforeUnmount(() => {
         <header ref="head" class="pp-head">
           <div class="pp-title">
             <button type="button" class="pp-back" aria-label="返回地图" @click="close"><Ico name="back" /></button>
-            <div class="grow"><b>快递站地图</b><small class="ellipsis">{{ poi?.name.zh ?? '快递服务中心' }}<template v-if="poi?.hours"> · {{ poi.hours.zh }}</template></small></div>
+            <div class="grow"><b>快递站地图</b><small class="ellipsis">{{ station?.name.zh ?? '快递服务中心' }}<template v-if="station?.hours"> · {{ station.hours.zh }}</template></small></div>
           </div>
           <form class="pp-search" role="search" @submit.prevent="submit">
             <Ico name="search" />

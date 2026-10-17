@@ -7,7 +7,8 @@ import { outlineLatLngs } from './outlineGeometry'
 import { discovery } from './discoveryData'
 import { groupBuildings } from './groups'
 vi.mock('./ui', () => ({ openSheet: vi.fn(), ui: { desktop: true, sheet: 388, anchors: [136, 388, 740] } }))
-import { endFor, placeSelection, search, state } from './store'
+import { chooseSearch, endFor, placeSelection, search, state } from './store'
+import { parcel } from './parcelStation'
 
 const places: Places = JSON.parse(readFileSync(new URL('../../public/data/places.json', import.meta.url), 'utf8'))
 beforeEach(() => {
@@ -28,6 +29,29 @@ describe('统一地点身份', () => {
     expect(placeSelection('03953523')).toEqual({ kind: 'building', id: '5149e81e' })
     expect(placeSelection('a7e65a53')).toEqual({ kind: 'building', id: 'dbe3b0a1' })
     expect(endFor(placeSelection('c678e4ab')!)?.poly).toHaveLength(12)
+  })
+  it('菜鸟驿站升级后旧链接、地点搜索、取件码与导航都使用矩形区域', () => {
+    const id = '80ebccc2'
+    const station = places.buildings.find((b) => b.id === id)!
+    expect(placeSelection(id)).toEqual({ kind: 'building', id })
+    expect(endFor(placeSelection(id)!)?.poly).toEqual(station.poly)
+    for (const q of ['菜鸟驿站', '快递服务中心']) {
+      expect(search(q).filter((h) => ['building', 'poi'].includes(h.sel.kind)).map((h) => h.sel))
+        .toEqual([{ kind: 'building', id }])
+    }
+    const hit = search('15-3-2045').find((h) => h.sel.kind === 'parcel')!
+    expect(hit.sel).toEqual({ kind: 'parcel', id, query: '15-3-2045' })
+    chooseSearch(hit)
+    expect(state.selected).toEqual({ kind: 'building', id })
+    expect(parcel).toMatchObject({ open: true, poi: id, query: '15-3-2045' })
+    parcel.open = false
+    state.route.from = null
+    state.route.to = null
+    state.route.picking = 'to'
+    chooseSearch(hit)
+    expect(state.route.to?.place).toEqual({ kind: 'building', id })
+    expect(state.route.to?.poly).toEqual(station.poly)
+    expect(parcel.open).toBe(false)
   })
   it('食堂与咖啡店搜索不再同时出现重复地点；导航仍保留可选地点', () => {
     for (const q of ['KFC', '丝路', '科大咖啡馆', '耐斯咖啡', '耐思咖啡']) {
