@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { CHIPS, chooseSearch, search, setChip, state, type SearchHit } from '../lib/store'
+import { CHIPS, chooseSearch, search, setChip, setMapView, setMyScope, state, type SearchHit } from '../lib/store'
+import { dateKey, nowTick, weekdayText } from '../lib/campusTime'
+import { myMap } from '../lib/myMap'
+import { plan } from '../lib/today'
 import Ico from './Ico.vue'
 import { t } from '../lib/i18n'
 
@@ -11,6 +14,15 @@ const hits = computed(() => search(q.value))
 // 分类只在「探索」里筛地图；食堂和活动有自己的功能页，不在这里重复。
 const chips = CHIPS.filter((c) => c.id !== 'dining')
 const showChips = computed(() => state.panel === 'home' && !state.route.open && !state.route.picking)
+// 我的地图 / 全校地图：我的地图下面跟日期，全校地图下面跟分类
+const mine = computed(() => state.mapPrefs.mode === 'mine')
+const today = computed(() => dateKey(nowTick.value))
+const scopes = computed(() => [
+  { id: 'today' as const, zh: `今天 ${weekdayText(today.value)}` },
+  { id: 'tomorrow' as const, zh: '明天' },
+  { id: 'week' as const, zh: '本周' },
+])
+const scope = computed(() => myMap.scope === 'week' ? 'week' : plan.date === today.value ? 'today' : plan.date === dateKey(nowTick.value + 86_400_000) ? 'tomorrow' : '')
 
 function choose(h: SearchHit) {
   chooseSearch(h)
@@ -39,11 +51,20 @@ function choose(h: SearchHit) {
         <li v-if="!hits.length" class="none">没有找到「{{ q.trim() }}」</li>
       </ul>
     </div>
-    <nav v-if="showChips" class="chips" aria-label="按类型在地图上筛选">
-      <button v-for="c in chips" :key="c.id" type="button" class="chip" :class="{ on: state.chip === c.id }" :aria-pressed="state.chip === c.id" @click="setChip(c.id)">
-        <Ico :name="c.icon" />{{ c.zh }}
-      </button>
-    </nav>
+    <div v-if="showChips" class="chip-row">
+      <div class="map-mode" role="group" aria-label="地图">
+        <button type="button" :class="{ on: mine }" :aria-pressed="mine" title="只看我的课、活动和常用地点" @click="setMapView('mine')"><Ico name="users" />我的</button>
+        <button type="button" :class="{ on: !mine }" :aria-pressed="!mine" title="全校所有地点" @click="setMapView('all')"><Ico name="building" />全校</button>
+      </div>
+      <nav v-if="mine" class="chips" aria-label="我的地图看哪天">
+        <button v-for="s in scopes" :key="s.id" type="button" class="chip" :class="{ on: scope === s.id }" :aria-pressed="scope === s.id" @click="setMyScope(s.id)">{{ s.zh }}</button>
+      </nav>
+      <nav v-else class="chips" aria-label="按类型在地图上筛选">
+        <button v-for="c in chips" :key="c.id" type="button" class="chip" :class="{ on: state.chip === c.id }" :aria-pressed="state.chip === c.id" @click="setChip(c.id)">
+          <Ico :name="c.icon" />{{ c.zh }}
+        </button>
+      </nav>
+    </div>
   </div>
 </template>
 
@@ -66,9 +87,15 @@ function choose(h: SearchHit) {
 .hits .none { color: var(--ink-3); cursor: default; }
 .hic { flex: none; width: 26px; height: 26px; border-radius: 8px; display: grid; place-items: center; background: var(--bg-2); color: var(--ink-2); font-size: 15px; }
 .hic.group { background: var(--ink); color: #fff; }
-.chips { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; padding: 2px 2px 4px; margin: 0 -2px; }
+.chip-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.map-mode { flex: none; display: flex; padding: 3px; border-radius: 999px; background: #fff; box-shadow: 0 1px 5px #00000029; }
+.map-mode button { display: inline-flex; align-items: center; gap: 4px; height: 28px; padding: 0 11px 0 9px; border: 0; border-radius: 999px; background: none; color: var(--ink-2); font-size: 13px; font-weight: 650; cursor: pointer; transition: background-color .15s, color .15s; }
+.map-mode button .svgi { font-size: 14px; }
+.map-mode button.on { background: var(--brand); color: #fff; }
+.chips { flex: 1; min-width: 0; display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; padding: 2px 2px 4px; margin: 0 -2px; }
 .chips::-webkit-scrollbar { display: none; }
-.chip { flex: none; display: inline-flex; align-items: center; gap: 5px; height: 32px; padding: 0 12px; border: 0; border-radius: 999px; background: #fff; box-shadow: 0 1px 5px #00000029; font-size: 13px; font-weight: 600; cursor: pointer; }
+.chip { flex: none; display: inline-flex; align-items: center; gap: 5px; height: 34px; padding: 0 12px; border: 0; border-radius: 999px; background: #fff; box-shadow: 0 1px 5px #00000029; font-size: 13px; font-weight: 600; cursor: pointer; }
+.chip-row .chips { margin-top: 2px; }
 .chip svg { font-size: 15px; color: var(--ink-2); }
 .chip.on { background: var(--ink); color: #fff; }
 .chip.on svg { color: #fff; }

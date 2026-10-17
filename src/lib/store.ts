@@ -9,7 +9,7 @@ import type { Building, Campus, I18nText, LngLat, PlaceCat, Places, Poi } from '
 import { poiIcon, poiKindLabel } from './catalog'
 import { DEFAULT_MAP_SETTINGS, validMapSettings } from './mapSettings'
 import { discovery, eventsIn, type EventRange } from './discoveryData'
-import { dateKey, dayLabel, evStart, outletState } from './campusTime'
+import { dateKey, dayLabel, evStart, nowTick, outletState } from './campusTime'
 import { defaultMenuDay, menuMeals } from './canteenMenu'
 import { menuItems, priceShort, searchMenu, type MenuSort } from './menu'
 import type { Meal } from './discoveryTypes'
@@ -19,8 +19,10 @@ import { mergedPlace } from './placeCuration'
 import { defaultMapLabels } from './mapLabelCategories'
 import { buildRoomIndex, findRooms, floorFromCode, type RoomHit } from './roomSearch'
 import { floorLabel } from './rooms'
-import { itemsOn, plan } from './today'
+import { plan } from './today'
+import { agendaEntries, agendaStops, myMap, weekDates } from './myMap'
 import { validateUndergroundMap, type UndergroundMap } from './underground'
+import { mergeUndergroundSketch } from './undergroundSketch'
 export { POI_CATS, PLACE_COLORS, WALKWAY_COLOR } from './catalog'
 /** 顶部分类条：每个分类对应哪些楼、哪些点位 */
 export type Chip = 'dining' | 'academic' | 'housing' | 'sports' | 'service' | 'gate' | 'walkway' | 'parking'
@@ -106,12 +108,48 @@ export const state = reactive({
   toast: '',
 })
 
+const UNDERGROUND_SKETCH_KEY = 'campus.underground.sketch'
+export function persistUndergroundSketchNow() {
+  try {
+    if (typeof localStorage !== 'undefined') localStorage.setItem(UNDERGROUND_SKETCH_KEY, JSON.stringify({ paths: state.undergroundSketch.paths, current: state.undergroundSketch.current }))
+  } catch { /* 浏览器禁用存储时仍可继续手绘 */ }
+}
+const persistUndergroundSketch = persistUndergroundSketchNow
+function restoreUndergroundSketch() {
+  try {
+    if (typeof localStorage === 'undefined') return
+    const value = JSON.parse(localStorage.getItem(UNDERGROUND_SKETCH_KEY) || 'null')
+    if (!value || !Array.isArray(value.paths) || !Array.isArray(value.current)) return
+    state.undergroundSketch.paths = value.paths.filter((path: unknown) => Array.isArray(path) && path.length >= 2) as LngLat[][]
+    state.undergroundSketch.current = value.current as LngLat[]
+  } catch { /* 损坏或禁用的本地草稿忽略 */ }
+}
+// 模块加载时立即恢复：每次改动都已即时写入，所以不在 beforeunload 里再存一遍——
+// 那会让数据还没加载完、或另一个没画过的标签页关闭时，用空草稿覆盖掉已经画好的线
+restoreUndergroundSketch()
+
+/** 地图正在显示「我的」内容：我的地图模式下的首页，或者「我的今天」 */
+export const mineFocus = computed(() => !state.route.open && !state.chip
+  && (state.panel === 'today' || state.panel === 'home' && state.mapPrefs.mode === 'mine'))
+
+/** 我的地图：当前范围内（某一天或本周）的安排，按地点合成一站一站 */
+export const myAgenda = computed(() => {
+  const week = state.panel === 'home' && myMap.scope === 'week'
+  const dates = week ? weekDates(dateKey(nowTick.value)) : [plan.date]
+  const entries = agendaEntries(plan.items, dates, nowTick.value)
+  const canon = (id: string) => { const sel = placeSelection(id); return sel && sel.kind !== 'group' ? sel.id : null }
+  return { week, dates, entries, stops: agendaStops(entries, canon) }
+})
+
 /** 分类与活动/菜单面板共用地图的批量选中集合，不依赖侧栏是否显示分类列表。 */
 export const mapHighlights = computed(() => {
   const ids = new Set<string>()
-  if (state.mapPrefs.mode === 'mine') {
-    for (const place of state.mapPrefs.places) ids.add(place.place)
-    for (const item of itemsOn(plan.items, plan.date)) if (item.place) ids.add(item.place)
+  if (mineFocus.value) {
+    for (const stop of myAgenda.value.stops) ids.add(stop.place)
+    if (state.panel === 'home') for (const place of state.mapPrefs.places) {
+      const sel = placeSelection(place.place)
+      if (sel) ids.add(sel.id)
+    }
   }
   const dining = !state.route.open && (state.panel === 'dining' || state.panel === 'canteen')
   const chip = state.chip || (dining ? 'dining' : null)
@@ -136,6 +174,7 @@ export const mapHighlights = computed(() => {
 export const mapApi = {
   fit: (_pts: LngLat[], _maxZoom?: number) => {},
   focus: (_p: LngLat, _zoom?: number, _dy?: number) => {},
+  /** 回到全校（手机上铺满屏幕的那一级） */
   home: () => {},
   /** 其他图层画了参与避让的标记后，请地图重新排一次标签 */
   relayout: () => {},
@@ -171,10 +210,10 @@ export async function loadData() {
       getJson<Campus>('/data/campus.json'),
       getJson<unknown>('/api/map-settings', undefined, 4000).catch(() => DEFAULT_MAP_SETTINGS),
     ])
-    const underground = await getJson<UndergroundMap>('/data/underground.json').catch(() => null)
+    const underground = await getJson<UndergroundMap>('/api/underground', undefined, 4000).catch(() => getJson<UndergroundMap>('/data/underground.json').catch(() => null))
     state.categories = places.categories
     state.campus = campus
-    state.underground = underground
+    state.underground = underground ? mergeUndergroundSketch(underground, state.undergroundSketch.paths) : underground
     state.undergroundErrors = underground ? validateUndergroundMap(underground, campus) : []
     state.mapSettings = validMapSettings(mapSettings) ? mapSettings : { ...DEFAULT_MAP_SETTINGS }
     try {
@@ -350,16 +389,37 @@ export function showPanel(panel: 'home' | 'events' | 'dining' | 'today' | 'me') 
   openSheet(1)
   if (panel === 'events') fitEvents()
   if (panel === 'dining') mapApi.fit(discovery.canteens.map((c) => c.pos), 18)
-  if (panel === 'today') fitToday()
+  if (panel === 'today' || panel === 'home' && state.mapPrefs.mode === 'mine') fitToday()
 }
-/** 「我的今天」：缩放到当天各站 */
+/** 「我的今天」和我的地图：缩放到当前范围内的各站（我的地图再加上寝室等常用地点）；什么都没有就看全校 */
 export function fitToday() {
-  const points = itemsOn(plan.items, plan.date).flatMap((i) => {
-    const sel = placeSelection(i.place)
+  const ids = new Set(myAgenda.value.stops.map((s) => s.place))
+  if (state.panel === 'home') for (const p of state.mapPrefs.places) ids.add(p.place)
+  const points = [...ids].flatMap((id) => {
+    const sel = placeSelection(id)
     const end = sel && endFor(sel)
     return end ? [end.point] : []
   })
   if (points.length) mapApi.fit(points, 18)
+  else if (state.panel === 'home') mapApi.home()
+}
+/** 切换我的地图 / 全校地图；标签显示按模式各自记住 */
+export function setMapView(mode: MapPrefs['mode']) {
+  if (state.mapPrefs.mode !== mode) {
+    state.mapPrefs = { ...state.mapPrefs, mode }
+    state.labelVisibility = { ...state.mapPrefs.labels[mode] }
+  }
+  // 回到首页时 showPanel 会顺便缩放到我的各站
+  if (state.panel !== 'home' || state.selected || state.route.open || state.chip) showPanel('home')
+  else if (mode === 'mine') fitToday()
+  if (mode === 'all') mapApi.home()
+}
+/** 我的地图看哪天：今天、明天或本周 */
+export function setMyScope(scope: 'today' | 'tomorrow' | 'week') {
+  myMap.scope = scope === 'week' ? 'week' : 'day'
+  if (scope !== 'week') plan.date = dateKey(nowTick.value + (scope === 'tomorrow' ? 86_400_000 : 0))
+  if (state.mapPrefs.mode !== 'mine' || state.panel !== 'home') setMapView('mine')
+  else fitToday()
 }
 export function fitEvents() {
   const points = eventsIn(state.radar.range, state.radar.cat, state.radar.place).flatMap((e) => {
@@ -523,6 +583,7 @@ export function startUndergroundSketch() {
   state.undergroundSketch.active = true
   state.undergroundSketch.current = []
   state.showUnderground = false
+  persistUndergroundSketch()
   openSheet(1)
 }
 
@@ -531,6 +592,7 @@ export function addUndergroundSketchPoint(point: LngLat) {
   const last = state.undergroundSketch.current.at(-1)
   if (last && Math.abs(last[0] - point[0]) < 0.000001 && Math.abs(last[1] - point[1]) < 0.000001) return
   state.undergroundSketch.current.push(point)
+  persistUndergroundSketch()
 }
 
 export function finishUndergroundSketch() {
@@ -538,20 +600,24 @@ export function finishUndergroundSketch() {
   if (current.length >= 2) state.undergroundSketch.paths.push([...current])
   state.undergroundSketch.current = []
   state.undergroundSketch.active = false
+  persistUndergroundSketch()
 }
 
 export function undoUndergroundSketch() {
   if (state.undergroundSketch.active && state.undergroundSketch.current.length) {
     state.undergroundSketch.current = state.undergroundSketch.current.slice(0, -1)
+    persistUndergroundSketch()
     return
   }
   state.undergroundSketch.paths.pop()
+  persistUndergroundSketch()
 }
 
 export function clearUndergroundSketch() {
   state.undergroundSketch.active = false
   state.undergroundSketch.current = []
   state.undergroundSketch.paths = []
+  persistUndergroundSketch()
 }
 
 export function openRoute(rain = false) {

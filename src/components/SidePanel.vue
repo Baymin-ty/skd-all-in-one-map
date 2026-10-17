@@ -7,6 +7,7 @@ import EventsPanel from './EventsPanel.vue'
 import CategoryList from './CategoryList.vue'
 import GroupCard from './GroupCard.vue'
 import HomePanel from './HomePanel.vue'
+import MyMapPanel from './MyMapPanel.vue'
 import PlaceCard from './PlaceCard.vue'
 import ProfilePanel from './ProfilePanel.vue'
 import RouteCard from './RouteCard.vue'
@@ -30,6 +31,7 @@ watch(() => [state.panel, state.eventId, state.menu.dish, state.canteen.dish, st
   <PlaceCard v-else-if="state.selected" />
   <template v-else-if="!state.route.open">
     <CategoryList v-if="state.chip" />
+    <MyMapPanel v-else-if="state.mapPrefs.mode === 'mine'" />
     <HomePanel v-else />
   </template>
 </template>

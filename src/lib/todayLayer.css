@@ -1,12 +1,56 @@
-/* 「我的今天」的站点编号：在地点名称上方，留出避让间距，名称不用给它让位 */
-.today-stop {
-  position: absolute; left: 0; bottom: 24px; transform: translateX(-50%);
-  min-width: 28px; height: 28px; padding: 0 8px; border: 2.5px solid #fff; border-radius: 999px;
-  display: grid; place-items: center; background: #d07a80; color: #fff;
-  font-size: 13px; font-weight: 800; font-variant-numeric: tabular-nums; white-space: nowrap;
-  box-shadow: 0 4px 12px #6b1d2340;
+/* 我的地图 / 我的今天：插在地点上方的小旗，地点名称标签留在原处不用让位。
+   --k 是类型色：课程蓝、活动橙红、吃饭琥珀、待办灰蓝。正在进行和下一项填满颜色。 */
+.agenda-pin {
+  position: absolute; left: 0; bottom: 21px; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 5px; height: 28px; padding: 0 9px 0 3px;
+  border: 1.5px solid var(--k); border-radius: 999px; background: #fff; color: #2b2f36;
+  box-shadow: 0 4px 14px #1b2a5226, 0 1px 3px #0000001a;
+  font-size: 12px; font-weight: 650; line-height: 1; white-space: nowrap; cursor: pointer;
 }
-.today-stop::after { content: ''; position: absolute; left: 50%; top: 100%; margin-left: -5px; border: 5px solid transparent; border-top-color: #fff; }
-.today-stop.now, .today-stop.upnext { background: #a8242b; }
-.today-stop.now { box-shadow: 0 0 0 4px #a8242b40, 0 4px 12px #6b1d2340; }
-.today-stop.past { background: #a9a9b1; }
+.agenda-pin:active { transform: translateX(-50%) scale(.96); }
+.agenda-pin.clash { pointer-events: none; }
+.agenda-pin::after {
+  content: ''; position: absolute; left: 50%; top: 100%; width: 9px; height: 9px; margin: -5px 0 0 -5px;
+  border-right: 1.5px solid var(--k); border-bottom: 1.5px solid var(--k); border-bottom-right-radius: 2px;
+  background: inherit; transform: rotate(45deg);
+}
+.agenda-pin i { flex: none; display: grid; place-items: center; width: 21px; height: 21px; border-radius: 50%; background: var(--k); color: #fff; font-size: 12.5px; }
+.agenda-pin b { color: var(--k); font-weight: 750; font-variant-numeric: tabular-nums; }
+.agenda-pin span { max-width: 7.5em; overflow: hidden; text-overflow: ellipsis; }
+.agenda-pin em { padding: 2px 5px; border-radius: 999px; background: color-mix(in srgb, var(--k) 13%, #fff); color: var(--k); font-size: 10.5px; font-style: normal; font-weight: 700; }
+/* 同一地点还有别的类型：小圆点提示 */
+.agenda-pin u { flex: none; width: 7px; height: 7px; margin-left: -1px; border-radius: 50%; background: var(--k); box-shadow: 0 0 0 1.5px #fff; }
+
+.agenda-pin.s-now, .agenda-pin.s-upnext { background: var(--k); color: #fff; box-shadow: 0 6px 18px color-mix(in srgb, var(--k) 45%, transparent), 0 1px 3px #0000002a; }
+.agenda-pin.s-now i, .agenda-pin.s-upnext i { background: #ffffff2e; }
+.agenda-pin.s-now b, .agenda-pin.s-upnext b { color: #fff; }
+.agenda-pin.s-now em, .agenda-pin.s-upnext em { background: #ffffff2e; color: #fff; }
+.agenda-pin.s-now::before { content: ''; position: absolute; inset: -5px; border: 2px solid var(--k); border-radius: inherit; opacity: .5; animation: agenda-ping 2s ease-out infinite; }
+.agenda-pin.s-past { border-color: #c3c6cd; color: #8b8f97; box-shadow: 0 2px 6px #0000001a; }
+.agenda-pin.s-past::after { border-color: #c3c6cd; }
+.agenda-pin.s-past i { background: #b4b8c0; }
+.agenda-pin.s-past b { color: #8b8f97; }
+
+/* 放不下时：先去掉标题，再只留圆形图标 */
+.agenda-pin.lv-brief span, .agenda-pin.lv-brief u { display: none; }
+.agenda-pin.lv-icon { gap: 0; padding: 2px; }
+.agenda-pin.lv-icon b, .agenda-pin.lv-icon span, .agenda-pin.lv-icon u { display: none; }
+.agenda-pin.lv-icon em { position: absolute; top: -7px; right: -9px; padding: 1px 4px; border: 1.5px solid #fff; }
+
+/* 常用地点：寝室、实验室、办公室、收藏 */
+.mine-place {
+  position: absolute; left: 0; bottom: 19px; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 4px; height: 24px; padding: 0 8px 0 2px;
+  border: 1.5px solid #9a80cf; border-radius: 999px; background: #fff; color: #573c8e;
+  box-shadow: 0 3px 10px #3d2a6a24; font-size: 11.5px; font-weight: 700; line-height: 1; white-space: nowrap; pointer-events: none;
+}
+.mine-place::after { content: ''; position: absolute; left: 50%; top: 100%; width: 7px; height: 7px; margin: -4px 0 0 -4px; border-right: 1.5px solid #9a80cf; border-bottom: 1.5px solid #9a80cf; background: #fff; transform: rotate(45deg); }
+.mine-place i { flex: none; display: grid; place-items: center; width: 19px; height: 19px; border-radius: 50%; background: #7a5bb5; color: #fff; font-size: 11.5px; }
+.mine-place.r-fav i { background: #d0567a; }
+.mine-place.r-fav { border-color: #e59ab2; color: #9c3459; }
+.mine-place.r-fav::after { border-color: #e59ab2; }
+.mine-place.lv-icon { padding: 1.5px; }
+.mine-place.lv-icon span { display: none; }
+
+@keyframes agenda-ping { from { transform: scale(1); opacity: .6; } to { transform: scale(1.35, 1.8); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .agenda-pin.s-now::before { animation: none; } }

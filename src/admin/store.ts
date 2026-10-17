@@ -1,14 +1,22 @@
 import { computed, nextTick, reactive, toRaw } from 'vue'
-import type { Building, Campus, Places, Poi, LngLat, Entrance } from '../lib/types'
+import type { Building, Campus, Places, Poi, LngLat, Entrance, UndergroundConnector, UndergroundMap, UndergroundConnectorKind } from '../lib/types'
 import { PLACE_COLORS, POI_CATS } from '../lib/catalog'
 import type { IconName } from '../lib/icons'
 import { DEFAULT_MAP_SETTINGS, validMapSettings } from '../lib/mapSettings'
+import {
+  addNode, connect, graphFromMap, graphToMap, importSketch, mergeNodes, moveNode, removeEdge, removeNode, roundPos, splitEdge, ugId,
+  type UgEdge, type UgEdgeProps, type UndergroundGraph,
+} from '../lib/undergroundGraph'
 export type Kind = 'building' | 'poi'
-export type View = 'overview' | 'appearance' | 'data' | 'events'
+export type View = 'overview' | 'underground' | 'appearance' | 'data' | 'events'
 export type Asset = { kind: Kind; data: Building | Poi }
+export type UndergroundSelection = { kind: 'node' | 'edge' | 'entrance'; id: string }
+/** 选择/拖动、画道路、放出入口、点哪删哪 */
+export type UndergroundTool = 'select' | 'road' | 'entrance' | 'erase'
+interface UndergroundHistory { graph: UndergroundGraph; active: string | null }
 export const admin = reactive({
   ready: false, loading: false, error: '', offline: false, loggedIn: false, token: '',
-  view: (['overview', 'appearance', 'data', 'events'].includes(location.hash.slice(1)) ? location.hash.slice(1) : 'overview') as View,
+  view: (['overview', 'underground', 'appearance', 'data', 'events'].includes(location.hash.slice(1)) ? location.hash.slice(1) : 'overview') as View,
   places: { categories: {} as Places['categories'], buildings: [], pois: [] } as Places, campus: null as Campus | null,
   search: '', category: '', kind: (location.hash === '#buildings' ? 'building' : location.hash === '#pois' ? 'poi' : '') as Kind | '',
   selected: null as Asset | null, draft: null as Asset | null,
@@ -19,6 +27,13 @@ export const admin = reactive({
   geometryPast: [] as Geometry[], geometryFuture: [] as Geometry[],
   mapSettings: { ...DEFAULT_MAP_SETTINGS }, mapSettingsDraft: { ...DEFAULT_MAP_SETTINGS },
   settingsReady: false, settingsSaving: false, settingsError: '',
+  underground: null as UndergroundMap | null, undergroundGraph: null as UndergroundGraph | null,
+  undergroundBaseline: '', undergroundSelected: null as UndergroundSelection | null,
+  undergroundTool: 'select' as UndergroundTool, undergroundEntranceKind: 'ramp' as UndergroundConnectorKind,
+  /** 正在画的道路末端节点；下一次点击从这里连出去 */
+  undergroundActive: null as string | null,
+  undergroundPast: [] as UndergroundHistory[], undergroundFuture: [] as UndergroundHistory[],
+  undergroundLoading: false, undergroundSaving: false, undergroundError: '', undergroundImported: 0, undergroundVersion: 0,
 })
 interface Geometry {
   positionSet: boolean
@@ -34,6 +49,9 @@ const copy = <T>(value: T): T => JSON.parse(JSON.stringify(value))
 export const draftDirty = computed(() => !!admin.draft && JSON.stringify(admin.draft) !== admin.draftBaseline)
 export const canUndo = computed(() => admin.geometryPast.length > 0 && !admin.saving)
 export const canRedo = computed(() => admin.geometryFuture.length > 0 && !admin.saving)
+export const undergroundDirty = computed(() => !!admin.undergroundGraph && JSON.stringify(admin.undergroundGraph) !== admin.undergroundBaseline)
+export const undergroundCanUndo = computed(() => admin.undergroundPast.length > 0 && !admin.undergroundSaving)
+export const undergroundCanRedo = computed(() => admin.undergroundFuture.length > 0 && !admin.undergroundSaving)
 export const draftOutline = computed(() => {
   const b = admin.draft?.kind === 'building' ? admin.draft.data as Building : null
   return (admin.outlinePart ? b?.parts?.[admin.outlinePart - 1] : b?.poly) ?? []
@@ -135,6 +153,153 @@ export async function loadMapSettings() {
     admin.mapSettings = { ...settings }; admin.mapSettingsDraft = { ...settings }; admin.settingsReady = true
   } catch (e) { admin.settingsError = `无法读取显示设置：${(e as Error).message}` }
 }
+
+const SKETCH_KEY = 'campus.underground.sketch'
+/** 管理员画的路段默认是已确认的车行道 */
+const ADMIN_EDGE: UgEdgeProps = { status: 'confirmed', mode: 'car', source: 'admin' }
+function frontSketchPaths(): LngLat[][] {
+  try {
+    const value = JSON.parse(localStorage.getItem(SKETCH_KEY) || 'null')
+    return Array.isArray(value?.paths) ? value.paths.filter((path: unknown) => Array.isArray(path) && path.length >= 2) as LngLat[][] : []
+  } catch { return [] }
+}
+function resetUnderground(map: UndergroundMap) {
+  admin.underground = map; admin.undergroundGraph = graphFromMap(map); admin.undergroundBaseline = JSON.stringify(admin.undergroundGraph)
+  admin.undergroundSelected = null; admin.undergroundActive = null; admin.undergroundTool = 'select'
+  admin.undergroundPast = []; admin.undergroundFuture = []; admin.undergroundImported = 0; admin.undergroundVersion++
+  // 前台手绘草稿只存在浏览器里：导入成一步可撤销的修改，保存后才写进后台
+  const paths = map.roads.some((road) => road.source === 'front-sketch') ? [] : frontSketchPaths()
+  if (paths.length) changeUnderground((g) => { admin.undergroundImported = importSketch(g, paths, { ...ADMIN_EDGE, source: 'front-sketch' }) })
+}
+export async function loadUnderground() {
+  admin.undergroundLoading = true; admin.undergroundError = ''
+  try {
+    const map = await request<UndergroundMap>('/api/underground').catch(() => request<UndergroundMap>('/data/underground.json'))
+    resetUnderground(map)
+  } catch (e) { admin.undergroundError = (e as Error).message }
+  finally { admin.undergroundLoading = false }
+}
+const snapshot = (): UndergroundHistory => ({ graph: copy(admin.undergroundGraph!), active: admin.undergroundActive })
+/** 所有改动都走这里：记一步撤销，并通知地图重绘。 */
+export function changeUnderground(change: (g: UndergroundGraph) => void) {
+  const g = admin.undergroundGraph
+  if (!g || admin.undergroundSaving) return
+  const before = snapshot(); change(g)
+  if (JSON.stringify(before.graph) !== JSON.stringify(g)) {
+    admin.undergroundPast.push(before); if (admin.undergroundPast.length > 200) admin.undergroundPast.shift()
+    admin.undergroundFuture = []; admin.undergroundError = ''
+  }
+  const sel = admin.undergroundSelected
+  if (sel && !(sel.kind === 'node' ? g.nodes : sel.kind === 'edge' ? g.edges : g.entrances).some((item) => item.id === sel.id)) admin.undergroundSelected = null
+  if (admin.undergroundActive && !g.nodes.some((n) => n.id === admin.undergroundActive)) admin.undergroundActive = null
+  admin.undergroundVersion++
+}
+function restoreHistory(from: UndergroundHistory[], to: UndergroundHistory[]) {
+  if (!admin.undergroundGraph || admin.undergroundSaving || !from.length) return
+  to.push(snapshot())
+  const { graph, active } = from.pop()!
+  admin.undergroundGraph = graph
+  admin.undergroundActive = admin.undergroundTool === 'road' ? active : null
+  changeUnderground(() => {})
+}
+export function undoUnderground() { restoreHistory(admin.undergroundPast, admin.undergroundFuture) }
+export function redoUnderground() { restoreHistory(admin.undergroundFuture, admin.undergroundPast) }
+export function selectUnderground(selection: UndergroundSelection | null) {
+  admin.undergroundSelected = selection; admin.undergroundVersion++
+}
+export function setUndergroundTool(tool: UndergroundTool) {
+  if (admin.undergroundSaving) return
+  // 选中一个节点再切到画道路，直接从这个节点接着画
+  const sel = admin.undergroundSelected
+  admin.undergroundActive = tool === 'road' && sel?.kind === 'node' ? sel.id : null
+  admin.undergroundTool = tool; admin.undergroundVersion++
+}
+export function finishUndergroundRoad() { admin.undergroundActive = null; admin.undergroundVersion++ }
+function inCampus(pos: LngLat) {
+  const bounds = admin.campus?.bounds
+  if (!bounds) return true
+  const [[x0, y0], [x1, y1]] = bounds
+  if (pos[0] >= x0 && pos[0] <= x1 && pos[1] >= y0 && pos[1] <= y1) return true
+  notify('这个位置在校园地图范围外', 'error'); return false
+}
+/** 画道路：从当前末端连到 target（新建点、已有节点或路段上的插点），并把末端移过去。 */
+function drawTo(target: (g: UndergroundGraph) => string | null) {
+  changeUnderground((g) => {
+    const id = target(g); if (!id) return
+    if (admin.undergroundActive) connect(g, admin.undergroundActive, id, ADMIN_EDGE)
+    admin.undergroundActive = id
+    admin.undergroundSelected = { kind: 'node', id }
+  })
+}
+export function drawUndergroundAt(pos: LngLat) {
+  if (inCampus(pos)) drawTo((g) => addNode(g, pos))
+}
+export function drawUndergroundToNode(id: string) {
+  if (admin.undergroundActive === id) return finishUndergroundRoad()
+  drawTo(() => id)
+}
+export function drawUndergroundOnEdge(edgeId: string, pos: LngLat) {
+  drawTo((g) => splitEdge(g, edgeId, pos))
+}
+/** 选择工具里双击路段：插入一个可拖的节点 */
+export function insertUndergroundNode(edgeId: string, pos: LngLat) {
+  changeUnderground((g) => { const id = splitEdge(g, edgeId, pos); if (id) admin.undergroundSelected = { kind: 'node', id } })
+}
+export function addUndergroundEntrance(pos: LngLat) {
+  if (!inCampus(pos)) return
+  const id = ugId('ug-entrance')
+  changeUnderground((g) => {
+    g.entrances.push({ id, floorFrom: 0, floorTo: admin.underground?.floor ?? -1, kind: admin.undergroundEntranceKind, status: 'confirmed', pos: roundPos(pos), source: 'admin' })
+    admin.undergroundSelected = { kind: 'entrance', id }
+  })
+}
+/** 拖动节点；松手时落在另一个节点上就把两个点合成一个路口。 */
+export function moveUndergroundNode(id: string, pos: LngLat, mergeInto?: string) {
+  if (!mergeInto && !inCampus(pos)) return changeUnderground(() => {})
+  changeUnderground((g) => {
+    if (mergeInto) {
+      mergeNodes(g, id, mergeInto)
+      if (admin.undergroundActive === id) admin.undergroundActive = mergeInto
+      admin.undergroundSelected = { kind: 'node', id: mergeInto }
+    } else { moveNode(g, id, pos); admin.undergroundSelected = { kind: 'node', id } }
+  })
+}
+export function moveUndergroundEntrance(id: string, pos: LngLat) {
+  if (!inCampus(pos)) return changeUnderground(() => {})
+  changeUnderground((g) => { const item = g.entrances.find((e) => e.id === id); if (item) item.pos = roundPos(pos) })
+}
+export function deleteUnderground(target: UndergroundSelection) {
+  changeUnderground((g) => {
+    if (target.kind === 'node') removeNode(g, target.id)
+    else if (target.kind === 'edge') removeEdge(g, target.id)
+    else g.entrances = g.entrances.filter((e) => e.id !== target.id)
+  })
+}
+export function deleteUndergroundSelection() {
+  if (admin.undergroundSelected) deleteUnderground(admin.undergroundSelected)
+}
+export function updateUndergroundEdge(id: string, patch: Partial<Pick<UgEdge, 'status'>>) {
+  changeUnderground((g) => { const e = g.edges.find((item) => item.id === id); if (e) Object.assign(e, patch) })
+}
+export function updateUndergroundEntrance(id: string, patch: Partial<Pick<UndergroundConnector, 'kind' | 'status' | 'note'>>) {
+  changeUnderground((g) => {
+    const e = g.entrances.find((item) => item.id === id); if (!e) return
+    Object.assign(e, patch)
+    if (patch.note === '') delete e.note
+  })
+}
+export async function saveUnderground() {
+  if (!admin.undergroundGraph || !admin.underground || admin.undergroundSaving || !authorized()) return
+  admin.undergroundSaving = true; admin.undergroundError = ''
+  try {
+    const body = graphToMap(admin.undergroundGraph, admin.underground)
+    const saved = await request<UndergroundMap>('/api/underground', { method: 'PUT', body: JSON.stringify(body) })
+    try { localStorage.removeItem(SKETCH_KEY) } catch { /* 无存储 */ }
+    resetUnderground(saved)
+    notify('地下标注已保存到后台')
+  } catch (e) { admin.undergroundError = `保存失败：${(e as Error).message}` }
+  finally { admin.undergroundSaving = false }
+}
 export async function saveMapSettings() {
   if (admin.settingsSaving || !admin.settingsReady || !authorized()) return
   if (!validMapSettings(admin.mapSettingsDraft)) { admin.settingsError = '请输入 0–100 之间的百分比'; return }
@@ -175,6 +340,9 @@ export function navigate(view: View) {
   if (!discard()) return
   if (admin.settingsSaving) return
   if (settingsDirty.value && !confirm('地图显示设置还未保存，放弃这些修改？')) return
+  if (admin.undergroundSaving) return
+  if (undergroundDirty.value && !confirm('地下标注还未保存，放弃这些修改？')) return
+  if (undergroundDirty.value && admin.underground) resetUnderground(admin.underground)
   admin.mapSettingsDraft = { ...admin.mapSettings }
   admin.view = view; location.hash = view
 }

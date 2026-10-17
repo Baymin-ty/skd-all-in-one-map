@@ -20,6 +20,7 @@ const root = resolve(here, '..')
 if (existsSync(join(root, '.env'))) loadEnvFile(join(root, '.env'))
 const campus = JSON.parse(readFileSync(join(root, 'public/data/campus.json'), 'utf8'))
 const seed = JSON.parse(readFileSync(join(root, 'public/data/places.json'), 'utf8'))
+const defaultUnderground = JSON.parse(readFileSync(join(root, 'public/data/underground.json'), 'utf8'))
 const defaultMapSettings = JSON.parse(readFileSync(join(root, 'public/data/map-settings.json'), 'utf8'))
 function loadPassword() {
   if (process.env.ADMIN_PASSWORD) return process.env.ADMIN_PASSWORD
@@ -101,6 +102,51 @@ function clean(table, p) {
     walkway: !!p.walkway, isNew: !!p.isNew,
   }
 }
+function undergroundStatus(value) {
+  if (!['candidate', 'confirmed', 'rejected'].includes(value)) throw new BadRequest('地下数据状态不正确')
+  return value
+}
+function undergroundPoint(value) { return position(value) }
+function cleanUnderground(p) {
+  if (!p || typeof p !== 'object') throw new BadRequest('地下手绘数据格式不正确')
+  const floor = Number.isInteger(p.floor) ? p.floor : -1
+  if (!Array.isArray(p.bounds) || p.bounds.length !== 2) throw new BadRequest('地下地图范围不正确')
+  const bounds = p.bounds.map(undergroundPoint)
+  const sources = Array.isArray(p.sources) ? p.sources.map((source) => {
+    if (!source?.id || !source?.image || !Array.isArray(source.anchors) || source.anchors.length < 2) throw new BadRequest('地下图纸来源不完整')
+    return {
+      id: text(source.id, 120), title: text(source.title, 160), image: text(source.image, 500), floor: Number.isInteger(source.floor) ? source.floor : floor,
+      anchors: source.anchors.map((anchor) => {
+        if (!Array.isArray(anchor?.image) || anchor.image.length !== 2 || anchor.image.some((value) => typeof value !== 'number' || value < 0 || value > 1)) throw new BadRequest('地下图纸锚点不正确')
+        return { image: [+anchor.image[0], +anchor.image[1]], pos: undergroundPoint(anchor.pos) }
+      }),
+      ...(source.alignment ? { alignment: source.alignment === 'reviewed' ? 'reviewed' : 'approximate' } : {}),
+      ...(source.note ? { note: text(source.note, 2000) } : {}),
+    }
+  }) : []
+  const ids = new Set()
+  const id = (value, prefix) => {
+    const result = text(value, 120)
+    if (!result || ids.has(result)) throw new BadRequest('地下道路或连接点 id 重复或为空')
+    ids.add(result); return result || prefix
+  }
+  const roads = Array.isArray(p.roads) ? p.roads.map((road) => {
+    if (!Array.isArray(road?.path) || road.path.length < 2 || road.path.length > 1000) throw new BadRequest('地下道路至少需要两个点')
+    if (!['car', 'walk'].includes(road.mode)) throw new BadRequest('地下道路模式不正确')
+    const direction = ['in', 'out', 'both'].includes(road.direction) ? road.direction : 'both'
+    return { id: id(road.id, 'ug-road'), floor: Number.isInteger(road.floor) ? road.floor : floor, mode: road.mode, direction, status: undergroundStatus(road.status), path: road.path.map(undergroundPoint),
+      ...(road.source ? { source: text(road.source, 120) } : {}), ...(road.note ? { note: text(road.note, 2000) } : {}) }
+  }) : []
+  const connectors = Array.isArray(p.connectors) ? p.connectors.map((connector) => {
+    if (!['ramp', 'stairs', 'elevator', 'unknown'].includes(connector.kind)) throw new BadRequest('地下连接点类型不正确')
+    const floorFrom = Number.isInteger(connector.floorFrom) ? connector.floorFrom : 0
+    const floorTo = Number.isInteger(connector.floorTo) ? connector.floorTo : floor
+    if (floorFrom === floorTo) throw new BadRequest('地下连接点楼层不能相同')
+    return { id: id(connector.id, 'ug-connector'), floorFrom, floorTo, kind: connector.kind, status: undergroundStatus(connector.status), pos: undergroundPoint(connector.pos),
+      ...(connector.source ? { source: text(connector.source, 120) } : {}), ...(connector.linkedPoiId ? { linkedPoiId: text(connector.linkedPoiId, 120) } : {}), ...(connector.note ? { note: text(connector.note, 2000) } : {}) }
+  }) : []
+  return { version: Number.isInteger(p.version) ? p.version : 1, floor, bounds, sources, roads, connectors }
+}
 function isAdmin(req) {
   const token = (req.get('authorization') ?? '').replace(/^Bearer /, '')
   const tokenDigest = token && digest(token)
@@ -130,6 +176,16 @@ app.post('/api/auth', requireAdmin, (_req, res) => res.json({ ok: true }))
 app.get('/api/map-settings', (_req, res) => {
   const row = db.prepare('select value from meta where key = ?').get('map.settings')
   res.json(row ? JSON.parse(row.value) : defaultMapSettings)
+})
+app.get('/api/underground', (_req, res) => {
+  const row = db.prepare('select value from meta where key = ?').get('underground.map')
+  res.json(row ? JSON.parse(row.value) : defaultUnderground)
+})
+app.put('/api/underground', requireAdmin, (req, res) => {
+  const map = cleanUnderground(req.body ?? {})
+  db.prepare('insert into meta (key, value) values (?, ?) on conflict(key) do update set value = excluded.value')
+    .run('underground.map', JSON.stringify(map))
+  res.json(map)
 })
 app.put('/api/map-settings', requireAdmin, (req, res) => {
   const settings = {}

@@ -1,7 +1,9 @@
+import { account } from './account'
 import type { IconName } from './icons'
 import { labelsForMode, normalizeMapPrefs, removeMapPlace, upsertMapPlace, type MapPlace, type MapPrefs } from './mapPrefs'
-import { placeName, placeSelection, showPanel, state } from './store'
-import { initPlan } from './today'
+import { prefersMine } from './myMap'
+import { fitToday, mapApi, placeName, placeSelection, showPanel, state } from './store'
+import { initPlan, plan } from './today'
 import { setUserData, readUserData } from './userData'
 
 /**
@@ -19,8 +21,23 @@ export const HOME_ROLES: { role: HomeRole; zh: string; hint: string; icon: IconN
 export const profileUi = { focus: '' as '' | 'places' | 'schedule' }
 
 export function applyMapPrefs() {
-  state.mapPrefs = normalizeMapPrefs(readUserData('map', null), [...state.buildings, ...state.pois].map((item) => item.id))
-  state.labelVisibility = labelsForMode(state.mapPrefs)
+  const prefs = normalizeMapPrefs(readUserData('map', null), [...state.buildings, ...state.pois].map((item) => item.id))
+  // 每次打开（以及登录、退出后）按身份决定默认看哪张图，不沿用上次手动切换的结果：
+  // 登录了或者这台设备上有课表、常用地点 → 我的地图，否则全校地图。
+  prefs.mode = prefersMine(!!account.me, plan.items, prefs.places.length) ? 'mine' : 'all'
+  state.mapPrefs = prefs
+  state.labelVisibility = labelsForMode(prefs)
+  if (state.panel === 'home' && !state.selected && !state.route.open && !state.chip) {
+    if (prefs.mode === 'mine') fitToday()
+    else mapApi.home()
+  }
+}
+
+/** 地图数据还没加载完时先定下看哪张图，免得打开时先闪一下全校地图 */
+export function presetMapMode() {
+  const raw = readUserData<{ places?: unknown[] } | null>('map', null)
+  const mode = prefersMine(!!account.me, plan.items, Array.isArray(raw?.places) ? raw.places.length : 0) ? 'mine' : 'all'
+  state.mapPrefs = { ...state.mapPrefs, mode }
 }
 
 /** 登录或退出后换成当前身份的课表和地点 */

@@ -5,11 +5,13 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { once } from 'node:events'
 import { DatabaseSync } from 'node:sqlite'
+import { addNode, connect, graphFromMap, graphToMap } from '../src/lib/undergroundGraph.ts'
 
 const directory = mkdtempSync(join(tmpdir(), 'campus-admin-test-'))
 const dbPath = join(directory, 'map.db')
 const password = 'local-integration-test'
 const seed = JSON.parse(readFileSync(resolve('public/data/places.json'), 'utf8'))
+const undergroundSeed = JSON.parse(readFileSync(resolve('public/data/underground.json'), 'utf8'))
 let server, base
 async function start() {
   server = spawn(process.execPath, ['server/index.mjs'], {
@@ -38,6 +40,45 @@ beforeAll(start)
 afterAll(async () => { await stop(); rmSync(directory, { recursive: true, force: true }) })
 
 describe('campus management API', () => {
+  test('地下手绘需要管理员保存，并在重启后保留道路和连接点', async () => {
+    const initial = await (await call('/api/underground', 'GET', undefined, false)).json()
+    expect(initial.roads).toHaveLength(undergroundSeed.roads.length)
+    expect(initial.connectors).toHaveLength(undergroundSeed.connectors.length)
+    expect((await call('/api/underground', 'PUT', initial, false)).status).toBe(401)
+    const changed = {
+      ...initial,
+      roads: [{ ...initial.roads[0], path: [[121.5963, 31.1832], [121.5964, 31.1837]] }],
+      connectors: [{ ...initial.connectors[0], kind: 'ramp', note: '后台保存测试' }],
+    }
+    const saved = await (await call('/api/underground', 'PUT', changed)).json()
+    expect(saved.roads[0].path).toEqual(changed.roads[0].path)
+    expect(saved.connectors[0].note).toBe('后台保存测试')
+    await stop(); await start()
+    expect(await (await call('/api/underground', 'GET', undefined, false)).json()).toEqual(saved)
+    await call('/api/underground', 'PUT', undergroundSeed)
+  })
+
+  test('后台路网标注拆成的道路能通过校验，重新载入后路口不丢', async () => {
+    const graph = graphFromMap(undergroundSeed)
+    const junction = graph.nodes[1].id
+    const branch = addNode(graph, [121.5975, 31.1835])
+    connect(graph, junction, branch, { status: 'confirmed', mode: 'car', source: 'admin' })
+    graph.entrances.push({ id: 'ug-entrance-test', floorFrom: 0, floorTo: -1, kind: 'stairs', status: 'confirmed', pos: [121.5975, 31.1835], source: 'admin' })
+    const response = await call('/api/underground', 'PUT', graphToMap(graph, undergroundSeed))
+    expect(response.status).toBe(200)
+    const reloaded = graphFromMap(await response.json())
+    expect(reloaded.nodes).toHaveLength(graph.nodes.length)
+    expect(reloaded.edges).toHaveLength(graph.edges.length)
+    expect(reloaded.entrances.at(-1)).toMatchObject({ id: 'ug-entrance-test', kind: 'stairs' })
+    await call('/api/underground', 'PUT', undergroundSeed)
+  })
+
+  test('地下手绘拒绝越界和不完整道路', async () => {
+    const initial = await (await call('/api/underground')).json()
+    for (const roads of [[{ ...initial.roads[0], path: [[121.6, 31.184]] }], [{ ...initial.roads[0], path: [[0, 0], [121.6, 31.184]] }]]) {
+      expect((await call('/api/underground', 'PUT', { ...initial, roads })).status).toBe(400)
+    }
+  })
   test('map opacity settings require authentication and persist across restart', async () => {
     const defaults = { background: 0.2, selectable: 0.5, selected: 1 }
     expect(await (await call('/api/map-settings', 'GET', undefined, false)).json()).toEqual(defaults)

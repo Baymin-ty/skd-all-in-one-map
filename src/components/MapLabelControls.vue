@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { allMapLabels, MAP_LABEL_CATEGORIES, type MapLabelCategory, type MapLabelVisibility } from '../lib/mapLabelCategories'
 import Ico from './Ico.vue'
-import { labelsForMode, setMapLabel, setMapLabels, setMapMode, type MapMode } from '../lib/mapPrefs'
+import { setMapLabel, setMapLabels } from '../lib/mapPrefs'
 import { setRouteNetwork, state } from '../lib/store'
 import { setUserData } from '../lib/userData'
 
@@ -28,11 +28,6 @@ function toggle(category: MapLabelCategory) {
   state.mapPrefs = setMapLabel(state.mapPrefs, state.mapPrefs.mode, category, !props.modelValue[category])
   setUserData('map', state.mapPrefs)
 }
-function switchMode(mode: MapMode) {
-  state.mapPrefs = setMapMode(state.mapPrefs, mode)
-  emit('update:modelValue', labelsForMode(state.mapPrefs))
-  setUserData('map', state.mapPrefs)
-}
 function setLabels(value: MapLabelVisibility) {
   emit('update:modelValue', value)
   state.mapPrefs = setMapLabels(state.mapPrefs, state.mapPrefs.mode, value)
@@ -53,8 +48,7 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', outside))
       <Ico name="grid" /><i v-if="hidden.length" class="picker-dot" aria-hidden="true" />
     </button>
       <div v-if="open" id="map-label-options" class="picker-panel" role="group" aria-label="显示或隐藏地图标签">
-      <div class="panel-head"><b>图层与标签</b><small>{{ summary }}</small><button type="button" class="panel-close" aria-label="关闭" @click="close"><Ico name="close" /></button></div>
-      <div class="mode-switch" role="group" aria-label="地图范围"><button type="button" :class="{ on: state.mapPrefs.mode === 'all' }" @click="switchMode('all')">全校</button><button type="button" :class="{ on: state.mapPrefs.mode === 'mine' }" @click="switchMode('mine')">我的</button></div>
+      <div class="panel-head"><b>图层与标签<em>{{ state.mapPrefs.mode === 'mine' ? '我的地图' : '全校地图' }}</em></b><small>{{ summary }}</small><button type="button" class="panel-close" aria-label="关闭" @click="close"><Ico name="close" /></button></div>
       <div class="picker-actions"><span>显示哪些标签</span><button type="button" :disabled="enabled.length === MAP_LABEL_CATEGORIES.length" @click="setLabels(allMapLabels(true))">全部显示</button><button type="button" :disabled="!enabled.length" @click="setLabels(allMapLabels(false))">全部隐藏</button></div>
       <div class="picker-grid">
         <button v-for="category in MAP_LABEL_CATEGORIES" :key="category.id" type="button" role="switch" class="type-toggle" :class="{ enabled: modelValue[category.id] }" :style="{ '--type-color': category.color }" :aria-checked="modelValue[category.id]" :aria-label="`${category.name}标签`" :title="`${modelValue[category.id] ? '隐藏' : '显示'}${category.name}标签`" @click="toggle(category.id)">
@@ -82,7 +76,7 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', outside))
 .panel-head b { display: block; font-size: 14px; }
 .panel-head small { display: block; margin-top: 2px; color: var(--ink-3); font-size: 11px; }
 .panel-close { position: absolute; top: 8px; right: -4px; width: 28px; height: 28px; display: grid; place-items: center; border: 0; border-radius: 50%; background: var(--bg-2); color: var(--ink-2); font-size: 14px; cursor: pointer; }
-.mode-switch { display:flex; gap:5px; padding:10px 0 2px; }.mode-switch button { flex:1; padding:7px; border:1px solid #e1e7e1; border-radius:9px; background:#fff; color:#6b786f; font-size:12px; cursor:pointer; }.mode-switch button.on { border-color:#b8d8c2; background:#edf8f0; color:#247345; font-weight:700; }
+.panel-head b em { margin-left: 6px; padding: 1px 6px; border-radius: 6px; background: var(--bg-2); color: var(--ink-2); font-size: 10.5px; font-style: normal; font-weight: 600; }
 .picker-actions { display: flex; align-items: center; gap: 10px; padding: 11px 0 8px; font-size: 11px; }.picker-actions > span { flex: 1; color: #7c877f; }.picker-actions button { border: 0; padding: 3px 0; background: none; color: var(--blue); font-size: 11px; cursor: pointer; }.picker-actions button:disabled { color: #b2b9b3; cursor: default; }
 .picker-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
 .type-toggle { position: relative; min-height: 62px; display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 7px; padding: 10px; border: 1px solid #e7eae5; border-radius: 10px; background: #f7f8f5; color: #909a93; font-size: 11.5px; cursor: pointer; transition: background-color 150ms, border-color 150ms; }

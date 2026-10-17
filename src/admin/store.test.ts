@@ -1,9 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { Building, Campus, Poi } from '../lib/types'
+import type { Building, Campus, Poi, UndergroundMap } from '../lib/types'
 
 vi.stubGlobal('location', { hash: '' })
 const store = await import('./store')
-const { admin, edit, create, discard, draftDirty, draftIssue, setPosition, mapPick, changeGeometry, undoGeometry, redoGeometry, canRedo, deleteVertex, save, login, closeLogin } = store
+const { admin, edit, create, discard, draftDirty, draftIssue, setPosition, mapPick, changeGeometry, undoGeometry, redoGeometry, canRedo, deleteVertex, save, login, closeLogin,
+  setUndergroundTool, drawUndergroundAt, drawUndergroundToNode, drawUndergroundOnEdge, finishUndergroundRoad, addUndergroundEntrance, moveUndergroundNode,
+  deleteUnderground, undoUnderground, saveUnderground, undergroundDirty } = store
 const building = (): Building => ({
   id: 'building-1', name: { zh: '测试楼', en: 'Test' }, short: { zh: '测试楼', en: '' }, cat: 'academic',
   aliases: [], orgs: [], rooms: [], center: [121.6, 31.18],
@@ -22,6 +24,10 @@ beforeEach(() => {
   discard(); closeLogin()
   Object.assign(admin, { loggedIn: true, offline: false, token: 'test', view: 'overview', kind: 'building', search: '测试', category: 'building:academic' })
   admin.places.buildings = [building()]; admin.places.pois = []
+  const underground: UndergroundMap = { version: 1, floor: -1, bounds: [[121.59, 31.17], [121.62, 31.20]], sources: [], roads: [], connectors: [] }
+  admin.underground = underground; admin.undergroundGraph = { nodes: [], edges: [], entrances: [] }; admin.undergroundBaseline = JSON.stringify(admin.undergroundGraph)
+  admin.undergroundPast = []; admin.undergroundFuture = []; admin.undergroundSelected = null; admin.undergroundActive = null
+  admin.undergroundTool = 'select'; admin.undergroundSaving = false; admin.undergroundError = ''
   admin.campus = { bounds: [[121.59, 31.17], [121.62, 31.20]] } as Campus
   vi.mocked(confirm).mockClear()
 })
@@ -207,5 +213,63 @@ describe('统一地点工作台', () => {
     expect(admin.draft).toBeNull()
     expect(admin.deleteTarget).toBeNull()
     expect(fetch).not.toHaveBeenCalled()
+  })
+})
+
+describe('地下标注工作台', () => {
+  const nodeAt = (lng: number, lat: number) => admin.undergroundGraph!.nodes.find((n) => n.pos[0] === lng && n.pos[1] === lat)!.id
+  const degreeOf = (id: string) => admin.undergroundGraph!.edges.filter((e) => e.a === id || e.b === id).length
+
+  it('逐点画路，从已有节点接出岔路，撤销时退回上一个点', () => {
+    setUndergroundTool('road')
+    drawUndergroundAt([121.6, 31.18]); drawUndergroundAt([121.601, 31.18]); drawUndergroundAt([121.602, 31.18])
+    expect(admin.undergroundGraph!.edges).toHaveLength(2)
+    finishUndergroundRoad()
+    const mid = nodeAt(121.601, 31.18)
+    drawUndergroundToNode(mid); drawUndergroundAt([121.601, 31.181])
+    expect(degreeOf(mid)).toBe(3)
+    expect(admin.undergroundActive).toBe(nodeAt(121.601, 31.181))
+    undoUnderground()
+    expect(admin.undergroundGraph!.edges).toHaveLength(2)
+    expect(admin.undergroundActive).toBe(mid)
+    expect(undergroundDirty.value).toBe(true)
+  })
+
+  it('点到路段上会插点接成路口，拖到另一个点上会合并，删路中间的点两侧接回', () => {
+    setUndergroundTool('road')
+    drawUndergroundAt([121.6, 31.18]); drawUndergroundAt([121.602, 31.18]); finishUndergroundRoad()
+    drawUndergroundAt([121.601, 31.182]); drawUndergroundOnEdge(admin.undergroundGraph!.edges[0].id, [121.601, 31.1801]); finishUndergroundRoad()
+    const joint = nodeAt(121.601, 31.18)
+    expect(degreeOf(joint)).toBe(3)
+    drawUndergroundAt([121.603, 31.181]); drawUndergroundAt([121.6031, 31.1805]); finishUndergroundRoad()
+    moveUndergroundNode(nodeAt(121.6031, 31.1805), [121.602, 31.18], nodeAt(121.602, 31.18))
+    expect(degreeOf(nodeAt(121.602, 31.18))).toBe(2)
+    deleteUnderground({ kind: 'node', id: nodeAt(121.602, 31.18) })
+    expect(admin.undergroundGraph!.edges.some((e) => e.a === joint || e.b === joint)).toBe(true)
+    expect(admin.undergroundGraph!.nodes.map((n) => n.pos)).toContainEqual([121.603, 31.181])
+  })
+
+  it('校园范围外的点不落下', () => {
+    setUndergroundTool('road')
+    drawUndergroundAt([0, 0])
+    expect(admin.undergroundGraph!.nodes).toHaveLength(0)
+    expect(admin.notice).toContain('范围外')
+  })
+
+  it('放置出入口并把路网拆成道路保存', async () => {
+    setUndergroundTool('road')
+    drawUndergroundAt([121.6, 31.18]); drawUndergroundAt([121.601, 31.18]); drawUndergroundAt([121.601, 31.181]); finishUndergroundRoad()
+    setUndergroundTool('entrance'); admin.undergroundEntranceKind = 'stairs'
+    addUndergroundEntrance([121.6011, 31.1811])
+    expect(admin.undergroundSelected).toMatchObject({ kind: 'entrance' })
+    vi.mocked(fetch).mockImplementationOnce(async (_url, init) => new Response(init!.body as string))
+    await saveUnderground()
+    const [url, init] = vi.mocked(fetch).mock.calls.at(-1)!
+    expect(url).toBe('/api/underground')
+    const body = JSON.parse(init!.body as string)
+    expect(body.roads).toEqual([expect.objectContaining({ status: 'confirmed', mode: 'car', direction: 'both', path: [[121.6, 31.18], [121.601, 31.18], [121.601, 31.181]] })])
+    expect(body.connectors).toEqual([expect.objectContaining({ kind: 'stairs', floorFrom: 0, floorTo: -1, pos: [121.6011, 31.1811] })])
+    expect(undergroundDirty.value).toBe(false)
+    expect(admin.undergroundGraph!.edges).toHaveLength(2)
   })
 })

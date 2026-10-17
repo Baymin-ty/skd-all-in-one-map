@@ -6,7 +6,8 @@ import type { CampusEvent, Canteen } from './discoveryTypes'
 import type { Places } from './types'
 
 vi.mock('./ui', () => ({ openSheet: vi.fn(), ui: { desktop: true, sheet: 388, anchors: [136, 388, 740] } }))
-import { mapHighlights, openCanteen, select, setChip, showPanel, state } from './store'
+import { mapHighlights, myAgenda, openCanteen, select, setChip, setMapView, setMyScope, showPanel, state } from './store'
+import { plan, type PlanItem } from './today'
 
 const places: Places = JSON.parse(readFileSync(new URL('../../public/data/places.json', import.meta.url), 'utf8'))
 const canteens: Canteen[] = JSON.parse(readFileSync(new URL('../../public/data/canteens.json', import.meta.url), 'utf8')).canteens
@@ -70,5 +71,40 @@ describe('分类在地图中批量选中', () => {
     expect(state.panel).toBe('home')
     expect(state.route.picking).toBe('to')
     expect(mapHighlights.value.has(canteens[0].place)).toBe(true)
+  })
+})
+
+describe('我的地图', () => {
+  const item = (patch: Partial<PlanItem>): PlanItem => ({ id: Math.random().toString(36), kind: 'class', title: '课', start: '08:15', end: '09:55', source: 'manual', ...patch })
+  const [teach, lab, canteen, dorm] = ['edb12f3d', '82807efc', 'd7191508', 'a747029d']
+  beforeEach(() => {
+    // 2026-10-16 是周五
+    plan.items = [
+      item({ place: teach, weekdays: [5] }),
+      item({ place: lab, weekdays: [2] }),
+      item({ kind: 'meal', place: canteen, date: '2026-10-16', start: '12:00' }),
+    ]
+    plan.date = '2026-10-16'
+    state.mapPrefs = { ...state.mapPrefs, places: [{ id: 'dorm', role: 'dorm', place: dorm }] }
+    setMapView('mine')
+  })
+
+  it('只高亮这一天有安排的地点和常用地点，切回全校地图后清空', () => {
+    expect([...mapHighlights.value].sort()).toEqual([teach, canteen, dorm].sort())
+    expect(myAgenda.value.stops.map((s) => s.place)).toEqual([teach, canteen])
+    setMapView('all')
+    expect(mapHighlights.value.size).toBe(0)
+  })
+  it('本周把每周的课都算进来', () => {
+    setMyScope('week')
+    expect(myAgenda.value.week).toBe(true)
+    expect(new Set(myAgenda.value.stops.map((s) => s.place))).toEqual(new Set([teach, lab, canteen]))
+    setMyScope('today')
+    expect(myAgenda.value.week).toBe(false)
+  })
+  it('打开活动雷达等其他功能时让给它们自己的高亮', () => {
+    showPanel('events')
+    expect(mapHighlights.value.has(dorm)).toBe(false)
+    expect(mapHighlights.value.has(teach)).toBe(false)
   })
 })

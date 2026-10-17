@@ -11,10 +11,10 @@ import Ico from './Ico.vue'
 defineProps<{ vertical?: boolean }>()
 type Tab = 'home' | 'events' | 'dining' | 'today' | 'me'
 const TABS: { id: Tab; zh: string; icon: IconName }[] = [
-  { id: 'home', zh: '探索', icon: 'pin' },
+  { id: 'home', zh: '地图', icon: 'pin' },
   { id: 'events', zh: '活动', icon: 'calendar' },
   { id: 'dining', zh: '美食', icon: 'dining' },
-  { id: 'today', zh: '我的今天', icon: 'clock' },
+  { id: 'today', zh: '日程', icon: 'clock' },
   { id: 'me', zh: '我的', icon: 'users' },
 ]
 const liveCount = computed(() => eventsIn('today').length)

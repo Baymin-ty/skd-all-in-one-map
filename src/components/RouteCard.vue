@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { clearUndergroundSketch, closeRoute, computeRoute, finishUndergroundSketch, setEnd, setRouteNetwork, startUndergroundSketch, state, undoUndergroundSketch } from '../lib/store'
+import { closeRoute, computeRoute, finishUndergroundSketch, persistUndergroundSketchNow, setEnd, setRouteNetwork, startUndergroundSketch, state, undoUndergroundSketch } from '../lib/store'
 import { locator, myLocationEnd, simulateWalk, startLocating } from '../lib/locate'
 import Ico from './Ico.vue'
 import { isEnglish, t } from '../lib/i18n'
@@ -37,14 +37,14 @@ function fromMe() {
       <button v-if="state.underground" type="button" :class="{ on: r.network === 'underground' }" role="tab" :aria-selected="r.network === 'underground'" @click="chooseNetwork('underground')">地下手绘</button>
     </div>
     <div v-if="r.network === 'underground'" class="sketch-panel">
-      <p class="sketch-note">图纸候选线已暂时移除。这里留作地下路网手绘草稿，确认后再整理成正式路线。</p>
+      <p class="sketch-note">地下道路和车辆出入口、电梯、楼梯点统一在后台维护。当前手绘草稿会保存在本机，进入后台后可继续编辑并保存。</p>
       <div class="sketch-actions">
-        <button type="button" class="primary-action" :class="{ active: state.undergroundSketch.active }" @click="startUndergroundSketch">{{ state.undergroundSketch.active ? '手绘中…' : '开始手绘' }}</button>
+        <a class="primary-action" href="/admin/#underground" @click="persistUndergroundSketchNow">打开后台管理</a>
+        <button type="button" :class="{ active: state.undergroundSketch.active }" @click="startUndergroundSketch">{{ state.undergroundSketch.active ? '继续手绘' : '补画线段' }}</button>
         <button type="button" :disabled="!state.undergroundSketch.active" @click="finishUndergroundSketch">结束</button>
         <button type="button" :disabled="!state.undergroundSketch.current.length && !state.undergroundSketch.paths.length" @click="undoUndergroundSketch">撤销</button>
-        <button type="button" :disabled="!state.undergroundSketch.current.length && !state.undergroundSketch.paths.length" @click="clearUndergroundSketch">清空</button>
       </div>
-      <p class="sketch-status">{{ state.undergroundSketch.paths.length }} 条已保存线段<span v-if="state.undergroundSketch.active"> · 地图上逐点标记道路</span></p>
+      <p class="sketch-status">{{ state.undergroundSketch.paths.length }} 条本机草稿线段<span v-if="state.undergroundSketch.active"> · 地图上逐点标记道路</span></p>
     </div>
     <div v-else class="ends">
       <button v-for="which in (['from', 'to'] as const)" :key="which" type="button" class="end" :class="{ active: r.picking === which }" @click="togglePick(which)">
@@ -91,7 +91,7 @@ function fromMe() {
 .sketch-panel { margin-top: 12px; padding: 12px; border: 1px dashed #c89adb; border-radius: 14px; background: #fcf7ff; }
 .sketch-note { margin: 0; color: #6d5378; font-size: 12px; line-height: 1.55; }
 .sketch-actions { display: grid; grid-template-columns: 1.4fr 1fr 1fr 1fr; gap: 6px; margin-top: 12px; }
-.sketch-actions button { min-height: 34px; border: 1px solid #dfd1e7; border-radius: 9px; background: #fff; color: #714580; font-size: 12px; cursor: pointer; }
+.sketch-actions button, .sketch-actions a { display: grid; place-items: center; min-height: 34px; border: 1px solid #dfd1e7; border-radius: 9px; background: #fff; color: #714580; font-size: 12px; cursor: pointer; text-decoration: none; }
 .sketch-actions button:disabled { color: #b8aabd; background: #f8f5f9; cursor: default; }
 .sketch-actions .primary-action { border-color: #a24bc4; background: #a24bc4; color: #fff; font-weight: 700; }
 .sketch-actions .primary-action.active { background: #71328d; }

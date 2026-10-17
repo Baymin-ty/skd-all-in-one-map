@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { endFor, navigateToPlace, openDining, openRoute, PLACE_COLORS, placeSelection, select, setEnd, showPanel, state } from '../lib/store'
+import { endFor, navigateToPlace, openDining, openRoute, PLACE_COLORS, placeSelection, select, setEnd, setMapView, showPanel, state } from '../lib/store'
 import { discovery, eventsIn } from '../lib/discoveryData'
 import { CROWD_LABELS, crowdAt, crowdRevision } from '../lib/crowd'
 import { dateKey, nowTick } from '../lib/campusTime'
 import { endMin, fromMin, itemsOn, nowMinute, plan, startMin } from '../lib/today'
-import { homePlace, placeLabel } from '../lib/profile'
+import { homePlace, openProfile } from '../lib/profile'
 import EventCard from './EventCard.vue'
 import Ico from './Ico.vue'
 
@@ -44,18 +44,18 @@ const todayCount = computed(() => itemsOn(plan.items, dateKey(nowTick.value)).le
 
 <template>
   <div class="page home">
-    <h2 class="title">探索校园</h2>
-    <p class="sub">点地图上的楼和点位看详情，或者从这里出发</p>
-
+    <!-- 第一排就是最常用的几件事，手机收起面板时也露在外面 -->
     <div class="quick">
-      <button type="button" class="q-go" @click="openRoute()"><Ico name="walk" /><b>步行导航</b><small>选起点和终点</small></button>
-      <button type="button" class="q-rain" @click="openRoute(true)"><Ico name="rain" /><b>雨天导航</b><small>尽量走风雨长廊</small></button>
-      <button v-if="dorm" type="button" class="q-me" @click="goPersonal(dorm)"><Ico name="housing" /><b>回寝室</b><small class="ellipsis">{{ placeLabel(dorm) || '我的寝室' }}</small></button>
-      <button v-if="lab" type="button" class="q-me" @click="goPersonal(lab)"><Ico name="academic" /><b>去实验室</b><small class="ellipsis">{{ placeLabel(lab) || '我的实验室' }}</small></button>
+      <button type="button" class="q-go" @click="openRoute()"><Ico name="walk" /><b>步行导航</b></button>
+      <button type="button" class="q-rain" @click="openRoute(true)"><Ico name="rain" /><b>雨天路线</b></button>
+      <button v-if="dorm" type="button" class="q-me" @click="goPersonal(dorm)"><Ico name="housing" /><b>回寝室</b></button>
+      <button v-else type="button" class="q-me" @click="openProfile('places')"><Ico name="housing" /><b>设寝室</b></button>
+      <button v-if="lab" type="button" class="q-me" @click="goPersonal(lab)"><Ico name="academic" /><b>去实验室</b></button>
+      <button v-else type="button" class="q-mine" @click="setMapView('mine')"><Ico name="users" /><b>我的地图</b></button>
     </div>
 
     <section class="sec now">
-      <h3>现在</h3>
+      <h3>现在 <span class="muted">点地图上的楼和点位看详情</span></h3>
       <button type="button" class="now-row" @click="showPanel('today')">
         <span class="now-icon today"><Ico name="clock" /></span>
         <span class="grow"><b>我的今天<em v-if="todayCount">{{ todayCount }} 项</em></b><small class="ellipsis">{{ todayHint }}</small></span>
@@ -99,16 +99,17 @@ const todayCount = computed(() => itemsOn(plan.items, dateKey(nowTick.value)).le
 </template>
 
 <style scoped>
-.quick { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 14px; }
-.quick button { display: grid; grid-template-columns: auto 1fr; grid-template-rows: auto auto; column-gap: 10px; align-items: center; min-width: 0; padding: 11px 12px; border: 1px solid var(--line); border-radius: 14px; background: #fff; text-align: left; cursor: pointer; }
-.quick .svgi { grid-row: 1 / 3; display: grid; place-items: center; width: 34px; height: 34px; border-radius: 10px; background: var(--bg-2); font-size: 19px; }
-.quick b { font-size: 14px; }
-.quick small { color: var(--ink-3); font-size: 11.5px; }
+.home { padding-top: 6px; }
+.quick { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.quick button { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; min-width: 0; height: 80px; padding: 8px 4px; border: 1px solid var(--line); border-radius: 16px; background: #fff; cursor: pointer; }
+.quick .svgi { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 12px; background: var(--bg-2); font-size: 19px; }
+.quick b { font-size: 12.5px; font-weight: 650; white-space: nowrap; }
+.quick button:active { transform: scale(.97); }
 .quick .q-go { border-color: var(--brand); background: var(--brand); color: #fff; }
 .quick .q-go .svgi { background: #ffffff26; }
-.quick .q-go small { color: #ffffffc0; }
 .quick .q-rain .svgi { background: #e6f5f8; color: var(--walkway); }
 .quick .q-me .svgi { background: #f3eefb; color: #6d4c9c; }
+.quick .q-mine .svgi { background: #e9effb; color: #2f5fc4; }
 @media (hover: hover) { .quick button:not(.q-go):hover { background: #f9f9fb; } .quick .q-go:hover { background: #941f25; } }
 .now h3, .upcoming h3 { justify-content: space-between; }
 .now-row { display: flex; align-items: center; gap: 12px; width: 100%; padding: 10px 8px; margin: 0 -8px; width: calc(100% + 16px); border: 0; border-radius: 12px; background: none; text-align: left; cursor: pointer; }

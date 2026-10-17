@@ -24,15 +24,15 @@ import { clockText, dateKey, dayName, dayStart, eventStatus, evStart, nowTick, S
 import type { CampusEvent } from '../lib/discoveryTypes'
 import { walkableCells } from '../lib/route'
 import {
-  buildingById, endFor, expandedGroups, groupById, groupOf, mapApi, mapHighlights,
-  addUndergroundSketchPoint, openEvent, PLACE_COLORS, POI_CATS, select, setEnd, showEventsAt, state, toast, WALKWAY_COLOR, type Selection,
+  buildingById, endFor, expandedGroups, fitToday, groupById, groupOf, mapApi, mapHighlights, mineFocus,
+  addUndergroundSketchPoint, openEvent, undergroundEndFor, PLACE_COLORS, select, setEnd, showEventsAt, state, toast, WALKWAY_COLOR, type Selection,
 } from '../lib/store'
 import type { Building, LngLat } from '../lib/types'
-import { covered, SIDEBAR_W, TOPBAR_H, ui } from '../lib/ui'
+import { covered, ui } from '../lib/ui'
 import Ico from './Ico.vue'
 import MapLabelControls from './MapLabelControls.vue'
 import { mountTodayLayer } from '../lib/todayLayer'
-import { poiIcon, poiKindLabel } from '../lib/catalog'
+import { poiIcon } from '../lib/catalog'
 import { mountLocateLayer } from '../lib/locateLayer'
 import { mountTimeMachineLayer } from '../lib/timeMachineLayer'
 import { tm } from '../lib/timeMachine'
@@ -45,7 +45,6 @@ let map: L.Map
 const zoom = ref(17)
 const minZoom = ref(16)
 const mapTools = ref<HTMLDivElement>()
-const hoverSelection = ref<Selection | null>(null)
 let labelInteraction: ReturnType<typeof createLabelInteraction> | undefined
 /** 放大到这一级，楼群自动展开显示各栋（标签放得下了） */
 const EXPAND_ALL_ZOOM = 19
@@ -84,7 +83,6 @@ function updateOpacity() {
 }
 const hoverState = createLabelHover<Selection>((selection) => {
   hovered = selection
-  hoverSelection.value = selection
   restyle()
   // 悬停只更新当前标签，不参与全局排布，也不改动其他标签的位置。
   updateHoverLabel()
@@ -97,26 +95,6 @@ function leaveHover(selection: Selection, event: L.LeafletMouseEvent) {
   if (next instanceof Element && next.closest('[data-place]')?.getAttribute('data-place') === `${selection.kind}:${selection.id}`) return
   hoverState.leave(selection)
 }
-
-const hoverPreview = computed(() => {
-  const s = hoverSelection.value
-  if (!s) return null
-  if (s.kind === 'group') {
-    const g = groupById(s.id)
-    return g && { name: g.name.zh, category: '楼群', detail: `${g.members.length} 栋建筑 · 点击展开`, icon: g.cat, color: PLACE_COLORS[g.cat] }
-  }
-  // 有活动的地点，说明里直接写最近一场，不用点开也知道这里在办什么
-  const ev = mapEvents.get(s.id)
-  const evText = ev && `${eventWhen(ev.lead, ev.tier)} · ${eventShortTitle(ev.lead.title)}${ev.events.length > 1 ? ` 等 ${ev.events.length} 场` : ''}`
-  if (s.kind === 'building') {
-    const b = buildingById(s.id)
-    return b && { name: b.name.zh, category: b.walkway ? '风雨长廊' : state.categories[b.cat]?.zh,
-      detail: evText || b.hours?.zh || b.orgs[0]?.zh || '查看地点详情与步行路线', icon: b.walkway ? 'walkway' as const : b.cat, color: b.walkway ? WALKWAY_COLOR : PLACE_COLORS[b.cat] }
-  }
-  const p = state.pois.find((p) => p.id === s.id)
-  return p && { name: p.name.zh, category: poiKindLabel(p),
-    detail: evText || p.hours?.zh || '查看地点详情与步行路线', icon: poiIcon(p), color: POI_CATS[p.cat].color }
-})
 
 // ---------- 楼的多边形：底图上楼已经画好了，平时透明只接点击；风雨长廊常亮 ----------
 const batchStyle = (): L.PathOptions => ({
@@ -536,7 +514,8 @@ let mapEvents = new Map<string, PlaceEvents>()
 function drawEvents() {
   if (!map) return
   // 时光机有自己的活动图层；导航、菜单和「我的今天」时地图让给它们
-  const hidden = tm.open || state.route.open || state.panel === 'dining' || state.panel === 'canteen' || state.panel === 'today'
+  // 我的地图只突出自己的安排，全校活动等切回全校地图或打开活动雷达再看
+  const hidden = tm.open || state.route.open || state.panel === 'dining' || state.panel === 'canteen' || mineFocus.value
   // 活动雷达里跟随筛选，不受「活动」标签开关影响；其他时候常驻显示进行中和未来 24 小时内的活动
   const radar = state.panel === 'events'
   const list = hidden || !radar && !state.labelVisibility.events ? []
@@ -657,14 +636,25 @@ function toggleRoads(on: boolean) {
 
 function drawUnderground() {
   undergroundLayer.clearLayers()
-  // 图纸候选线暂时撤下，等现场确认后再导入正式地下路网。
-  undergroundLayer.remove()
+  if (!map || !state.underground || (state.route.network !== 'underground' && !state.showUnderground)) { undergroundLayer.remove(); return }
+  for (const road of state.underground.roads) {
+    if (road.status === 'rejected' || road.path.length < 2) continue
+    L.polyline(road.path.map(toLatLng), { color: road.status === 'confirmed' ? '#6f2dbd' : '#a24bc4', weight: 4.5, opacity: 0.8, dashArray: road.status === 'candidate' ? '10 6' : undefined, lineCap: 'round', lineJoin: 'round', interactive: false }).addTo(undergroundLayer)
+  }
+  for (const connector of state.underground.connectors) {
+    if (connector.status === 'rejected') continue
+    const label = connector.kind === 'ramp' ? '车' : connector.kind === 'stairs' ? '楼' : connector.kind === 'elevator' ? '梯' : '连'
+    const color = connector.kind === 'ramp' ? '#3559a8' : connector.kind === 'stairs' ? '#b65b22' : connector.kind === 'elevator' ? '#168266' : '#73549b'
+    L.marker(toLatLng(connector.pos), { icon: L.divIcon({ className: '', html: `<span class="underground-connector" style="--connector-color:${color}">${label}</span>`, iconSize: [30, 30], iconAnchor: [15, 15] }), title: `${connector.kind === 'ramp' ? '车辆出入口' : connector.kind === 'stairs' ? '楼梯' : connector.kind === 'elevator' ? '电梯' : '连接点'} · B1`, bubblingMouseEvents: false })
+      .on('click', () => { const end = undergroundEndFor(connector.id); if (!end) return; setEnd(state.route.picking ?? (state.route.from ? 'to' : 'from'), end) }).addTo(undergroundLayer)
+  }
+  undergroundLayer.addTo(map)
 }
 
 function drawUndergroundSketch() {
   undergroundSketchLayer.clearLayers()
   if (!map) return
-  const paths = [...state.undergroundSketch.paths, ...(state.undergroundSketch.current.length > 1 ? [state.undergroundSketch.current] : [])]
+  const paths = state.undergroundSketch.current.length > 1 ? [state.undergroundSketch.current] : []
   for (const path of paths) {
     L.polyline(path.map(toLatLng), {
       color: '#a24bc4', weight: 5, opacity: 0.9, lineCap: 'round', lineJoin: 'round', interactive: false,
@@ -688,8 +678,8 @@ function drawConstruction(layer: L.LayerGroup) {
 // ---------- 相机：避开侧栏 / 顶栏 / 底部面板，范围限制在手绘图里（同 skdmap） ----------
 function uiPadding(): { tl: L.PointTuple; br: L.PointTuple } {
   if (ui.overlay) return { tl: [ui.overlay.l + 40, ui.overlay.t + 40], br: [ui.overlay.r + 40, ui.overlay.b + 24] }
-  if (ui.desktop) return { tl: [SIDEBAR_W + 48, 48], br: [48, 48] }
-  return { tl: [20, TOPBAR_H + 16], br: [20, Math.min(ui.sheet, ui.anchors[1]) + 20] }
+  if (ui.desktop) return { tl: [ui.sideW + 48, 48], br: [48, 48] }
+  return { tl: [20, ui.topH + 16], br: [20, Math.min(ui.sheet, ui.anchors[1]) + 20] }
 }
 /** 可见区域中心相对地图中心的偏移 */
 function visibleOffset(): L.Point {
@@ -728,6 +718,23 @@ function focus(p: LngLat, z = Math.max(map.getZoom(), 18), dy = 0) {
   map.flyTo(map.unproject(clampCenter(pt, z), z), z, { duration: 0.6 })
 }
 /** 往外缩到校园差不多铺满可见区域为止 */
+/**
+ * 回到全校。桌面上整个校园放进可见区域；手机竖屏太窄，整个校园只占屏幕中间一条，
+ * 改成按可见区域的高度铺满（左右可以拖着看），名称也放得下。
+ */
+function home(animate = true) {
+  if (ui.desktop || ui.overlay) return fit(state.campus!.boundary, 17, animate)
+  const cov = covered()
+  const size = map.getSize().subtract([cov.l + cov.r, cov.t + cov.b])
+  if (size.x <= 0 || size.y <= 0) return fit(state.campus!.boundary, 17, animate)
+  const bounds = L.latLngBounds(state.campus!.boundary.map(toLatLng))
+  const nw = map.project(bounds.getNorthWest(), 17)
+  const se = map.project(bounds.getSouthEast(), 17)
+  const z = Math.min(17, Math.max(map.getMinZoom(), Math.round(17 + Math.log2(Math.max(size.x / (se.x - nw.x), size.y / (se.y - nw.y))))))
+  map.stop()
+  const pt = map.project(bounds.getCenter(), z).subtract(visibleOffset())
+  map.setView(map.unproject(clampCenter(pt, z), z), z, animate ? { animate: true, duration: 0.5 } as L.ZoomPanOptions : { animate: false })
+}
 function limitZoomOut() {
   const cov = covered()
   const size = map.getSize().subtract([cov.l + cov.r, 0])
@@ -766,8 +773,9 @@ onMounted(() => {
   ;[buildingLayer, poiTargetLayer, labelLayer, hoverLabelLayer, entranceLayer, routeLayer, poiLayer, eventFocusLayer, crowdLayer, undergroundLayer, undergroundSketchLayer].forEach((l) => l.addTo(map))
   drawBuildings()
   drawPoiTargets()
-  fit(state.campus!.boundary, 17, false)
+  home(false)
   zoomClass()
+  el.value!.classList.toggle('mine-focus', mineFocus.value)
   drawLabels()
   drawPois()
   drawEvents()
@@ -776,9 +784,11 @@ onMounted(() => {
   drawUndergroundSketch()
   mapApi.fit = fit
   mapApi.focus = focus
-  mapApi.home = () => fit(state.campus!.boundary, 17)
+  mapApi.home = () => home()
   mapApi.relayout = declutter
   unmountToday = mountTodayLayer(map)
+  // 我的地图：一打开就缩放到自己的各站（分享链接等已经选中了别的东西时不抢镜头）
+  if (mineFocus.value && !state.selected && !state.eventId) fitToday()
   unmountLocate = mountLocateLayer(map)
   unmountTimeMachine = mountTimeMachineLayer(map)
   map.on('zoomend', () => {
@@ -855,14 +865,22 @@ watch(() => state.labelVisibility, () => {
 }, { deep: true })
 watch(() => state.mapSettings, restyle, { deep: true })
 watch(() => state.showRoads, toggleRoads)
-watch(() => [state.showUnderground, state.underground], drawUnderground, { deep: true })
+watch(() => [state.showUnderground, state.underground, state.route.network], drawUnderground, { deep: true })
 watch(() => [state.route.network, state.undergroundSketch.paths, state.undergroundSketch.current], drawUndergroundSketch, { deep: true })
 // 不用 :class 绑定：Vue 会整个覆盖 className，把 Leaflet 加在容器上的 class 冲掉
 watch(() => !!(state.route.picking), (on) => el.value?.classList.toggle('picking', on))
+watch(mineFocus, (on) => { el.value?.classList.toggle('mine-focus', on); declutter() })
 watch(() => ui.sheet, () => {
   clearTimeout(sheetTimer)
   sheetTimer = window.setTimeout(() => { keepInside(); declutter() }, 250)
 })
+// 拖动侧栏分隔线：标注跟着可见区域重排，松手后再把镜头收回可见范围
+watch(() => ui.sideW, () => {
+  declutter()
+  clearTimeout(sheetTimer)
+  sheetTimer = window.setTimeout(() => { if (!ui.resizingSide) { limitZoomOut(); keepInside() } }, 150)
+})
+watch(() => ui.resizingSide, (on) => { if (!on) { limitZoomOut(); keepInside(); declutter() } })
 watch(() => ui.desktop, () => {
   map.stop()
   map.invalidateSize({ pan: false })
@@ -878,19 +896,10 @@ const toolsHidden = computed(() => tm.open || !ui.desktop && ui.sheet > ui.ancho
 
 <template>
   <div ref="el" class="map campus-map" role="application" aria-label="校园地图" />
-  <div v-if="ui.desktop && !tm.open && hoverPreview" class="map-hover-card exploring" :style="hoverPreview ? { '--preview-color': hoverPreview.color } : undefined" aria-hidden="true">
-    <span class="hover-card-icon"><Ico :name="hoverPreview?.icon || 'target'" /></span>
-    <div class="hover-card-copy">
-      <span class="hover-card-eyebrow"><i />{{ hoverPreview?.category || '校园漫游' }}</span>
-      <b>{{ hoverPreview?.name || '移动鼠标，探索校园' }}</b>
-      <small>{{ hoverPreview?.detail || '靠近聚焦 · 悬停预览 · 点击查看' }}</small>
-    </div>
-    <Ico name="chevron" class="hover-card-arrow" />
-  </div>
   <div ref="mapTools" class="map-tools" :class="{ hidden: toolsHidden }" :style="{ bottom: toolsBottom + 'px' }">
     <MapLabelControls v-model="state.labelVisibility" @layout="declutter" />
     <LocateButton />
-    <button type="button" class="fab" title="回到全校" aria-label="回到全校" @click="mapApi.home()"><Ico name="home" /></button>
+    <button type="button" class="fab" :title="mineFocus ? '回到我的各站' : '回到全校'" :aria-label="mineFocus ? '回到我的各站' : '回到全校'" @click="mineFocus ? fitToday() : mapApi.home()"><Ico name="home" /></button>
     <div v-if="ui.desktop" class="zoom">
       <button type="button" aria-label="放大" :disabled="zoom >= 20" @click="map.zoomIn()"><Ico name="plus" /></button>
       <button type="button" aria-label="缩小" :disabled="zoom <= minZoom" @click="map.zoomOut()"><Ico name="minus" /></button>
@@ -919,6 +928,10 @@ const toolsHidden = computed(() => tm.open || !ui.desktop && ui.sheet > ui.ancho
 
 
 .map-tools { position: absolute; z-index: 1100; right: 12px; display: flex; flex-direction: column; gap: 10px; align-items: center; transition: bottom 0.25s, opacity 0.2s; }
+@media (max-width: 899px) {
+  .map-tools { right: 10px; gap: 8px; }
+  .map-tools .fab { width: 40px; height: 40px; font-size: 18px; box-shadow: 0 1px 2px #0000001a, 0 3px 10px #00000021; }
+}
 .map-tools.hidden { opacity: 0; pointer-events: none; }
 .fab { width: 42px; height: 42px; border-radius: 50%; border: 0; background: #fff; box-shadow: var(--shadow); display: grid; place-items: center; font-size: 19px; color: var(--ink); cursor: pointer; }
 .fab.on { background: var(--ink); color: #fff; }
@@ -930,19 +943,23 @@ const toolsHidden = computed(() => tm.open || !ui.desktop && ui.sheet > ui.ancho
 @media (hover: hover) { .fab:not(.on):hover, .zoom button:not(:disabled):hover { background: #f7f7f3; } }
 
 
-.map-hover-card { --preview-color: #355c4c; position: absolute; z-index: 1000; left: 456px; bottom: 24px; display: flex; align-items: center; gap: 12px; width: 280px; padding: 12px 14px; border: 1px solid #e0e6df; border-radius: 18px; background: #fff; box-shadow: 0 6px 24px #23372f0d; pointer-events: none; transition: border-color 180ms, box-shadow 180ms; }
-.map-hover-card.exploring { border-color: color-mix(in srgb, var(--preview-color) 45%, #fff); box-shadow: 0 8px 28px #23372f1c; }
-.hover-card-icon { flex: none; display: grid; place-items: center; width: 42px; height: 48px; border-radius: 13px; background: color-mix(in srgb, var(--preview-color) 11%, #fff); color: var(--preview-color); font-size: 23px; }
-.hover-card-copy { min-width: 0; flex: 1; }
-.hover-card-eyebrow { display: flex; align-items: center; gap: 5px; margin-bottom: 3px; color: var(--preview-color); font-size: 10px; font-weight: 600; letter-spacing: .04em; }
-.hover-card-eyebrow i { width: 5px; height: 5px; border-radius: 50%; background: currentColor; box-shadow: 0 0 0 3px color-mix(in srgb, var(--preview-color) 10%, #fff); }
-.hover-card-copy b { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; color: #253b32; font-size: 13px; line-height: 1.5; }
-.hover-card-copy small { display: block; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #7a857e; font-size: 10px; }
-.hover-card-arrow { flex: none; color: var(--preview-color); font-size: 14px; opacity: .4; transition: transform 180ms, opacity 180ms; }
-.exploring .hover-card-arrow { opacity: 1; transform: translateX(2px); }
-@media (hover: none), (pointer: coarse) { .map-hover-card { display: none; } }
 @media (prefers-reduced-motion: reduce) {
-  .map-opacity-cutout, .building-outline, .map .blabel, .map .pmark, .map-hover-card, .hover-card-arrow { transition: none; }
+  .map-opacity-cutout, .building-outline, .map .blabel, .map .pmark { transition: none; }
+}
+
+/* 我的地图：其余地点退到背景，只留楼名做方位参照；小设施图标先收起来 */
+.map.mine-focus .pmark:not(.matching):not(.sel):not(.hover-label) { display: none; }
+.map.mine-focus .blabel:not(.matching):not(.sel):not(.focused):not(.hover-label) { opacity: .55; box-shadow: none; }
+
+/* 手机：标签收紧一点，同样大小的屏幕放得下更多名称 */
+@media (max-width: 899px) {
+  .map .blabel { gap: 5px; padding: 2px 7px 2px 3px; border-radius: 9px; font-size: 11px; line-height: 17px; }
+  .map .blabel > svg { width: 19px; height: 19px; padding: 3.5px; }
+  .map .blabel.group { gap: 6px; padding: 4px 5px 4px 4px; font-size: 11.5px; }
+  .map .blabel.group > svg { width: 21px; height: 21px; }
+  .map .blabel.sel { padding: 3px 9px 3px 4px; font-size: 11.5px; }
+  .map .pmark i { width: 19px; height: 19px; font-size: 12px; }
+  .map .leaflet-control-attribution { display: none; }
 }
 
 .clash { visibility: hidden; pointer-events: none; }
@@ -954,6 +971,7 @@ const toolsHidden = computed(() => tm.open || !ui.desktop && ui.sheet > ui.ancho
 .map.z17 .emark span { display: none; }
 .rend { position: absolute; transform: translate(-50%, -100%); color: #d93025; font-size: 34px; line-height: 0; filter: drop-shadow(0 2px 2px #0000004d); }
 .underground-rend { color: #8156a8; }
+.underground-connector { display: grid; place-items: center; width: 26px; height: 26px; border: 2px solid #fff; border-radius: 50%; background: var(--connector-color); box-shadow: 0 2px 5px #0006; color: #fff; font-size: 11px; font-weight: 800; }
 .rend svg { fill: #fff; }
 /* 从教室号搜索进来：选中的楼名后面跟房间号 */
 .blabel .room-code { margin-left: 1px; padding: 1px 6px; border-radius: 6px; background: #ffffff30; font-style: normal; font-variant-numeric: tabular-nums; }
