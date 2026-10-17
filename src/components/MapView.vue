@@ -25,7 +25,7 @@ import type { CampusEvent } from '../lib/discoveryTypes'
 import { walkablePaths } from '../lib/route'
 import {
   buildingById, endFor, expandedGroups, fitToday, groupById, groupOf, mapApi, mapHighlights, mineFocus,
-  addUndergroundSketchPoint, openEvent, undergroundEndFor, PLACE_COLORS, select, setEnd, showEventsAt, state, toast, type Selection,
+  addUndergroundSketchPoint, openEvent, undergroundEndFor, PLACE_COLORS, select, setEnd, showEventsAt, state, toast, requestUndergroundStreetView, startStreetViewDebugRoute, type Selection,
 } from '../lib/store'
 import type { Building, LngLat } from '../lib/types'
 import { covered, ui } from '../lib/ui'
@@ -50,6 +50,7 @@ const mapTools = ref<HTMLDivElement>()
 let labelInteraction: ReturnType<typeof createLabelInteraction> | undefined
 /** 放大到这一级，楼群自动展开显示各栋（标签放得下了） */
 const EXPAND_ALL_ZOOM = 19
+const debugEnabled = import.meta.env.DEV
 
 const buildingLayer = L.layerGroup()
 const labelLayer = L.layerGroup()
@@ -61,6 +62,7 @@ const entranceLayer = L.layerGroup()
 const crowdLayer = L.layerGroup()
 const undergroundLayer = L.layerGroup()
 const undergroundSketchLayer = L.layerGroup()
+const streetViewLayer = L.layerGroup()
 /** 选中活动的标注卡片和脉冲圈；内容不变时不重建，免得每次刷新都重播动画 */
 const eventFocusLayer = L.layerGroup()
 let eventFocusKey = ''
@@ -588,8 +590,33 @@ function drawEventFocus(event: CampusEvent | undefined, others: number) {
   }).on('click', () => openEvent(event.id)).addTo(eventFocusLayer)
 }
 
+function drawCurrentStreetViewPoint() {
+  const current = state.route.streetView.open ? state.route.streetView.points[state.route.streetView.index] : null
+  if (!current) return
+  L.circleMarker(toLatLng(current.pos), { radius: 11, color: '#fff', weight: 4, fillColor: '#e88920', fillOpacity: 1, interactive: false, bubblingMouseEvents: false }).addTo(routeLayer)
+  L.circleMarker(toLatLng(current.pos), { radius: 17, color: '#e88920', weight: 2, fillOpacity: 0, className: 'streetview-current-pulse', interactive: false, bubblingMouseEvents: false }).addTo(routeLayer)
+  L.marker(toLatLng(current.pos), { icon: L.divIcon({ className: '', html: '<span class="streetview-current-marker">当前位置</span>', iconSize: [58, 24], iconAnchor: [29, 12] }), interactive: false, zIndexOffset: 3000, bubblingMouseEvents: false }).addTo(routeLayer)
+}
+
+function drawStreetViewRoute() {
+  const segment = state.route.result?.segments.find((s) => s.layer === 'underground')
+  if (!segment?.path.length) return
+  const path = segment.path.map(toLatLng)
+  L.polyline(path, { color: '#fff', weight: 10, opacity: 0.95, lineCap: 'round', lineJoin: 'round', interactive: false }).addTo(routeLayer)
+  L.polyline(path, { color: '#8156a8', weight: 5.5, dashArray: '10 7', lineCap: 'round', lineJoin: 'round', interactive: false }).addTo(routeLayer)
+  for (const point of state.route.streetView.points) {
+    L.circleMarker(toLatLng(point.pos), { radius: 5, color: '#fff', weight: 2, fillColor: '#8156a8', fillOpacity: 1, interactive: false, bubblingMouseEvents: false }).addTo(streetViewLayer)
+  }
+  drawCurrentStreetViewPoint()
+}
+
 function drawRoute() {
   routeLayer.clearLayers()
+  streetViewLayer.clearLayers()
+  if (state.route.streetView.open) {
+    drawStreetViewRoute()
+    return
+  }
   const underground = state.route.undergroundResult
   if (underground) {
     const path = underground.path.map(toLatLng)
@@ -598,6 +625,7 @@ function drawRoute() {
     L.polyline(path, { color: '#8156a8', weight: 5.5, dashArray: '10 7', lineCap: 'round', lineJoin: 'round', interactive: false }).addTo(routeLayer)
     L.circleMarker(path[0], { radius: 7, color: '#8156a8', weight: 3, fillColor: '#fff', fillOpacity: 1, interactive: false }).addTo(routeLayer)
     L.marker(path.at(-1)!, { icon: L.divIcon({ className: '', html: `<div class="rend underground-rend">${ICONS.pin}</div>`, iconSize: [0, 0] }), interactive: false, zIndexOffset: 1300 }).addTo(routeLayer)
+    drawCurrentStreetViewPoint()
     return
   }
   const r = state.route.result
@@ -617,14 +645,68 @@ function drawRoute() {
     L.circleMarker(toLatLng(boundary.pos), { radius: 7, color: '#e89a31', weight: 3, fillColor: entering ? '#fff7e8' : '#e89a31', fillOpacity: 1, interactive: false, bubblingMouseEvents: false }).addTo(routeLayer)
     L.marker(toLatLng(boundary.pos), {
       icon: L.divIcon({ className: '', html: `<span class="route-transition ${entering ? 'enter' : 'exit'}">${entering ? '↓' : '↑'}</span>`, iconSize: [22, 22], iconAnchor: [11, 11] }),
-      title: boundary.label, interactive: false, zIndexOffset: 1250,
-    }).addTo(routeLayer)
+      title: boundary.label, interactive: entering, zIndexOffset: 1250,
+    }).on('click', () => { if (entering) requestUndergroundStreetView() }).addTo(routeLayer)
   }
+  drawCurrentStreetViewPoint()
+}
+
+function drawStreetViewLayers(open: boolean) {
+  const fullMapLayers = [buildingLayer, labelLayer, poiTargetLayer, hoverLabelLayer, entranceLayer, poiLayer, eventFocusLayer, crowdLayer, undergroundLayer, undergroundSketchLayer]
+  if (open) {
+    for (const layer of fullMapLayers) layer.remove()
+    roadLayer?.remove()
+    routeLayer.addTo(map)
+    streetViewLayer.addTo(map)
+  } else {
+    for (const layer of fullMapLayers) layer.addTo(map)
+    drawBuildings()
+    drawPoiTargets()
+    drawLabels()
+    drawPois()
+    drawEntrances()
+    drawEvents()
+    drawCrowd()
+    drawUnderground()
+    drawUndergroundSketch()
+  }
+}
+
+function fitStreetView(pts: LngLat[], animate = true) {
+  if (!pts.length) return
+  const apply = () => {
+    if (!state.route.streetView.open || !map) return
+    map.invalidateSize({ pan: false })
+    const bounds = L.latLngBounds(pts.map(toLatLng))
+    const { center, zoom: z } = (map as unknown as { _getBoundsCenterZoom: CenterZoom })._getBoundsCenterZoom(bounds, { padding: [28, 28], maxZoom: 20 })
+    if (animate) map.flyTo(center, z, { duration: 0.45 })
+    else map.setView(center, z, { animate: false })
+  }
+  requestAnimationFrame(apply)
+}
+
+function focusStreetView(p: LngLat) {
+  if (!state.route.streetView.open || !map) return
+  map.flyTo(toLatLng(p), Math.max(map.getZoom(), 19), { duration: 0.35 })
+}
+
+function restoreFullMapAfterStreetView() {
+  const fullMapLayers = [buildingLayer, labelLayer, poiTargetLayer, hoverLabelLayer, entranceLayer, poiLayer, eventFocusLayer, crowdLayer, undergroundLayer, undergroundSketchLayer]
+  for (const layer of fullMapLayers) layer.addTo(map)
+  if (state.showRoads) toggleRoads(true)
+  drawBuildings()
+  drawPoiTargets()
+  drawLabels()
+  drawPois()
+  drawEntrances()
+  drawEvents()
+  drawCrowd()
+  drawUnderground()
+  drawUndergroundSketch()
 }
 
 function drawCrowd() {
   crowdLayer.clearLayers()
-  if (tm.open || state.route.open || (state.panel !== 'dining' && state.panel !== 'canteen')) return
   const hm = clockText(nowTick.value)
   if (!((hm >= '11:00' && hm < '13:30') || (hm >= '16:30' && hm < '19:00'))) return
   const styles = [
@@ -796,7 +878,7 @@ onMounted(() => {
   updateOpacity()
   const extras = L.layerGroup().addTo(map)
   drawConstruction(extras)
-  ;[buildingLayer, poiTargetLayer, labelLayer, hoverLabelLayer, entranceLayer, routeLayer, poiLayer, eventFocusLayer, crowdLayer, undergroundLayer, undergroundSketchLayer].forEach((l) => l.addTo(map))
+  ;[buildingLayer, poiTargetLayer, labelLayer, hoverLabelLayer, entranceLayer, routeLayer, poiLayer, eventFocusLayer, crowdLayer, undergroundLayer, undergroundSketchLayer, streetViewLayer].forEach((l) => l.addTo(map))
   drawBuildings()
   drawPoiTargets()
   home(false)
@@ -809,6 +891,8 @@ onMounted(() => {
   drawUnderground()
   drawUndergroundSketch()
   mapApi.fit = fit
+  mapApi.fitStreetView = (pts) => fitStreetView(pts)
+  mapApi.focusStreetView = focusStreetView
   mapApi.focus = focus
   mapApi.home = () => home()
   mapApi.relayout = declutter
@@ -867,7 +951,13 @@ watch(() => [state.selected, state.chip, mapHighlights.value, state.room], () =>
   drawEntrances()
 })
 watch(() => state.pois, () => { drawPoiTargets(); drawPois() }, { deep: true })
-watch(() => [state.route.result, state.route.undergroundResult], drawRoute)
+watch(() => [state.route.result, state.route.undergroundResult, state.route.streetView.open, state.route.streetView.index], drawRoute)
+watch(() => state.route.streetView.open, (open) => {
+  el.value?.classList.toggle('streetview-map', open)
+  if (open) drawStreetViewLayers(true)
+  else restoreFullMapAfterStreetView()
+  requestAnimationFrame(() => map?.invalidateSize({ pan: false }))
+})
 watch(() => [state.entranceBuilding, state.route.open, state.route.result, state.route.from, state.route.to], () => { drawEntrances(); drawLabels(); drawPois() })
 watch(() => [state.panel, state.eventId, state.radar.range, state.radar.cat, state.radar.place, state.route.open, discovery.events, nowTick.value, tm.open], drawEvents)
 watch(() => [state.panel, state.route.open, nowTick.value, crowdRevision.value, discovery.canteens, tm.open], drawCrowd)
@@ -924,6 +1014,7 @@ const toolsHidden = computed(() => tm.open || parcel.open || !ui.desktop && ui.s
   <div ref="mapTools" class="map-tools" :class="{ hidden: toolsHidden }" :style="{ bottom: toolsBottom + 'px' }">
     <CampusMapToggle />
     <MapLabelControls v-model="state.labelVisibility" @layout="declutter" />
+    <button v-if="debugEnabled" type="button" class="debug-streetview-button" @click.stop="startStreetViewDebugRoute">街景调试</button>
     <LocateButton />
     <div v-if="ui.desktop" class="zoom">
       <button type="button" aria-label="放大" :disabled="zoom >= 20" @click="map.zoomIn()"><Ico name="plus" /></button>
@@ -933,7 +1024,11 @@ const toolsHidden = computed(() => tm.open || parcel.open || !ui.desktop && ui.s
 </template>
 
 <style>
-.map { position: absolute; inset: 0; background: #fbfaf7; isolation: isolate; }
+.map { position: absolute; inset: 0; background: #fbfaf7; isolation: isolate; transition: inset .25s, width .25s, height .25s, border-radius .25s; }
+.map.streetview-map { z-index: 3001; top: 18px; right: 18px; left: auto; bottom: auto; width: min(34vw, 420px); height: min(30vh, 260px); border: 3px solid #fff; border-radius: 16px; box-shadow: 0 8px 28px #0008; overflow: hidden; }
+.streetview-current-pulse { animation: streetview-pulse 1.5s ease-out infinite; }
+.streetview-current-marker { display: block; padding: 3px 6px; border: 2px solid #fff; border-radius: 999px; background: #e88920; color: #fff; box-shadow: 0 2px 6px #0008; font-size: 10px; font-weight: 700; text-align: center; white-space: nowrap; }
+@keyframes streetview-pulse { 0% { opacity: .9; transform: scale(.7); } 100% { opacity: 0; transform: scale(1.6); } }
 .map.leaflet-container { font: inherit; }
 .map-opacity-cutout { transition: fill 240ms ease-in-out; }
 .building-outline { transition: stroke 240ms ease-in-out, stroke-opacity 240ms ease-in-out, stroke-width 240ms ease-in-out, fill-opacity 240ms ease-in-out; }
@@ -950,6 +1045,7 @@ const toolsHidden = computed(() => tm.open || parcel.open || !ui.desktop && ui.s
 
 
 .map-tools { position: absolute; z-index: 1100; right: 12px; display: flex; flex-direction: column; gap: 10px; align-items: center; transition: bottom 0.25s, opacity 0.2s; }
+.debug-streetview-button { padding: 7px 10px; border: 1px solid #d28a2d; border-radius: 999px; background: #fffaf0; color: #9a621d; font-size: 11px; box-shadow: 0 2px 8px #0002; cursor: pointer; }
 @media (max-width: 899px) {
   .map-tools { right: 10px; gap: 8px; }
   .map-tools .fab { width: 40px; height: 40px; font-size: 18px; box-shadow: 0 1px 2px #0000001a, 0 3px 10px #00000021; }

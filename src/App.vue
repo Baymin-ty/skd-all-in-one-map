@@ -25,6 +25,7 @@ import { loadUserData } from './lib/userData'
 import { applyMapPrefs, presetMapMode } from './lib/profile'
 import { parcel } from './lib/parcelStation'
 import BuildingExplorer from './components/BuildingExplorer.vue'
+import UndergroundStreetView from './components/UndergroundStreetView.vue'
 
 // 快递站货架平面图用得少，点开时再加载
 const ParcelPlan = defineAsyncComponent(() => import('./components/ParcelPlan.vue'))
@@ -169,6 +170,7 @@ function resizeByKey(e: KeyboardEvent) {
     <AccountDialog />
     <ParcelPlan v-if="parcel.open" />
     <BuildingExplorer />
+    <UndergroundStreetView />
 
     <div v-if="state.route.picking" class="pick-hint" role="status" :style="ui.desktop ? undefined : { top: ui.topH + 4 + 'px' }">
       {{ state.route.network === 'underground' ? '地下标注模式：在窗口中逐点标记道路或上下连接点' : `点地图上的楼、点位或任意位置作为${state.route.picking === 'from' ? '起点' : '终点'}` }}

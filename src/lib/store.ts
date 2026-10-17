@@ -25,6 +25,9 @@ import { plan, type PlanItem, updateItem, withDiscoveryEvents } from './today'
 import { agendaEntries, agendaStops, myMap, weekDates } from './myMap'
 import { validateUndergroundMap, type UndergroundMap } from './underground'
 import { mergeUndergroundSketch } from './undergroundSketch'
+import { streetViewPointPosition } from './undergroundGraph'
+import { streetViewUrl } from './streetview'
+import { meters } from './measure'
 
 /** 当前地下地图中连通地面的车辆坡道（ramp）位置；在“我要避雨！”强制走地下时，把这些位置也视为地面可走，以便步行导航能走到车辆出入口。 */
 function rampConnectorPositions(underground: UndergroundMap | null): LngLat[] {
@@ -116,6 +119,8 @@ export const state = reactive({
     picking: null as 'from' | 'to' | null,
     result: null as RouteResult | null,
     undergroundResult: null as UndergroundRouteResult | null,
+    /** Underground street-view navigation session. */
+    streetView: { active: false, open: false, pending: false, index: 0, points: [] as { id: string; pos: LngLat; imageUrl: string }[] },
     failed: false,
   },
   toast: '',
@@ -194,6 +199,9 @@ export const mapHighlights = computed(() => {
 export const mapApi = {
   fit: (_pts: LngLat[], _maxZoom?: number) => {},
   focus: (_p: LngLat, _zoom?: number, _dy?: number) => {},
+  /** 街景模式专用相机：小地图不应使用侧栏/底部面板的 padding。 */
+  fitStreetView: (_pts: LngLat[]) => {},
+  focusStreetView: (_p: LngLat) => {},
   /** 回到全校（手机上铺满屏幕的那一级） */
   home: () => {},
   /** 其他图层画了参与避让的标记后，请地图重新排一次标签 */
@@ -201,6 +209,81 @@ export const mapApi = {
 }
 
 let toastTimer = 0
+function projectOnPath(p: LngLat, path: LngLat[]) {
+  let travelled = 0
+  let best = { distance: Infinity, along: 0 }
+  for (let i = 1; i < path.length; i++) {
+    const a = path[i - 1], b = path[i]
+    const k = Math.cos(((a[1] + b[1] + p[1]) / 3) * Math.PI / 180)
+    const dx = (b[0] - a[0]) * k, dy = b[1] - a[1]
+    const px = (p[0] - a[0]) * k, py = p[1] - a[1]
+    const t = Math.max(0, Math.min(1, (px * dx + py * dy) / (dx * dx + dy * dy || 1)))
+    const projected: LngLat = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]
+    const distance = meters(p, projected)
+    if (distance < best.distance) best = { distance, along: travelled + meters(a, b) * t }
+    travelled += meters(a, b)
+  }
+  return best
+}
+
+function streetViewPointsForRoute() {
+  const map = state.underground
+  const result = state.route.result
+  // 只取地下段；segment.path 已经是从当前起点到终点的有向路径，
+  // 因而按它的累计距离排序天然支持反向导航。
+  const segment = result?.segments.find((s) => s.layer === 'underground')
+  if (!map?.points?.length || !segment?.path.length) return []
+  const graph = { nodes: map.nodes, edges: map.edges, points: map.points, entrances: map.connectors }
+  return map.points.map((point) => {
+    const pos = streetViewPointPosition(graph, point)
+    if (!pos) return null
+    const projection = projectOnPath(pos, segment.path)
+    return { id: point.id, pos, imageUrl: streetViewUrl(point.imageId), ...projection }
+  }).filter((point): point is { id: string; pos: LngLat; imageUrl: string; distance: number; along: number } => !!point && point.distance <= 30)
+    .sort((a, b) => a.along - b.along)
+    .map(({ id, pos, imageUrl }) => ({ id, pos, imageUrl }))
+}
+export function openUndergroundStreetView() {
+  const points = streetViewPointsForRoute()
+  if (!points.length) {
+    state.route.streetView.pending = false
+    return toast('这段地下路线暂无街景图片')
+  }
+  state.route.streetView = { active: true, open: true, pending: false, index: 0, points }
+  const undergroundPath = state.route.result?.segments.find((segment) => segment.layer === 'underground')?.path ?? []
+  mapApi.fitStreetView(undergroundPath.length ? undergroundPath : points.map((p) => p.pos))
+}
+export function startStreetViewNavigation() { openUndergroundStreetView() }
+export function requestUndergroundStreetView() { state.route.streetView.pending = true }
+export function cancelUndergroundStreetView() {
+  state.route.streetView.pending = false
+  if (!state.route.streetView.open) return
+  stopStreetViewNavigation()
+}
+export function stopStreetViewNavigation() {
+  const s = state.route.streetView
+  s.active = false
+  s.open = false
+  s.pending = false
+  const path = state.route.result?.segments.flatMap((x) => x.path) || []
+  if (path.length) mapApi.fit(path, 19)
+}
+export function nextStreetViewPoint() {
+  const s = state.route.streetView
+  if (!s.open) return
+  if (s.index >= s.points.length - 1) return stopStreetViewNavigation()
+  s.index++
+  mapApi.focusStreetView(s.points[s.index].pos)
+}
+export function advanceUndergroundStreetView() { nextStreetViewPoint() }
+export function previousStreetViewPoint() {
+  const s = state.route.streetView
+  if (!s.open) return
+  s.index = Math.max(0, s.index - 1)
+  mapApi.focusStreetView(s.points[s.index].pos)
+}
+export function previousUndergroundStreetView() { previousStreetViewPoint() }
+
 export function toast(msg: string) {
   state.toast = msg
   clearTimeout(toastTimer)
@@ -679,6 +762,23 @@ export function setRainMode(enabled: boolean) {
   computeRoute(false)
 }
 
+/** 临时调试入口：直接复现教学中心 → 物质1的避雨街景路线。 */
+export function startStreetViewDebugRoute() {
+  const matches = (b: (typeof state.buildings)[number], text: string) => b.name.zh === text || b.short?.zh === text || b.aliases?.includes(text)
+  const from = state.buildings.find((b) => matches(b, '教学中心'))
+  const to = state.buildings.find((b) => matches(b, '物质1'))
+  if (!from || !to) return toast('调试路线地点尚未加载')
+  state.route.network = 'surface'
+  state.route.open = true
+  state.route.picking = null
+  if (!state.rainMode) setRainMode(true)
+  // 调试时把“教学中心”的起点向东偏移一点，落到图 1 所示的入口一侧；不改变正式入口选择逻辑。
+  const debugFrom: LngLat = [from.center[0] + 0.00035, from.center[1]]
+  setEnd('from', { name: from.name.zh, point: debugFrom })
+  setEnd('to', { name: to.name.zh, point: to.center })
+  toast('已启动：教学中心 → 物质1')
+}
+
 export function openRoute() {
   state.panel = 'home'
   state.route.open = true
@@ -727,5 +827,8 @@ export function computeRoute(fit = true) {
 export function closeRoute() {
   state.rainMode = false
   if (state.campus) initRouting(state.campus)
+  state.route.streetView.active = false
+  state.route.streetView.open = false
+  state.route.streetView.pending = false
   Object.assign(state.route, { open: false, network: 'surface', from: null, to: null, picking: null, result: null, undergroundResult: null, failed: false })
 }
