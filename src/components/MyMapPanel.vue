@@ -33,7 +33,7 @@ const scopeDate = computed(() => {
   const md = (d: string) => `${Number(d.slice(5, 7))}/${Number(d.slice(8))}`
   if (week.value) return `${md(myAgenda.value.dates[0])} – ${md(myAgenda.value.dates.at(-1)!)}`
   const d = plan.date
-  return `${Number(d.slice(5, 7))}月${Number(d.slice(8))}日${scope.value === 'today' ? '' : ` ${weekdayText(d)}`}`
+  return `${Number(d.slice(5, 7))}月${Number(d.slice(8))}日 ${weekdayText(d)}`
 })
 const emptyText = computed(() => scope.value === 'week' ? '本周没有安排' : scope.value === 'tomorrow' ? '明天没有安排' : scope.value === 'today' ? '今天没有安排' : '这天没有安排')
 /** 本周按天分组；某一天就一组 */
