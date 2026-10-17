@@ -5,10 +5,19 @@ import type { LngLat, UndergroundConnector, UndergroundMap } from './types'
 
 const DEFAULT_CONNECTOR_SNAP = 45
 
+export interface FixedUndergroundConnectors {
+  /** 强制地下路线使用的地面入口连接点。 */
+  enterId: string
+  /** 强制地下路线使用的地面出口连接点。 */
+  exitId: string
+}
+
 export interface IntegratedRouteOptions {
   connectorSnapMeters?: number
   /** 强制走地下：只返回「地面 → 地下 → 地面」候选，不比较地面直达。 */
   forceUnderground?: boolean
+  /** 路线覆盖：直接使用指定的地下入口和出口，不参与自动选择。 */
+  fixedUndergroundConnectors?: FixedUndergroundConnectors
 }
 
 type Connector = Pick<UndergroundConnector, 'id' | 'floorFrom' | 'floorTo' | 'kind' | 'pos'>
@@ -52,7 +61,7 @@ function routeMetrics(segments: RouteSegment[], transitions: RouteTransition[]):
  * 每个连接点都先通过地下路网最近路段投影吸附，无法接入的点自动跳过。
  */
 export function findIntegratedRoute(from: Target, to: Target, map: UndergroundMap | null, options: IntegratedRouteOptions = {}): RouteResult | null {
-  const direct = options.forceUnderground ? null : findRoute(from, to)
+  const direct = options.forceUnderground || options.fixedUndergroundConnectors ? null : findRoute(from, to)
   if (!map) return direct
   const connectorSnapMeters = options.connectorSnapMeters ?? DEFAULT_CONNECTOR_SNAP
   const network = map
@@ -63,8 +72,21 @@ export function findIntegratedRoute(from: Target, to: Target, map: UndergroundMa
   const fromRoutes = connectors.map((connector) => findRoute(from, { point: connector.pos }))
   const toRoutes = connectors.map((connector) => findRoute({ point: connector.pos }, to))
 
-  // 强制避雨走地下时：固定使用离出发点最近的入口、离终点最近的出口，不比较全组合。
-  if (options.forceUnderground) {
+  // 路线覆盖优先于“最近入口/出口”：两个连接点都必须可达且地下路网可连通。
+  if (options.fixedUndergroundConnectors) {
+    const enterIdx = connectors.findIndex((connector) => connector.id === options.fixedUndergroundConnectors!.enterId)
+    const exitIdx = connectors.findIndex((connector) => connector.id === options.fixedUndergroundConnectors!.exitId)
+    const start = enterIdx >= 0 ? fromRoutes[enterIdx] : null
+    const finish = exitIdx >= 0 ? toRoutes[exitIdx] : null
+    if (enterIdx < 0 || exitIdx < 0 || enterIdx === exitIdx || !start || !finish) return null
+    const underground = findUndergroundRoute(network, connectors[enterIdx].id, connectors[exitIdx].id, { connectorSnapMeters })
+    if (!underground) return null
+    return routeMetrics([
+      ...start.segments,
+      { path: underground.path, layer: 'underground' },
+      ...finish.segments,
+    ], [transition(connectors[enterIdx], 'enter'), transition(connectors[exitIdx], 'exit')])
+  }  if (options.forceUnderground) {
     let enterIdx = -1, exitIdx = -1
     let enterCost = Infinity, exitCost = Infinity
     for (let i = 0; i < connectors.length; i++) {

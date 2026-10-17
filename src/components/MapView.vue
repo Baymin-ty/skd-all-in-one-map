@@ -63,6 +63,7 @@ const crowdLayer = L.layerGroup()
 const undergroundLayer = L.layerGroup()
 const undergroundSketchLayer = L.layerGroup()
 const streetViewLayer = L.layerGroup()
+const streetViewCurrentLayer = L.layerGroup()
 /** 选中活动的标注卡片和脉冲圈；内容不变时不重建，免得每次刷新都重播动画 */
 const eventFocusLayer = L.layerGroup()
 let eventFocusKey = ''
@@ -591,21 +592,34 @@ function drawEventFocus(event: CampusEvent | undefined, others: number) {
 }
 
 function drawCurrentStreetViewPoint() {
+  streetViewCurrentLayer.clearLayers()
+  if (state.route.streetView.open) streetViewCurrentLayer.addTo(map)
   const current = state.route.streetView.open ? state.route.streetView.points[state.route.streetView.index] : null
   if (!current) return
-  L.circleMarker(toLatLng(current.pos), { radius: 11, color: '#fff', weight: 4, fillColor: '#e88920', fillOpacity: 1, interactive: false, bubblingMouseEvents: false }).addTo(routeLayer)
-  L.circleMarker(toLatLng(current.pos), { radius: 17, color: '#e88920', weight: 2, fillOpacity: 0, className: 'streetview-current-pulse', interactive: false, bubblingMouseEvents: false }).addTo(routeLayer)
-  L.marker(toLatLng(current.pos), { icon: L.divIcon({ className: '', html: '<span class="streetview-current-marker">当前位置</span>', iconSize: [58, 24], iconAnchor: [29, 12] }), interactive: false, zIndexOffset: 3000, bubblingMouseEvents: false }).addTo(routeLayer)
+  L.circleMarker(toLatLng(current.pos), { pane: 'streetview-current-pane', radius: 9, color: '#fff', weight: 3, fillColor: '#f5c542', fillOpacity: 1, interactive: false, bubblingMouseEvents: false }).addTo(streetViewCurrentLayer)
+  L.circleMarker(toLatLng(current.pos), { pane: 'streetview-current-pane', radius: 18, color: '#f5c542', weight: 2.5, fillOpacity: 0, className: 'streetview-current-pulse', interactive: false, bubblingMouseEvents: false }).addTo(streetViewCurrentLayer)
+  streetViewCurrentLayer.eachLayer((layer) => {
+    const bringToFront = (layer as L.Layer & { bringToFront?: () => void }).bringToFront
+    bringToFront?.call(layer)
+  })
 }
 
 function drawStreetViewRoute() {
   const segment = state.route.result?.segments.find((s) => s.layer === 'underground')
   if (!segment?.path.length) return
   const path = segment.path.map(toLatLng)
-  L.polyline(path, { color: '#fff', weight: 10, opacity: 0.95, lineCap: 'round', lineJoin: 'round', interactive: false }).addTo(routeLayer)
+  const casing: L.PolylineOptions = { color: '#fff', weight: 10, opacity: 0.95, lineCap: 'round', lineJoin: 'round', interactive: false }
+  L.polyline(path, casing).addTo(routeLayer)
   L.polyline(path, { color: '#8156a8', weight: 5.5, dashArray: '10 7', lineCap: 'round', lineJoin: 'round', interactive: false }).addTo(routeLayer)
+  const currentId = state.route.streetView.points[state.route.streetView.index]?.id
   for (const point of state.route.streetView.points) {
-    L.circleMarker(toLatLng(point.pos), { radius: 5, color: '#fff', weight: 2, fillColor: '#8156a8', fillOpacity: 1, interactive: false, bubblingMouseEvents: false }).addTo(streetViewLayer)
+    if (point.id === currentId) continue
+    L.marker(toLatLng(point.pos), {
+      pane: 'streetview-current-pane',
+      icon: L.divIcon({ className: 'streetview-point-host', html: '<span class="streetview-point-marker" />', iconSize: [12, 12], iconAnchor: [6, 6] }),
+      interactive: false,
+      bubblingMouseEvents: false,
+    }).addTo(streetViewLayer)
   }
   drawCurrentStreetViewPoint()
 }
@@ -613,6 +627,7 @@ function drawStreetViewRoute() {
 function drawRoute() {
   routeLayer.clearLayers()
   streetViewLayer.clearLayers()
+  streetViewCurrentLayer.clearLayers()
   if (state.route.streetView.open) {
     drawStreetViewRoute()
     return
@@ -658,6 +673,7 @@ function drawStreetViewLayers(open: boolean) {
     roadLayer?.remove()
     routeLayer.addTo(map)
     streetViewLayer.addTo(map)
+    streetViewCurrentLayer.addTo(map)
   } else {
     for (const layer of fullMapLayers) layer.addTo(map)
     drawBuildings()
@@ -685,13 +701,19 @@ function fitStreetView(pts: LngLat[], animate = true) {
   requestAnimationFrame(apply)
 }
 
+let streetViewFocusToken = 0
 function focusStreetView(p: LngLat) {
-  if (!state.route.streetView.open || !map) return
-  map.flyTo(toLatLng(p), Math.max(map.getZoom(), 19), { duration: 0.35 })
+  const token = ++streetViewFocusToken
+  requestAnimationFrame(() => {
+    if (token !== streetViewFocusToken || !state.route.streetView.open || !map) return
+    map.invalidateSize({ pan: false })
+    // 切换图片和地图位置必须是同一个原子步骤；不用 flyTo，避免快速点击时图片已经变了而地图还在飞向上一个点。
+    map.setView(toLatLng(p), Math.max(map.getZoom(), 19), { animate: false })
+  })
 }
 
 function restoreFullMapAfterStreetView() {
-  const fullMapLayers = [buildingLayer, labelLayer, poiTargetLayer, hoverLabelLayer, entranceLayer, poiLayer, eventFocusLayer, crowdLayer, undergroundLayer, undergroundSketchLayer]
+  const fullMapLayers = [buildingLayer, labelLayer, poiTargetLayer, hoverLabelLayer, entranceLayer, poiLayer, eventFocusLayer, crowdLayer, undergroundLayer, undergroundSketchLayer, streetViewCurrentLayer]
   for (const layer of fullMapLayers) layer.addTo(map)
   if (state.showRoads) toggleRoads(true)
   drawBuildings()
@@ -869,7 +891,7 @@ onMounted(() => {
   keepInside = limitPan(map, clampCenter)
   L.control.attribution({ prefix: false, position: 'bottomright' }).addAttribution('底图 © 上海科技大学校园地图 · 部分道路 © OpenStreetMap contributors').addTo(map)
   opacityLayer = createMapOpacity(map, [...state.buildings, ...(state.campus?.construction ?? []).map((c, i) => ({ ...c, id: `construction-${i}` }))])
-  for (const [name, z] of [['poi-hit-pane', 450], ['label-hover-pane', 610], ['event-label-pane', 630]] as const) {
+  for (const [name, z] of [['poi-hit-pane', 450], ['label-hover-pane', 610], ['event-label-pane', 630], ['streetview-current-pane', 900]] as const) {
     const pane = map.createPane(name)
     pane.style.zIndex = String(z)
     pane.style.pointerEvents = 'none'
@@ -878,7 +900,7 @@ onMounted(() => {
   updateOpacity()
   const extras = L.layerGroup().addTo(map)
   drawConstruction(extras)
-  ;[buildingLayer, poiTargetLayer, labelLayer, hoverLabelLayer, entranceLayer, routeLayer, poiLayer, eventFocusLayer, crowdLayer, undergroundLayer, undergroundSketchLayer, streetViewLayer].forEach((l) => l.addTo(map))
+  ;[buildingLayer, poiTargetLayer, labelLayer, hoverLabelLayer, entranceLayer, routeLayer, poiLayer, eventFocusLayer, crowdLayer, undergroundLayer, undergroundSketchLayer, streetViewLayer, streetViewCurrentLayer].forEach((l) => l.addTo(map))
   drawBuildings()
   drawPoiTargets()
   home(false)
@@ -1027,7 +1049,7 @@ const toolsHidden = computed(() => tm.open || parcel.open || !ui.desktop && ui.s
 .map { position: absolute; inset: 0; background: #fbfaf7; isolation: isolate; transition: inset .25s, width .25s, height .25s, border-radius .25s; }
 .map.streetview-map { z-index: 3001; top: 18px; right: 18px; left: auto; bottom: auto; width: min(34vw, 420px); height: min(30vh, 260px); border: 3px solid #fff; border-radius: 16px; box-shadow: 0 8px 28px #0008; overflow: hidden; }
 .streetview-current-pulse { animation: streetview-pulse 1.5s ease-out infinite; }
-.streetview-current-marker { display: block; padding: 3px 6px; border: 2px solid #fff; border-radius: 999px; background: #e88920; color: #fff; box-shadow: 0 2px 6px #0008; font-size: 10px; font-weight: 700; text-align: center; white-space: nowrap; }
+.streetview-point-marker { display: block; width: 10px; height: 10px; border: 2px solid #fff; border-radius: 2px; background: #f5c542; box-shadow: 0 1px 4px #0008; }
 @keyframes streetview-pulse { 0% { opacity: .9; transform: scale(.7); } 100% { opacity: 0; transform: scale(1.6); } }
 .map.leaflet-container { font: inherit; }
 .map-opacity-cutout { transition: fill 240ms ease-in-out; }

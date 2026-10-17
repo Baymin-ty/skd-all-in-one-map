@@ -75,4 +75,11 @@ describe('地上地下距离导航', () => {
     expect(result.segments.every((segment) => segment.layer === 'surface')).toBe(true)
   })
 
+  it('支持固定地下路线的进出连接点', () => {
+    initRouting({ ...campus, grid: { ...campus.grid, rows: campus.grid.rows.map((row, i) => i < 25 ? row.slice(0, 18) + '1' + row.slice(19) : row) } })
+    const map = underground(longA, longB)
+    map.connectors.push({ id: 'other-enter', floorFrom: 0, floorTo: -1, kind: 'stairs', pos: [0.0003, 0.0038] })
+    const result = findIntegratedRoute({ point: longA }, { point: longB }, map, { forceUnderground: true, fixedUndergroundConnectors: { enterId: 'other-enter', exitId: 'b' } })!
+    expect(result.transitions.map((transition) => transition.connectorId)).toEqual(['other-enter', 'b'])
+  })
 })

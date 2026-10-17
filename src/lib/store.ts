@@ -3,7 +3,7 @@ import type { IconName } from './icons'
 import { groupBuildings, type BuildingGroup } from './groups'
 import { initRouting, type RouteResult, type Target } from './route'
 import { copyGrid, validSurfaceGrid, type SurfaceGrid } from './network'
-import { findIntegratedRoute } from './integratedRoute'
+import { findIntegratedRoute, type FixedUndergroundConnectors } from './integratedRoute'
 import type { UndergroundRouteResult } from './undergroundRoute'
 import { openSheet, ui } from './ui'
 import type { Building, Campus, I18nText, LngLat, PlaceCat, Places, Poi } from './types'
@@ -250,8 +250,8 @@ export function openUndergroundStreetView() {
     return toast('这段地下路线暂无街景图片')
   }
   state.route.streetView = { active: true, open: true, pending: false, index: 0, points }
-  const undergroundPath = state.route.result?.segments.find((segment) => segment.layer === 'underground')?.path ?? []
-  mapApi.fitStreetView(undergroundPath.length ? undergroundPath : points.map((p) => p.pos))
+  // 初始视野直接落在第一个街景点，避免整条路线 fit 后首个点落在小地图边缘甚至视口外。
+  mapApi.focusStreetView(points[0].pos)
 }
 export function startStreetViewNavigation() { openUndergroundStreetView() }
 export function requestUndergroundStreetView() { state.route.streetView.pending = true }
@@ -762,6 +762,19 @@ export function setRainMode(enabled: boolean) {
   computeRoute(false)
 }
 
+const TEACHING_TO_MATERIAL1_ROUTE: FixedUndergroundConnectors = {
+  // 教学中心侧当前路线使用的下行入口。
+  enterId: 'ug-entrance-mvc8btwo15',
+  // 已标注“物质学院1号楼”的电梯口。
+  exitId: 'ug-entrance-mvc8itpi2p',
+}
+
+function fixedUndergroundConnectorsForRoute(from: RouteEnd, to: RouteEnd): FixedUndergroundConnectors | undefined {
+  const teaching = (end: RouteEnd) => (end.place?.kind === 'building' && end.place.id === 'edb12f3d') || end.name.includes('教学中心')
+  const material1 = (end: RouteEnd) => (end.place?.kind === 'building' && end.place.id === 'ded84a6d') || end.name.includes('物质1') || end.name.includes('物质学院1号楼')
+  return teaching(from) && material1(to) ? TEACHING_TO_MATERIAL1_ROUTE : undefined
+}
+
 /** 临时调试入口：直接复现教学中心 → 物质1的避雨街景路线。 */
 export function startStreetViewDebugRoute() {
   const matches = (b: (typeof state.buildings)[number], text: string) => b.name.zh === text || b.short?.zh === text || b.aliases?.includes(text)
@@ -819,7 +832,11 @@ export function computeRoute(fit = true) {
     r.failed = false
     return
   }
-  r.result = findIntegratedRoute(r.from, r.to, state.underground, state.rainMode ? { forceUnderground: true } : undefined)
+  const fixedUndergroundConnectors = fixedUndergroundConnectorsForRoute(r.from, r.to)
+  r.result = findIntegratedRoute(r.from, r.to, state.underground, {
+    ...(state.rainMode ? { forceUnderground: true } : {}),
+    ...(fixedUndergroundConnectors ? { fixedUndergroundConnectors } : {}),
+  })
   r.failed = !r.result
   if (r.result && fit) mapApi.fit(r.result.segments.flatMap((s) => s.path), 19)
 }
