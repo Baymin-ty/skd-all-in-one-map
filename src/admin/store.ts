@@ -4,7 +4,7 @@ import { PLACE_COLORS, POI_CATS } from '../lib/catalog'
 import type { IconName } from '../lib/icons'
 import { DEFAULT_MAP_SETTINGS, validMapSettings } from '../lib/mapSettings'
 import {
-  addNode, autoBindEntrances, bindEntrance, connect, createStreetViewPoint, graphFromMap, graphToMap, importSketch, interpolateStreetViewPoints, mergeNodes, moveNode, removeEdge, removeNode,
+  addNode, autoBindEntrances, bindEntrance, connect, createStreetViewPoint, graphFromMap, graphToMap, importSketch, planStreetViewPathInterpolation, mergeNodes, moveNode, removeEdge, removeNode,
   roundPos, splitEdge, ugId, unbindEntrance, type UgStreetViewPoint, type UndergroundGraph,
 } from '../lib/undergroundGraph'
 export type Kind = 'building' | 'poi'
@@ -254,20 +254,11 @@ export function addUndergroundStreetViewPoint(edgeId: string, pos: LngLat) {
   })
   return point
 }
-/** 在同一路段上的两个街景点之间按数量均匀插入新的街景点。 */
-export function interpolateUndergroundStreetViewPoints(id1: string, id2: string, count: number) {
-  let result: ReturnType<typeof interpolateStreetViewPoints> = { points: [], error: '无法插值' }
-  changeUnderground((g) => {
-    result = interpolateStreetViewPoints(g, id1, id2, count)
-    if (result.points.length) admin.undergroundSelected = { kind: 'point', id: result.points[0].id }
-  })
-  return result
-}
-/** 上传街景图：服务端按 imageId（GUID）改名后写入 data/streetview。 */
-export async function uploadUndergroundStreetViewImage(imageId: string, file: File) {
-  if (!authorized()) return false
-  if (!['image/jpeg', 'image/jpg', 'image/png', 'image/webp'].includes(file.type)) { notify('只支持 JPG、PNG 或 WebP 图片', 'error'); return false }
-  if (file.size > 20 * 1024 * 1024) { notify('图片不能超过 20 MB', 'error'); return false }
+const STREETVIEW_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp']
+const streetViewFileIssue = (file: File) => !STREETVIEW_TYPES.includes(file.type) ? '只支持 JPG、PNG 或 WebP 图片' : file.size > 20 * 1024 * 1024 ? '图片不能超过 20 MB' : ''
+async function putStreetViewImage(imageId: string, file: File) {
+  const issue = streetViewFileIssue(file)
+  if (issue) throw new Error(issue)
   const ctl = new AbortController(), timeout = setTimeout(() => ctl.abort(), 60_000)
   try {
     const res = await fetch(`/api/underground/streetview/${encodeURIComponent(imageId)}`, {
@@ -278,12 +269,63 @@ export async function uploadUndergroundStreetViewImage(imageId: string, file: Fi
       if (res.status === 401 && admin.loggedIn) { logout(); admin.loginOpen = true }
       throw new Error(data.error || `上传失败（${res.status}）`)
     }
+  } catch (e) {
+    if (e instanceof DOMException && e.name === 'AbortError') throw new Error('上传超时，请重试')
+    throw e
+  } finally { clearTimeout(timeout) }
+}
+/** 上传街景图：服务端按 imageId（GUID）改名后写入 data/streetview。 */
+export async function uploadUndergroundStreetViewImage(imageId: string, file: File) {
+  if (!authorized()) return false
+  try {
+    await putStreetViewImage(imageId, file)
     notify('街景图片已上传')
     return true
   } catch (e) {
-    notify(e instanceof DOMException && e.name === 'AbortError' ? '上传超时，请重试' : `上传失败：${(e as Error).message}`, 'error')
+    notify(`上传失败：${(e as Error).message}`, 'error')
     return false
-  } finally { clearTimeout(timeout) }
+  }
+}
+/**
+ * 插值并批量上传：图片先按文件名排序，再依次写入每个插值点的 GUID；
+ * 只有全部上传成功后才把新街景点提交到路网。
+ */
+export async function interpolateUndergroundStreetViewPathWithImages(
+  nodeIds: string[], count: number, files: File[], onProgress?: (done: number, total: number) => void,
+): Promise<ReturnType<typeof planStreetViewPathInterpolation>> {
+  if (!authorized()) return { points: [], error: '请先登录后台' }
+  if (admin.undergroundSaving) return { points: [], error: '正在保存，请稍后再试' }
+  const g = admin.undergroundGraph
+  if (!g) return { points: [], error: '地下路网尚未加载' }
+  const planned = planStreetViewPathInterpolation(g, nodeIds, count)
+  if (planned.error) return planned
+  if (files.length !== count) return { points: [], error: `需要选择 ${count} 张图片，当前选中 ${files.length} 张` }
+  const sorted = [...files].sort((a, b) => a.name.localeCompare(b.name, 'zh-CN', { numeric: true, sensitivity: 'base' }))
+  for (const file of sorted) {
+    const issue = streetViewFileIssue(file)
+    if (issue) return { points: [], error: `${file.name}：${issue}` }
+  }
+  let done = 0
+  const failures: (string | undefined)[] = []
+  await Promise.all(planned.points.map(async (point, i) => {
+    try {
+      await putStreetViewImage(point.imageId, sorted[i])
+      onProgress?.(++done, sorted.length)
+    } catch (e) {
+      failures[i] = `第 ${i + 1} 张（${sorted[i].name}）上传失败：${(e as Error).message}`
+    }
+  }))
+  const failure = failures.find(Boolean)
+  if (failure) return { points: [], error: failure }
+  if (admin.undergroundGraph !== g || nodeIds.some((id) => !g.nodes.some((node) => node.id === id)))
+    return { points: [], error: '折线节点已变化，图片已上传但新街景点没有写入，请重试' }
+  if (admin.undergroundSaving) return { points: [], error: '正在保存，图片已上传但新街景点没有写入，请稍后重试' }
+  changeUnderground((next) => {
+    next.points.push(...planned.points)
+    admin.undergroundSelected = { kind: 'point', id: planned.points[0].id }
+  })
+  notify(`沿折线添加 ${count} 个街景点，并按文件名顺序绑定图片`)
+  return planned
 }
 /** 拖动或放置时吸附到的目标：节点、路段上的一点，或还没绑定的出入口 */
 export type UndergroundSnap = { node: string } | { edge: string; pos: LngLat } | { entrance: string }

@@ -14,3 +14,9 @@ server/backups/
 server/.env
 
 vite.log
+
+server.err.log
+
+server.log
+
+*.log

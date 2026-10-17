@@ -12,7 +12,7 @@ import { degree, edgeMeters, graphIssues, projectOnEdge, streetViewPointPosition
 import {
   admin, addUndergroundEntrance, addUndergroundStreetViewPoint, bindUndergroundEntrances, deleteUnderground, deleteUndergroundSelection, drawUndergroundAt,
   drawUndergroundOnEdge, drawUndergroundToEntrance, drawUndergroundToNode, finishUndergroundRoad, insertUndergroundNode,
-  interpolateUndergroundStreetViewPoints, moveUndergroundEntrance, moveUndergroundNode, redoUnderground, saveUnderground, selectUnderground, setUndergroundTool,
+  interpolateUndergroundStreetViewPathWithImages, moveUndergroundEntrance, moveUndergroundNode, redoUnderground, saveUnderground, selectUnderground, setUndergroundTool,
   undergroundCanRedo, undergroundCanUndo, undergroundDirty, undoUnderground, updateUndergroundEntrance, uploadUndergroundStreetViewImage,
   type UndergroundSnap, type UndergroundTool, notify,
 } from './store'
@@ -81,36 +81,75 @@ const previewVersion = ref(0)
 const previewBroken = ref(false)
 const previewUrl = computed(() => selectedPoint.value ? `${streetViewUrl(selectedPoint.value.imageId)}?v=${previewVersion.value}` : '')
 watch(() => selectedPoint.value?.id, () => { previewBroken.value = false; previewVersion.value++ })
-/** 街景点插值：先选同一路段上的两个街景点，再按数量插入。 */
-const interpolatePick = ref<string[]>([])
+/** 街景点插值：按顺序选择路网节点形成折线，再沿整条折线按里程均匀插入。 */
+const interpolateNodes = ref<string[]>([])
 const interpolateCount = ref(1)
-const pickedStreetViewPoints = computed(() => interpolatePick.value
-  .map((id) => graph.value?.points.find((point) => point.id === id))
-  .filter((point): point is UgStreetViewPoint => !!point))
-const interpolateError = computed(() => {
-  const [a, b] = pickedStreetViewPoints.value
-  if (!a || !b) return ''
-  const sameEdge = (a.endpointId1 === b.endpointId1 && a.endpointId2 === b.endpointId2)
-    || (a.endpointId1 === b.endpointId2 && a.endpointId2 === b.endpointId1)
-  if (!sameEdge) return '两个街景点不在同一条路段上'
-  const t1 = a.endpointWeight2
-  const t2 = b.endpointId1 === a.endpointId1 ? b.endpointWeight2 : b.endpointWeight1
-  return Math.abs(t1 - t2) < 1e-6 ? '两个街景点位置太近，无法插值' : ''
+const interpolateFiles = ref<File[]>([])
+const interpolateFileInput = ref<HTMLInputElement>()
+const interpolateFolderInput = ref<HTMLInputElement>()
+const interpolating = ref(false)
+const interpolateProgress = ref(0)
+const STREETVIEW_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp']
+const interpolatePath = computed(() => {
+  const ids = interpolateNodes.value
+  if (ids.length < 2) return { error: '', meters: 0 }
+  if (new Set(ids).size !== ids.length) return { error: '节点不能重复', meters: 0 }
+  const g = graph.value
+  if (!g) return { error: '地下路网尚未加载', meters: 0 }
+  let total = 0
+  for (let i = 1; i < ids.length; i++) {
+    const edge = g.edges.find((item) => (item.a === ids[i - 1] && item.b === ids[i]) || (item.a === ids[i] && item.b === ids[i - 1]))
+    if (!edge) return { error: `第 ${i} 个和第 ${i + 1} 个节点之间没有路段，请按道路顺序选择`, meters: 0 }
+    total += edgeMeters(g, edge)
+  }
+  return { error: '', meters: total }
 })
-const interpolateReady = computed(() => pickedStreetViewPoints.value.length === 2 && !interpolateError.value
-  && Number.isInteger(Number(interpolateCount.value)) && Number(interpolateCount.value) >= 1 && Number(interpolateCount.value) <= 50)
-watch(tool, () => { interpolatePick.value = [] })
-watch(() => graph.value?.points.map((point) => point.id).join('|'), () => {
-  const ids = new Set(graph.value?.points.map((point) => point.id))
-  if (interpolatePick.value.some((id) => !ids.has(id))) interpolatePick.value = interpolatePick.value.filter((id) => ids.has(id))
+const interpolateError = computed(() => interpolatePath.value.error)
+const interpolateFilesReady = computed(() => {
+  const count = Number(interpolateCount.value)
+  return Number.isInteger(count) && count >= 1 && count <= 50 && interpolateFiles.value.length === count
+    && interpolateFiles.value.every((file) => STREETVIEW_TYPES.includes(file.type) && file.size <= 20 * 1024 * 1024)
 })
-function applyInterpolation() {
-  const picked = pickedStreetViewPoints.value
-  if (picked.length !== 2) { notify('请先选择两个街景点', 'error'); return }
-  const result = interpolateUndergroundStreetViewPoints(picked[0].id, picked[1].id, Number(interpolateCount.value))
-  if (result.error) { notify(result.error, 'error'); return }
-  notify(`已添加 ${result.points.length} 个街景点`)
-  interpolatePick.value = []
+const interpolateReady = computed(() => interpolateNodes.value.length >= 2 && !interpolateError.value
+  && interpolateFilesReady.value && !interpolating.value)
+watch(tool, () => { interpolateNodes.value = []; interpolateFiles.value = []; interpolateProgress.value = 0 })
+watch(() => graph.value?.nodes.map((node) => node.id).join('|'), () => {
+  const ids = new Set(graph.value?.nodes.map((node) => node.id))
+  if (interpolateNodes.value.some((id) => !ids.has(id))) interpolateNodes.value = interpolateNodes.value.filter((id) => ids.has(id))
+})
+const sortInterpolationFiles = (files: File[]) => [...files]
+  .filter((file) => STREETVIEW_TYPES.includes(file.type) || /\.(jpe?g|png|webp)$/i.test(file.name))
+  .sort((a, b) => a.name.localeCompare(b.name, 'zh-CN', { numeric: true, sensitivity: 'base' }))
+function pickInterpolationFiles(event: Event) {
+  const input = event.target as HTMLInputElement
+  interpolateFiles.value = sortInterpolationFiles([...(input.files ?? [])])
+  input.value = ''
+}
+function dropInterpolationFiles(event: DragEvent) {
+  if (interpolating.value) return
+  const files = [...(event.dataTransfer?.files ?? [])]
+  if (files.length) interpolateFiles.value = sortInterpolationFiles(files)
+}
+async function applyInterpolation() {
+  const nodes = interpolateNodes.value
+  const count = Number(interpolateCount.value)
+  if (nodes.length < 2) { notify('请按顺序选择至少两个路网节点', 'error'); return }
+  if (interpolateError.value) { notify(interpolateError.value, 'error'); return }
+  if (!interpolateFilesReady.value) { notify(`需要选择 ${count} 张有效图片（JPG / PNG / WebP，单张不超过 20 MB）`, 'error'); return }
+  if (interpolating.value) return
+  interpolating.value = true
+  interpolateProgress.value = 0
+  try {
+    const result = await interpolateUndergroundStreetViewPathWithImages(
+      nodes, count, interpolateFiles.value, (done) => { interpolateProgress.value = done },
+    )
+    if (result.error) { notify(result.error, 'error'); return }
+    interpolateNodes.value = []
+    interpolateFiles.value = []
+  } finally {
+    interpolating.value = false
+    interpolateProgress.value = 0
+  }
 }
 async function uploadStreetView(event: Event) {
   const input = event.target as HTMLInputElement
@@ -132,9 +171,16 @@ const hint = computed(() => {
     : '点击地图开始画路；从已有的点、路段或出入口上开始，就是接出一条岔路'
   if (tool.value === 'entrance') return '先选类型再点击放置；点在道路或节点上会直接绑定到路网'
   if (tool.value === 'point') return '点击路网线段创建街景点，自动生成 GUID 图片 ID；点在线段外不会创建'
-  if (tool.value === 'interpolate') return interpolateError.value || (pickedStreetViewPoints.value.length === 2
-    ? '两个街景点在同一路段上，输入数量后生成插值点'
-    : `依次点击同一路段上的两个街景点（已选 ${pickedStreetViewPoints.value.length}/2）`)
+  if (tool.value === 'interpolate') {
+    if (interpolating.value) return `正在按文件名顺序上传 ${interpolateProgress.value}/${Number(interpolateCount.value)} 张图片…`
+    if (interpolateError.value) return interpolateError.value
+    if (interpolateNodes.value.length < 2) return `依次点击路网节点，按道路顺序连成折线（已选 ${interpolateNodes.value.length} 个）`
+    const count = Number(interpolateCount.value)
+    if (!Number.isInteger(count) || count < 1 || count > 50) return '请输入 1–50 的插值数量'
+    if (interpolateFiles.value.length !== count) return `折线约 ${Math.round(interpolatePath.value.meters)} 米；需要选择 ${count} 张图片，当前已选 ${interpolateFiles.value.length} 张`
+    if (!interpolateFilesReady.value) return '图片必须是 JPG / PNG / WebP，且每张不超过 20 MB'
+    return `折线约 ${Math.round(interpolatePath.value.meters)} 米，图片已齐；会沿整条折线按里程均匀插入，并按文件名顺序绑定`
+  }
   if (tool.value === 'erase') return '点击要删的点、路段或出入口；删路中间的点，两侧会自动接上'
   return '拖动紫点改线，拖到别的点或路段上自动接成路口 · 出入口拖到路上会绑定 · 街景点保存端点权重和 GUID · 右键删除'
 })
@@ -176,9 +222,10 @@ function draw() {
   for (const n of g.nodes) {
     const selected = sel?.kind === 'node' && sel.id === n.id
     const active = admin.undergroundActive === n.id
+    const picked = tool.value === 'interpolate' && interpolateNodes.value.includes(n.id)
     const marker = L.marker(toLatLng(n.pos), {
-      draggable: !admin.undergroundSaving, keyboard: false, zIndexOffset: active ? 600 : selected ? 500 : 0,
-      icon: L.divIcon({ className: 'ug-node-host', html: `<span class="ug-node${selected ? ' selected' : ''}${active ? ' active' : ''}"></span>`, iconSize: [22, 22], iconAnchor: [11, 11] }),
+      draggable: !admin.undergroundSaving, keyboard: false, zIndexOffset: active ? 600 : selected || picked ? 500 : 0,
+      icon: L.divIcon({ className: 'ug-node-host', html: `<span class="ug-node${selected ? ' selected' : ''}${active ? ' active' : ''}${picked ? ' picked' : ''}"></span>`, iconSize: [22, 22], iconAnchor: [11, 11] }),
     }).addTo(nodeLayer)
     nodeMarkers.set(n.id, marker)
     marker.on('click', (event) => nodeClick(n.id, event))
@@ -215,10 +262,9 @@ function draw() {
     const pos = streetViewPointPosition(g, point)
     if (!pos) continue
     const selected = sel?.kind === 'point' && sel.id === point.id
-    const picked = tool.value === 'interpolate' && interpolatePick.value.includes(point.id)
     const marker = L.marker(toLatLng(pos), {
       keyboard: false, zIndexOffset: selected ? 1200 : 1100, title: `街景点 · ${point.imageId}`,
-      icon: L.divIcon({ className: 'ug-point-host', html: `<span class="ug-point${selected ? ' selected' : ''}${picked ? ' picked' : ''}"><span class="ug-point-dot"></span></span>`, iconSize: [24, 24], iconAnchor: [12, 12] }),
+      icon: L.divIcon({ className: 'ug-point-host', html: `<span class="ug-point${selected ? ' selected' : ''}"><span class="ug-point-dot"></span></span>`, iconSize: [24, 24], iconAnchor: [12, 12] }),
     }).addTo(pointLayer)
     marker.on('click', (event) => pointClick(point, event))
     marker.on('contextmenu', (event) => { stop(event); deleteUnderground({ kind: 'point', id: point.id }) })
@@ -294,16 +340,15 @@ function nodeClick(id: string, event: L.LeafletMouseEvent) {
   if (tool.value === 'road') event.originalEvent.altKey ? drawUndergroundAt(fromLatLng(event.latlng)) : drawUndergroundToNode(id)
   else if (tool.value === 'entrance') { if (pos) addUndergroundEntrance(pos, { node: id }) }
   else if (tool.value === 'erase') deleteUnderground({ kind: 'node', id })
+  else if (tool.value === 'interpolate') {
+    const picks = interpolateNodes.value
+    interpolateNodes.value = picks.includes(id) ? picks.filter((item) => item !== id) : [...picks, id]
+    selectUnderground({ kind: 'node', id })
+  }
   else selectUnderground({ kind: 'node', id })
 }
 function pointClick(point: UgStreetViewPoint, event: L.LeafletMouseEvent) {
   stop(event)
-  if (tool.value === 'interpolate') {
-    const picks = interpolatePick.value
-    interpolatePick.value = picks.includes(point.id)
-      ? picks.filter((id) => id !== point.id)
-      : picks.length < 2 ? [...picks, point.id] : [picks[1], point.id]
-  }
   selectUnderground({ kind: 'point', id: point.id })
 }
 function addPointOnEdge(edgeId: string, pos: LngLat) {
@@ -374,6 +419,7 @@ function focusIssue(kind: keyof typeof cycle) {
 function zoom(delta: number) { map?.setZoom(map.getZoom() + delta) }
 
 function keydown(event: KeyboardEvent) {
+  if (interpolating.value) return
   if (event.target instanceof HTMLElement && event.target.closest('input, textarea, select, [contenteditable]')) return
   if (document.querySelector('dialog[open]')) return
   const mod = event.metaKey || event.ctrlKey, key = event.key.toLowerCase()
@@ -424,7 +470,7 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', keydown); map?.rem
       <div class="ug-toolbar" role="toolbar" aria-label="标注工具">
         <button
           v-for="t in tools" :key="t.id" type="button" :class="{ active: tool === t.id, erase: t.id === 'erase' }"
-          :aria-pressed="tool === t.id" :title="`${t.label}（${t.key}）`" :disabled="admin.undergroundSaving" @click="setUndergroundTool(t.id)"
+          :aria-pressed="tool === t.id" :title="`${t.label}（${t.key}）`" :disabled="admin.undergroundSaving || interpolating" @click="setUndergroundTool(t.id)"
         ><Ico :name="t.icon" /><span>{{ t.label }}</span><kbd>{{ t.key }}</kbd></button>
       </div>
 
@@ -437,9 +483,22 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', keydown); map?.rem
         </template>
         <template v-if="tool === 'interpolate'">
           <label class="ug-interp-count">数量
-            <input v-model.number="interpolateCount" type="number" min="1" max="50" step="1" :disabled="admin.undergroundSaving" />
+            <input v-model.number="interpolateCount" type="number" min="1" max="50" step="1" :disabled="admin.undergroundSaving || interpolating" />
           </label>
-          <button type="button" class="ug-hint-action" :disabled="!interpolateReady || admin.undergroundSaving" @click="applyInterpolation">生成</button>
+          <button
+            type="button" class="ug-interp-files" :disabled="admin.undergroundSaving || interpolating"
+            :title="interpolateFiles.length ? interpolateFiles.map((file) => file.name).join('、') : '点击选择多张图片，或把图片拖到这里；也支持选择整个文件夹'"
+            @click="interpolateFileInput?.click()" @dragover.prevent @drop.prevent="dropInterpolationFiles"
+          ><Ico name="image" />{{ interpolateFiles.length }}/{{ Number.isInteger(Number(interpolateCount)) ? interpolateCount : 0 }} 张</button>
+          <button
+            type="button" class="ug-interp-folder" :disabled="admin.undergroundSaving || interpolating"
+            title="选择整个文件夹，按文件名排序" @click="interpolateFolderInput?.click()"
+          ><Ico name="grid" /></button>
+          <input ref="interpolateFileInput" type="file" multiple accept="image/jpeg,image/png,image/webp" hidden @change="pickInterpolationFiles" />
+          <input ref="interpolateFolderInput" type="file" webkitdirectory directory multiple accept="image/jpeg,image/png,image/webp" hidden @change="pickInterpolationFiles" />
+          <button type="button" class="ug-hint-action" :disabled="!interpolateReady || admin.undergroundSaving" @click="applyInterpolation">
+            {{ interpolating ? `上传中 ${interpolateProgress}/${Number(interpolateCount)}` : '生成并上传' }}
+          </button>
         </template>
         <button v-if="tool === 'road' && admin.undergroundActive" type="button" class="ug-hint-action" @click="finishUndergroundRoad">结束这条路</button>
       </div>
@@ -521,7 +580,7 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', keydown); map?.rem
             <li><kbd>R</kbd> 画道路：逐点点击，双击或 <kbd>Enter</kbd> 结束；点到已有的点/路段自动接成路口，按住 <kbd>⌥</kbd> 点击不吸附</li>
             <li><kbd>E</kbd> 放出入口：点在道路或节点上会直接绑定，之后跟着道路一起移动</li>
             <li><kbd>P</kbd> 街景点：点击路网线段创建，自动生成随机 GUID；图片放到 data/streetview，文件名用这个 GUID</li>
-            <li><kbd>I</kbd> 插值：依次点击同一路段上的两个街景点，输入数量后均匀生成新的街景点</li>
+            <li><kbd>I</kbd> 插值：按道路顺序点击多个路网节点形成折线，输入数量并选择等量图片；沿整条折线按里程均匀插入，图片按文件名顺序绑定</li>
             <li><kbd>V</kbd> 拖动紫点改线，拖到别的点或路段上就接成路口；出入口拖到道路上会绑定，按住 <kbd>⌥</kbd> 拖动可拆开</li>
             <li>右键任何对象直接删除，或选中后按 <kbd>Delete</kbd>；<kbd>⌘Z</kbd> 撤销</li>
           </ul>
@@ -600,6 +659,12 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', keydown); map?.rem
 .ug-kinds button.on { background: #fff; color: #2e2540; font-weight: 600; box-shadow: 0 0 0 1.5px var(--c), 0 1px 3px #2e254026; }
 .ug-interp-count { display: inline-flex; align-items: center; gap: 6px; color: #6a5d7c; font-size: 12px; white-space: nowrap; }
 .ug-interp-count input { width: 64px; padding: 4px 7px; border: 1px solid #ddd5e6; border-radius: 6px; background: #fff; color: #2e2540; font-size: 12px; }
+.ug-interp-files { display: inline-flex; align-items: center; gap: 5px; padding: 5px 10px; border-radius: 7px; background: #f3eef7; color: #6a5d7c; font-size: 12px; font-weight: 600; white-space: nowrap; }
+.ug-interp-files:hover:not(:disabled) { background: #ece2f5; }
+.ug-interp-files:disabled { opacity: .5; cursor: not-allowed; }
+.ug-interp-folder { display: inline-grid; place-items: center; width: 30px; height: 30px; border-radius: 7px; background: #f3eef7; color: #6a5d7c; font-size: 15px; }
+.ug-interp-folder:hover:not(:disabled) { background: #ece2f5; }
+.ug-interp-folder:disabled { opacity: .5; cursor: not-allowed; }
 .ug-hint-action:disabled { opacity: .45; cursor: not-allowed; }
 .ug-point-binding span { overflow-wrap: anywhere; }
 .ug-street-preview { width: 100%; max-height: 190px; object-fit: cover; border-radius: 8px; background: #f3eff8; }
@@ -694,6 +759,7 @@ kbd { display: inline-block; min-width: 18px; padding: 0 5px; border: 1px solid 
 .ug-node-host:hover .ug-node { transform: scale(1.3); }
 .ug-node.selected { background: #5b21b6; border-color: #fff; box-shadow: 0 0 0 2.5px #5b21b6, 0 2px 6px #2e254066; transform: scale(1.25); }
 .ug-node.active { background: #9b4fd1; border-color: #fff; box-shadow: 0 0 0 3px #9b4fd1, 0 0 0 8px #9b4fd133; }
+.ug-node.picked { background: #5b21b6; border-color: #fff; box-shadow: 0 0 0 3px #9b4fd1, 0 0 0 7px #9b4fd133; }
 .ug-entrance-host { cursor: grab; }
 .ug-entrance { display: block; width: 24px; height: 24px; margin: 3px; border: 3.5px solid #e5262d; border-radius: 50%; background: #ffffff38; box-shadow: 0 0 0 1.5px #fff, 0 1px 5px #0005; transition: transform .1s; }
 .ug-entrance-host:hover .ug-entrance { transform: scale(1.12); }
@@ -707,8 +773,6 @@ kbd { display: inline-block; min-width: 18px; padding: 0 5px; border: 1px solid 
 .ug-point-dot { width: 7px; height: 7px; border-radius: 50%; background: #8a4cba; }
 .ug-point-host:hover .ug-point { transform: scale(1.2); }
 .ug-point.selected { background: #eadcf2; box-shadow: 0 0 0 3px #8a4cba66, 0 1px 5px #0005; }
-.ug-point.picked { background: #5b21b6; border-color: #fff; box-shadow: 0 0 0 3px #9b4fd1, 0 0 0 6px #9b4fd133; }
-.ug-point.picked .ug-point-dot { background: #fff; }
 .tool-road .leaflet-container, .tool-road .leaflet-container.leaflet-interactive, .tool-entrance .leaflet-container, .tool-point .leaflet-container, .tool-point .leaflet-container.leaflet-interactive { cursor: crosshair; }
 .tool-road .ug-node-host { cursor: copy; }
 .tool-erase .ug-node-host, .tool-erase .ug-entrance-host, .tool-erase .ug-access-host { cursor: pointer; }

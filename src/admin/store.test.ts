@@ -5,7 +5,7 @@ vi.stubGlobal('location', { hash: '' })
 const store = await import('./store')
 const { admin, edit, create, discard, draftDirty, draftIssue, setPosition, mapPick, changeGeometry, undoGeometry, redoGeometry, canRedo, deleteVertex, save, login, closeLogin,
   setUndergroundTool, drawUndergroundAt, drawUndergroundToNode, drawUndergroundOnEdge, finishUndergroundRoad, addUndergroundEntrance, moveUndergroundNode,
-  addUndergroundStreetViewPoint, deleteUnderground, undoUnderground, saveUnderground, undergroundDirty, drawUndergroundToEntrance, moveUndergroundEntrance, bindUndergroundEntrances } = store
+  addUndergroundStreetViewPoint, interpolateUndergroundStreetViewPathWithImages, deleteUnderground, undoUnderground, saveUnderground, undergroundDirty, drawUndergroundToEntrance, moveUndergroundEntrance, bindUndergroundEntrances } = store
 const building = (): Building => ({
   id: 'building-1', name: { zh: '测试楼', en: 'Test' }, short: { zh: '测试楼', en: '' }, cat: 'academic',
   aliases: [], orgs: [], rooms: [], center: [121.6, 31.18],
@@ -339,6 +339,21 @@ describe('地下标注工作台', () => {
     await saveUnderground()
     const body = JSON.parse(vi.mocked(fetch).mock.calls.at(-1)![1]!.body as string)
     expect(body.points).toEqual([expect.objectContaining({ id: point.id, endpointWeight1: 0.25, endpointWeight2: 0.75, imageId: point.imageId })])
+  })
+
+  it('插值前按文件名顺序批量上传图片，再提交新街景点', async () => {
+    setUndergroundTool('road')
+    drawUndergroundAt([121.6, 31.18]); drawUndergroundAt([121.602, 31.18]); finishUndergroundRoad()
+    const edge = admin.undergroundGraph!.edges[0]
+    vi.mocked(fetch).mockImplementation(async () => new Response('{}', { status: 201, headers: { 'Content-Type': 'application/json' } }))
+    const files = [new File(['10'], '10.jpg', { type: 'image/jpeg' }), new File(['2'], '2.jpg', { type: 'image/jpeg' })]
+    const result = await interpolateUndergroundStreetViewPathWithImages([edge.a, edge.b], 2, files)
+    expect(result.error).toBeUndefined()
+    expect(result.points).toHaveLength(2)
+    const calls = vi.mocked(fetch).mock.calls
+    expect(calls.map((call) => String(call[0]))).toEqual(result.points.map((point) => `/api/underground/streetview/${point.imageId}`))
+    expect(calls.map((call) => (call[1]!.body as File).name)).toEqual(['2.jpg', '10.jpg'])
+    expect(admin.undergroundGraph!.points).toHaveLength(2)
   })
 
   it('草稿几何去重，保存成功只消费已保存线段，保留同时新画的草稿和未完成线段', async () => {

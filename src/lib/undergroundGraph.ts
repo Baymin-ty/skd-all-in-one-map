@@ -116,37 +116,44 @@ export function createStreetViewPoint(g: UndergroundGraph, edgeId: string, p: Ln
   return point
 }
 
-/** 在两个街景点之间按数量均匀插入新的街景点；两个原点必须在同一条路段上。 */
-export function interpolateStreetViewPoints(g: UndergroundGraph, id1: string, id2: string, count: number): { points: UgStreetViewPoint[]; error?: string } {
-  const first = g.points?.find((point) => point.id === id1)
-  const second = g.points?.find((point) => point.id === id2)
-  if (!first || !second) return { points: [], error: '找不到选中的街景点' }
-  if (first.id === second.id) return { points: [], error: '请选择两个不同的街景点' }
-  const sameEdge = (first.endpointId1 === second.endpointId1 && first.endpointId2 === second.endpointId2)
-    || (first.endpointId1 === second.endpointId2 && first.endpointId2 === second.endpointId1)
-  if (!sameEdge) return { points: [], error: '两个街景点不在同一条路段上' }
+/** 沿按顺序选中的节点连成折线，按总里程均匀计算街景点位置；不写入路网。 */
+export function planStreetViewPathInterpolation(g: UndergroundGraph, nodeIds: string[], count: number): { points: UgStreetViewPoint[]; error?: string; meters?: number } {
+  if (nodeIds.length < 2) return { points: [], error: '至少选择两个节点' }
+  if (new Set(nodeIds).size !== nodeIds.length) return { points: [], error: '节点不能重复' }
   if (!Number.isInteger(count) || count < 1 || count > 50) return { points: [], error: '插值数量必须是 1–50 的整数' }
-  // 以第一个点的端点顺序为基准；t 是第二个端点的权重。
-  const a = first.endpointId1, b = first.endpointId2
-  const t1 = first.endpointWeight2
-  const t2 = second.endpointId1 === a ? second.endpointWeight2 : second.endpointWeight1
-  const lo = Math.min(t1, t2), hi = Math.max(t1, t2)
-  if (hi - lo < 1e-6) return { points: [], error: '两个街景点位置太近，无法插值' }
-  const created: UgStreetViewPoint[] = []
-  for (let k = 1; k <= count; k++) {
-    const weight2 = +(lo + ((hi - lo) * k) / (count + 1)).toFixed(6)
-    const point: UgStreetViewPoint = {
-      id: ugId('ug-point'),
-      endpointId1: a,
-      endpointWeight1: +(1 - weight2).toFixed(6),
-      endpointId2: b,
-      endpointWeight2: weight2,
-      imageId: guid(),
-    }
-    created.push(point)
-    streetViewPoints(g).push(point)
+  const segments: { edge: UgEdge; length: number }[] = []
+  for (let i = 1; i < nodeIds.length; i++) {
+    const prev = node(g, nodeIds[i - 1]), current = node(g, nodeIds[i])
+    const edge = findEdge(g, nodeIds[i - 1], nodeIds[i])
+    if (!prev || !current) return { points: [], error: '选中的节点不存在' }
+    if (!edge) return { points: [], error: `第 ${i} 个和第 ${i + 1} 个节点之间没有路段，请按道路顺序选择` }
+    segments.push({ edge, length: meters(prev.pos, current.pos) })
   }
-  return { points: created }
+  const total = segments.reduce((sum, segment) => sum + segment.length, 0)
+  if (total < 1e-6) return { points: [], error: '折线长度为零，无法插值' }
+  const points: UgStreetViewPoint[] = []
+  for (let k = 1; k <= count; k++) {
+    const target = (total * k) / (count + 1)
+    let travelled = 0
+    for (let i = 0; i < segments.length; i++) {
+      const { edge, length } = segments[i]
+      if (target <= travelled + length + 1e-9 || i === segments.length - 1) {
+        const t = length > 0 ? Math.max(0, Math.min(1, (target - travelled) / length)) : 0
+        const weight2 = +t.toFixed(6)
+        points.push({
+          id: ugId('ug-point'),
+          endpointId1: edge.a,
+          endpointWeight1: +(1 - weight2).toFixed(6),
+          endpointId2: edge.b,
+          endpointWeight2: weight2,
+          imageId: guid(),
+        })
+        break
+      }
+      travelled += length
+    }
+  }
+  return { points, meters: total }
 }
 
 /** 把 from 节点并入 into 节点：from 的路段改接到 into，自环和重复路段去掉。 */
