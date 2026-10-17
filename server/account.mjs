@@ -310,6 +310,21 @@ export function installAccount(app, db, options = {}) {
     } catch (error) { next(error) }
   })
 
+  // TEMP DEMO(temp-account): 演示站不发邮件，一键给当前会话建一个临时账号（邮箱为占位 xxx@demo.local）。
+  // 已登录则直接返回；未登录则把匿名会话升级为账号，匿名期间的数据随之保留。
+  accountRouter.post('/temp', (req, res, next) => {
+    try {
+      rateIp(req)
+      const anonymous = ensureAnonymous(req, res, db, now, false), existing = accountFor(db, anonymous.id)
+      if (!existing) {
+        const email = `temp-${randomBytes(4).toString('hex')}@demo.local`
+        db.prepare('INSERT INTO accounts (user_id,email,role,created_at) VALUES (?,?,?,?)').run(anonymous.id, email, 'student', now())
+      }
+      issueSession(req, res, db, anonymous.id, now, anonymous.token)
+      res.json(profileJson(db, anonymous.id))
+    } catch (error) { next(error) }
+  })
+
   accountRouter.get('/me', (req, res) => {
     const me = communitySession(req, db)
     res.json(me ? profileJson(db, me.id) : null)

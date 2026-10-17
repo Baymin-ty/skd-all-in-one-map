@@ -5,6 +5,8 @@ const p = (d: string) =>
 export const ICONS = {
   chat: p('<path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5H4l-2 2V11.5A8.5 8.5 0 0 1 10.5 3h2a8.5 8.5 0 0 1 8.5 8.5Z"/><path d="M7 9h9M7 13h6"/>'),
   heart: p('<path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1.1-1.1a5.5 5.5 0 0 0-7.8 7.8L12 21l8.8-8.6a5.5 5.5 0 0 0 0-7.8Z"/>'),
+  user: p('<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>'),
+  rain: p('<path d="M7 15a4.5 4.5 0 1 1 1.2-8.85A6 6 0 0 1 19.5 9.5 3.5 3.5 0 0 1 18 15Z"/><path d="M8 18l-1 3M12 18l-1 3M16 18l-1 3"/>'),
   bookmark: p('<path d="M6 3h12v18l-6-4-6 4z"/>'),
   image: p('<rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8" cy="8" r="1.5"/><path d="m3 17 5-5 4 4 4-6 5 7"/>'),
   sparkles: p('<path d="m12 3 2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5L12 3ZM20 2v4M18 4h4"/>'),

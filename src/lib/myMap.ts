@@ -9,7 +9,8 @@ import { endMin, itemsOn, nowMinute, startMin, weekdayOf, type PlanItem, type Pl
  */
 export type MyScope = 'day' | 'week'
 /** day 跟「我的今天」共用 plan.date（今天 / 明天）；week 是本周一到周日 */
-export const myMap = reactive({ scope: 'day' as MyScope })
+/** day：本周视图里单独看某一天（YYYY-MM-DD），空串表示整周都标在地图上 */
+export const myMap = reactive({ scope: 'day' as MyScope, day: '' })
 
 /** 课、活动、吃饭、待办在地图和列表里用不同颜色和图标区分 */
 export const KIND_STYLE: Record<PlanKind, { zh: string; icon: IconName; color: string; soft: string }> = {

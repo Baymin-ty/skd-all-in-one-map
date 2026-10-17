@@ -19,6 +19,7 @@ import { initPlan } from './lib/today'
 import { computeAnchors, measureSafeArea, setSideWidth, SIDEBAR_W, ui } from './lib/ui'
 import AccountDialog from './components/AccountDialog.vue'
 import NavTabs from './components/NavTabs.vue'
+import RailAccount from './components/RailAccount.vue'
 import MapChips from './components/MapChips.vue'
 import { loadAccount } from './lib/account'
 import { loadUserData } from './lib/userData'
@@ -128,6 +129,7 @@ function resizeByKey(e: KeyboardEvent) {
         <a href="/" class="rail-logo" title="上科大一图通" @click.prevent="showPanel('home')"><img src="/favicon.svg" alt="上科大一图通" width="34" height="34" /></a>
         <NavTabs vertical />
         <span class="grow" />
+        <RailAccount />
       </nav>
       <aside class="sidebar" :class="{ away: tm.open }" :inert="tm.open">
         <div class="side-head">

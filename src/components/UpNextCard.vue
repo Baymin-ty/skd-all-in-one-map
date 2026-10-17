@@ -70,7 +70,7 @@ const hasClasses = computed(() => plan.items.some(isWeeklyClass))
     </button>
     <button v-if="heroInfo.item.place && !hero?.live" type="button" class="hero-go" @click="goHero"><Ico name="walk" /><span>导航</span></button>
   </section>
-  <section v-else-if="fallback" class="hero empty">
+  <section v-else-if="fallback && hasClasses" class="hero empty">
     <span class="hero-icon"><Ico :name="account.me ? 'academic' : 'users'" /></span>
     <span class="grow">
       <b class="hero-title">{{ !account.me && !hasClasses ? '登录可获得你的专属课表' : !hasClasses ? '导入课表，上课地点自动标上地图' : '接下来 7 天没有安排' }}</b>

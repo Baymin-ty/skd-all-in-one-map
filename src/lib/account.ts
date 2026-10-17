@@ -105,6 +105,30 @@ export async function verifyLoginCode(code = account.code) {
   } finally { account.busy = false }
 }
 
+// TEMP DEMO(temp-account): 演示站一键创建临时账号，替代邮箱验证码登录
+export async function createTempAccount(name = account.name) {
+  account.error = ''
+  name = name.trim()
+  if (name.length < 2 || name.length > 16) { account.error = '昵称需要 2–16 个字'; return false }
+  account.busy = true
+  try {
+    account.me = await request<AccountUser>('/api/account/temp', { method: 'POST', headers, body: '{}' })
+    await reloadPersonalData()
+    const pending = await import('./checkin')
+    if (pending.checkin.eventId && pending.checkin.code && !pending.checkin.me) void pending.submitCheckin(pending.checkin.eventId, pending.checkin.code)
+    account.message = ''
+  } catch (error) {
+    account.error = error instanceof Error ? error.message : '创建临时账号失败'
+    account.busy = false
+    return false
+  }
+  account.busy = false
+  // 账号已建好；昵称失败（如重名）时停在昵称步骤，保留错误提示让用户改
+  if (await submitNickname(name)) return true
+  account.step = 'name'
+  return false
+}
+
 /** 修改昵称：成功后返回最新的账号资料，失败抛出带中文提示的错误。 */
 export async function updateNickname(name: string) {
   const me = await request<AccountUser>('/api/account/profile', { method: 'PATCH', headers, body: JSON.stringify({ name }) })

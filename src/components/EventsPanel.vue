@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { discovery, EVENT_CATS, EVENT_RANGES, eventsIn, loadDiscovery } from '../lib/discoveryData'
-import { dateKey, dayLabel, eventStatus, evStart, icsFor, STATUS_LABELS, timeRange } from '../lib/campusTime'
+import { dateKey, dayLabel, eventStatus, evStart, STATUS_LABELS, timeRange } from '../lib/campusTime'
 import { fitEvents, navigateToPlace, placeName, placeSelection, select, state, toast } from '../lib/store'
 import { addItem, itemFromEvent, plan } from '../lib/today'
 import { buildLink, openShare } from '../lib/deepLink'
@@ -40,13 +40,6 @@ const placeLabel = computed(() => {
 })
 watch(() => [state.radar.range, state.radar.cat, state.radar.place], () => { shown.value = 30; fitEvents() })
 function back() { state.eventId = ''; state.selected = null; fitEvents() }
-function addCalendar() {
-  if (!event.value) return
-  const url = URL.createObjectURL(new Blob([icsFor(event.value)], { type: 'text/calendar;charset=utf-8' }))
-  const a = document.createElement('a')
-  a.href = url; a.download = `${event.value.title.slice(0, 40)}.ics`; a.click()
-  setTimeout(() => URL.revokeObjectURL(url), 1000)
-}
 /** 分享框：活动详情链接；有地点时另给「扫码直接导航到会场」，方便组织者印在海报上 */
 function share() {
   const e = event.value
@@ -74,7 +67,6 @@ function addToToday() {
       <div class="actions wrap-actions">
         <button v-if="location" type="button" class="act primary" @click="navigateToPlace(event.place!)"><Ico name="walk" />{{ t('event.navigate') }}</button>
         <button type="button" class="act" :class="{ on: planned }" :disabled="planned" @click="addToToday"><Ico :name="planned ? 'check' : 'plus'" />{{ planned ? (isEnglish ? 'In My Day' : '已在我的今天') : (isEnglish ? 'Add to My Day' : '加入我的今天') }}</button>
-        <button type="button" class="act" @click="addCalendar"><Ico name="calendar" />{{ isEnglish ? 'Add to calendar' : '加入日历' }}</button>
         <button type="button" class="act" @click="share"><Ico name="external" />{{ isEnglish ? 'Share' : '分享' }}</button>
         <a v-if="event.url" class="act" :href="event.url" target="_blank" rel="noopener noreferrer"><Ico name="external" />原始通知</a>
       </div>

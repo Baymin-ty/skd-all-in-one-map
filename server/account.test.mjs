@@ -41,6 +41,23 @@ beforeEach(async () => { folder = mkdtempSync(join(tmpdir(), 'campus-account-'))
 afterEach(stop)
 
 describe('account login and user data API', () => {
+  // TEMP DEMO(temp-account)
+  test('creates a temporary account without email and keeps the anonymous user id', async () => {
+    const session = await createSession()
+    const response = await call('/api/account/temp', 'POST', {}, session.cookie)
+    expect(response.status).toBe(200)
+    const me = await response.json()
+    expect(me.id).toBe(session.user.id)
+    expect(me.email).toMatch(/@demo\.local$/)
+    expect(me.nameSet).toBe(false)
+    const cookie = response.headers.get('set-cookie').split(';')[0]
+    expect((await (await call('/api/account/me', 'GET', undefined, cookie)).json()).id).toBe(me.id)
+    expect((await call('/api/account/me', 'GET', undefined, session.cookie)).status).toBe(200)
+    const fresh = await call('/api/account/temp', 'POST', {})
+    expect(fresh.status).toBe(200)
+    expect((await fresh.json()).id).not.toBe(me.id)
+  })
+
   test('accepts any valid email address and rejects malformed addresses', async () => {
     const ok = await requestCode('student@shanghaitech.edu.cn')
     expect(ok.status).toBe(200)

@@ -4,7 +4,6 @@ import { tm } from './timeMachine'
 import { ICONS } from './icons'
 import { toLatLng } from './geo'
 import { KIND_STYLE, type AgendaStop } from './myMap'
-import { findRoute } from './route'
 import { endFor, fitToday, mapApi, mineFocus, myAgenda, openEvent, openRoom, placeSelection, select, state } from './store'
 import { HOME_ROLES } from './profile'
 import { weekdayOf } from './today'
@@ -52,30 +51,13 @@ export function mountTodayLayer(map: L.Map) {
     // 小旗参与标签避让：旁边的地点名称让开，不压在旗子上
     mapApi.relayout()
     if (!mineFocus.value || tm.open) return
-    const { stops, entries, week } = myAgenda.value
+    const { stops, week } = myAgenda.value
     const points = new Map(stops.map((s) => {
       const sel = placeSelection(s.place)
       const end = sel && endFor(sel)
       return [s.place, end?.point] as const
     }))
-    // 某一天：按时间顺序连起各站
-    if (!week) {
-      const seq = entries.filter((e) => e.item.place && points.get(placeSelection(e.item.place)?.id ?? ''))
-      for (let i = 1; i < seq.length; i++) {
-        const a = placeSelection(seq[i - 1].item.place)
-        const b = placeSelection(seq[i].item.place)
-        if (!a || !b || a.id === b.id) continue
-        const ea = endFor(a)
-        const eb = endFor(b)
-        const r = ea && eb && findRoute(ea, eb)
-        if (!r) continue
-        const status = seq[i].status
-        const active = status === 'now' || status === 'upnext'
-        const path = r.segments.flatMap((s) => s.path).map(toLatLng)
-        L.polyline(path, { color: '#fff', weight: 8, opacity: .9, lineCap: 'round', lineJoin: 'round', interactive: false }).addTo(layer)
-        L.polyline(path, { color: status === 'past' ? '#a9a9b1' : active ? '#2f5fc4' : '#8fa6d8', weight: 4.5, dashArray: active ? undefined : '6 7', lineCap: 'round', interactive: false }).addTo(layer)
-      }
-    }
+    // 只标站点，不连路线：要走过去时点「导航」按钮再算真实路线
     for (const stop of stops) {
       const point = points.get(stop.place)
       if (!point) continue

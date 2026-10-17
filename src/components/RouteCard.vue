@@ -47,12 +47,14 @@ function fromMe() {
       <button type="button" class="swap" aria-label="交换起点终点" title="交换起点终点" @click="swap"><Ico name="swap" /></button>
     </div>
 
-    <div v-if="r.network === 'surface'" class="rain-row">
-      <label class="rain-toggle" :class="{ disabled: !state.rainAvailable }">
+    <div v-if="r.network === 'surface'" class="rain-row" :class="{ on: state.rainMode, disabled: !state.rainAvailable }">
+      <label class="rain-toggle">
+        <span class="rain-text">
+          <span class="label-text">我要避雨！</span>
+          <small v-if="!state.rainAvailable">暂无避雨版本</small>
+        </span>
         <input type="checkbox" :checked="state.rainMode" :disabled="!state.rainAvailable" @change="setRainMode(($event.target as HTMLInputElement).checked)" />
         <span class="switch" aria-hidden="true"><span class="knob"></span></span>
-        <span class="label-text">我要避雨！</span>
-        <small>{{ state.rainAvailable ? '使用避雨路网' : '暂无避雨版本' }}</small>
       </label>
     </div>
     <div v-if="r.network === 'surface'" class="me-row">
@@ -65,7 +67,7 @@ function fromMe() {
       <p class="big">{{ r.result.minutes }} {{ isEnglish ? 'min' : '分钟' }} <span>· {{ r.result.meters }} {{ isEnglish ? 'm' : '米' }}</span></p>
       <p v-if="r.result.undergroundMeters" class="under"><Ico name="stairs" /> {{ r.result.undergroundMeters }} {{ isEnglish ? 'm underground' : '米在地下' }}</p>
       <div v-if="r.result.transitions.length" class="transitions" aria-label="地上地下分界点">
-        <span v-for="transition in r.result.transitions" :key="`${transition.connectorId}-${transition.kind}`"><i :class="transition.kind" />{{ transition.label }}</span>
+        <span v-for="transition in r.result.transitions" :key="`${transition.connectorId}-${transition.kind}`"><i :class="transition.kind" aria-hidden="true">{{ transition.kind === 'enter' ? '↓' : '↑' }}</i>{{ transition.label }}</span>
       </div>
       <p class="legend"><i class="open" />{{ isEnglish ? 'Surface' : '地面' }} <i v-if="r.result.undergroundMeters" class="ug" />{{ r.result.undergroundMeters ? (isEnglish ? 'Underground' : '地下') : '' }}</p>
     </div>
@@ -102,8 +104,7 @@ function fromMe() {
 .under { display: flex; align-items: center; gap: 6px; margin: 4px 0 0; color: #8156a8; font-weight: 650; font-size: 14px; }
 .transitions { display: grid; gap: 4px; margin-top: 8px; color: #9a621d; font-size: 12px; }
 .transitions span { display: flex; align-items: center; gap: 6px; }
-.transitions i { display: inline-block; width: 9px; height: 9px; border: 2px solid #e89a31; border-radius: 50%; background: #fff7e8; }
-.transitions i.exit { background: #e89a31; }
+.transitions i { display: grid; place-items: center; flex-shrink: 0; width: 18px; height: 18px; box-sizing: border-box; border: 2px solid #fff; border-radius: 50%; background: #e89a31; box-shadow: 0 1px 3px #0004; color: #fff; font-size: 12px; font-style: normal; font-weight: 800; line-height: 1; }
 .legend { display: flex; align-items: center; gap: 6px; margin: 8px 0 0; font-size: 12px; color: var(--ink-3); }
 .legend i { width: 18px; height: 5px; border-radius: 3px; }
 .legend i + i, .legend i:not(:first-child) { margin-left: 8px; }
@@ -111,15 +112,27 @@ function fromMe() {
 .legend .ug { background: #8156a8; background-image: linear-gradient(90deg, transparent 0 45%, #fff 45% 60%, transparent 60%); }
 .legend .underground-line { background: #8156a8; background-image: linear-gradient(90deg, transparent 0 45%, #fff 45% 60%, transparent 60%); }
 .hint { margin-top: 12px; }
-.rain-row { margin-top: 10px; padding: 9px 11px; border-radius: 10px; background: #eef8ff; }
-.rain-toggle { display: flex; align-items: center; gap: 10px; color: #17628d; font-weight: 700; font-size: 13px; cursor: pointer; }
+.rain-row { position: relative; overflow: hidden; margin-top: 10px; padding: 10px 12px; border: 1px solid #d9ecf8; border-radius: 12px; background: #f3f9fd; transition: background 0.3s, border-color 0.3s, box-shadow 0.3s; }
+/* 雨丝纹理：关闭时静止淡淡一层，开启时加深并持续下落 */
+.rain-row::before { content: ''; position: absolute; inset: -48px 0 0; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='48' height='48'%3E%3Cg stroke='%23168bd0' stroke-width='1.4' stroke-linecap='round'%3E%3Cpath d='M8 4l-3 8' opacity='.55'/%3E%3Cpath d='M30 10l-3 8' opacity='.35'/%3E%3Cpath d='M44 2l-3 8' opacity='.45'/%3E%3Cpath d='M18 26l-3 8' opacity='.4'/%3E%3Cpath d='M40 30l-3 8' opacity='.55'/%3E%3Cpath d='M10 40l-2 6' opacity='.3'/%3E%3Cpath d='M28 38l-2 6' opacity='.45'/%3E%3C/g%3E%3C/svg%3E"); background-size: 48px 48px; opacity: 0.25; pointer-events: none; transition: opacity 0.3s; -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 45%); mask-image: linear-gradient(90deg, transparent 0, #000 45%); }
+.rain-row.on { border-color: #9fd2f0; background: linear-gradient(135deg, #e3f3fd, #cbe8fa); box-shadow: 0 2px 10px #168bd022; }
+.rain-row.on::before { opacity: 0.8; animation: rain-fall 0.9s linear infinite; }
+@keyframes rain-fall { from { transform: translate(0, 0); } to { transform: translate(0, 48px); } }
+.rain-row.disabled { opacity: 0.6; }
+.rain-row.disabled::before { display: none; }
+.rain-toggle { position: relative; z-index: 1; display: flex; align-items: center; gap: 10px; cursor: pointer; }
+.rain-row.disabled .rain-toggle { cursor: not-allowed; }
+.rain-text { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+.rain-toggle .label-text { color: #17628d; font-weight: 700; font-size: 14px; }
+.rain-row.on .label-text { color: #0d4f78; }
+.rain-text small { color: #6b8798; font-size: 11px; }
 .rain-toggle input { position: absolute; opacity: 0; width: 0; height: 0; }
-.rain-toggle .switch { position: relative; width: 38px; height: 22px; border-radius: 11px; background: #c8d8e4; transition: background 0.2s; flex-shrink: 0; }
+.rain-toggle .switch { position: relative; width: 42px; height: 24px; border-radius: 12px; background: #c8d8e4; transition: background 0.2s; flex-shrink: 0; }
 .rain-toggle input:checked + .switch { background: #168bd0; }
-.rain-toggle .knob { position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: #fff; transition: transform 0.2s; box-shadow: 0 1px 3px rgba(0,0,0,0.2); }
-.rain-toggle input:checked + .switch .knob { transform: translateX(16px); }
-.rain-toggle.disabled { opacity: 0.6; cursor: not-allowed; }
-.rain-toggle small { margin-left: auto; color: #6b8798; font-weight: 400; font-size: 11px; }
+.rain-toggle input:focus-visible + .switch { outline: 2px solid #6aa8ff; outline-offset: 2px; }
+.rain-toggle .knob { position: absolute; top: 2px; left: 2px; width: 20px; height: 20px; border-radius: 50%; background: #fff; transition: transform 0.2s; box-shadow: 0 1px 3px rgba(0,0,0,0.2); }
+.rain-toggle input:checked + .switch .knob { transform: translateX(18px); }
+@media (prefers-reduced-motion: reduce) { .rain-row.on::before { animation: none; } }
 .me-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 6px; }
 .me-row .text-link, .live-note { display: inline-flex; align-items: center; gap: 4px; }
 .live-note { font-size: 12.5px; color: var(--blue); font-weight: 600; }

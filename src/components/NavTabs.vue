@@ -8,14 +8,14 @@ import type { IconName } from '../lib/icons'
 import Ico from './Ico.vue'
 
 // 前台唯一的功能导航：桌面竖排在左侧导航栏，手机横排在底部面板最下面。
-// 「我的」同时是账号入口：登录后图标换成昵称首字。
+// 「我的」同时是账号入口：登录后图标换成昵称首字。桌面竖排时「我的」移到左栏左下角（RailAccount）。
 defineProps<{ vertical?: boolean }>()
 type Tab = 'home' | 'events' | 'dining' | 'today' | 'me'
 const TABS: { id: Tab; zh: string; icon: IconName }[] = [
   { id: 'home', zh: '地图', icon: 'pin' },
+  { id: 'today', zh: '日程', icon: 'clock' },
   { id: 'events', zh: '活动', icon: 'calendar' },
   { id: 'dining', zh: '美食', icon: 'dining' },
-  { id: 'today', zh: '日程', icon: 'clock' },
   { id: 'me', zh: '我的', icon: 'users' },
 ]
 const liveCount = computed(() => eventsIn('today').length)
@@ -33,8 +33,8 @@ function go(tab: Tab) {
 </script>
 
 <template>
-  <nav class="nav-tabs" :class="{ vertical }" :style="{ '--n': TABS.length }" aria-label="功能">
-    <button v-for="tab in TABS" :key="tab.id" type="button" :class="{ on: current === tab.id }" :aria-current="current === tab.id ? 'page' : undefined" @click="go(tab.id)">
+  <nav class="nav-tabs" :class="{ vertical }" :style="{ '--n': vertical ? TABS.length - 1 : TABS.length }" aria-label="功能">
+    <button v-for="tab in (vertical ? TABS.filter((t) => t.id !== 'me') : TABS)" :key="tab.id" type="button" :class="{ on: current === tab.id }" :aria-current="current === tab.id ? 'page' : undefined" @click="go(tab.id)">
       <span class="nav-icon"><span v-if="tab.id === 'me' && initial" class="nav-avatar" :title="account.me?.name">{{ initial }}</span><Ico v-else :name="tab.icon" /><em v-if="tab.id === 'events' && liveCount" :aria-label="`今天 ${liveCount} 场`">{{ liveCount }}</em><i v-if="tab.id === 'me' && account.me && !account.me.nameSet" class="nav-dot" aria-label="还没起昵称" /></span>
       <span class="nav-label">{{ tab.zh }}</span>
     </button>

@@ -50,7 +50,8 @@ const mapTools = ref<HTMLDivElement>()
 let labelInteraction: ReturnType<typeof createLabelInteraction> | undefined
 /** 放大到这一级，楼群自动展开显示各栋（标签放得下了） */
 const EXPAND_ALL_ZOOM = 19
-const debugEnabled = import.meta.env.DEV
+// 街景调试按钮默认隐藏；需要时在地址后加 ?streetview-debug 打开
+const debugEnabled = new URLSearchParams(location.search).has('streetview-debug')
 
 const buildingLayer = L.layerGroup()
 const labelLayer = L.layerGroup()

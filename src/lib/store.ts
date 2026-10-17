@@ -158,7 +158,9 @@ export const myAgenda = computed(() => {
   const dates = week ? weekDates(dateKey(nowTick.value)) : [plan.date]
   const entries = agendaEntries(withDiscoveryEvents(plan.items, discovery.events), dates, nowTick.value)
   const canon = (id: string) => { const sel = placeSelection(id); return sel && sel.kind !== 'group' ? sel.id : null }
-  return { week, dates, entries, stops: agendaStops(entries, canon) }
+  // 本周视图点了某一天：列表仍是整周，地图只标这一天的站点
+  const day = week && myMap.day && dates.includes(myMap.day) ? myMap.day : ''
+  return { week, dates, entries, day, stops: agendaStops(day ? entries.filter((e) => e.date === day) : entries, canon) }
 })
 /** 点一项安排：活动打开活动详情；课程打开那栋楼并定位到教室 */
 export function openPlanItem(i: PlanItem) {
@@ -544,9 +546,15 @@ export function setAllScope(scope: DayScope) {
 /** 我的地图看哪天：今天、明天或本周 */
 export function setMyScope(scope: 'today' | 'tomorrow' | 'week') {
   myMap.scope = scope === 'week' ? 'week' : 'day'
+  myMap.day = ''
   if (scope !== 'week') plan.date = dateKey(nowTick.value + (scope === 'tomorrow' ? 86_400_000 : 0))
   if (state.mapPrefs.mode !== 'mine' || state.panel !== 'home') setMapView('mine')
   else fitToday()
+}
+/** 本周视图里点某一天的标题：地图只显示这一天；再点一次恢复整周 */
+export function toggleWeekDay(date: string) {
+  myMap.day = myMap.day === date ? '' : date
+  fitToday()
 }
 export function fitEvents() {
   const points = eventsIn(state.radar.range, state.radar.cat, state.radar.place).flatMap((e) => {

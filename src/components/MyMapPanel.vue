@@ -3,7 +3,7 @@ import { computed } from 'vue'
 import { account, openAccount } from '../lib/account'
 import { dateKey, nowTick, weekdayText } from '../lib/campusTime'
 import { KIND_ORDER, KIND_STYLE, myMap, type AgendaEntry } from '../lib/myMap'
-import { myAgenda, navigateToPlace, openPlanItem, placeName, placeSelection, setMyScope } from '../lib/store'
+import { myAgenda, navigateToPlace, openPlanItem, placeName, placeSelection, setMyScope, toggleWeekDay } from '../lib/store'
 import { endMin, fromMin, isWeeklyClass, plan, type PlanItem } from '../lib/today'
 import { openParcelStationMap } from '../lib/parcelStation'
 import { ui } from '../lib/ui'
@@ -20,7 +20,7 @@ const where = (i: PlanItem) => {
 
 // ---------- 今天 / 明天 / 本周 ----------
 const scopes = computed(() => [
-  { id: 'today' as const, zh: `今天 ${weekdayText(today.value)}` },
+  { id: 'today' as const, zh: '今天' },
   { id: 'tomorrow' as const, zh: '明天' },
   { id: 'week' as const, zh: '本周' },
 ])
@@ -70,8 +70,9 @@ const STATUS_TEXT = { now: '进行中', upnext: '下一项', later: '', past: ''
     </p>
     <p v-else class="scope-empty">{{ emptyText }}</p>
 
-    <div v-for="g in groups" :key="g.date" class="day">
-      <h3 v-if="week" class="day-label" :class="{ today: g.date === today }">{{ g.label }}</h3>
+    <p v-if="week && entries.length" class="day-hint">{{ myAgenda.day ? '地图只显示选中的一天 · 再点一次看整周' : '点某一天，地图只显示那天的安排' }}</p>
+    <div v-for="g in groups" :key="g.date" class="day" :class="{ dim: week && myAgenda.day && myAgenda.day !== g.date }">
+      <h3 v-if="week" class="day-label"><button type="button" :class="{ today: g.date === today, on: myAgenda.day === g.date }" :aria-pressed="myAgenda.day === g.date" @click="toggleWeekDay(g.date)">{{ g.label }}<Ico v-if="myAgenda.day === g.date" name="close" /></button></h3>
       <ul class="list-plain agenda">
         <li v-for="e in g.items" :key="e.item.id + e.date" class="ag" :class="week ? { past: e.date < today } : e.status" :style="{ '--k': KIND_STYLE[e.item.kind].color, '--ks': KIND_STYLE[e.item.kind].soft }">
           <span class="ag-time"><b>{{ e.item.start }}</b><small>{{ fromMin(endMin(e.item)) }}</small></span>
@@ -104,8 +105,15 @@ const STATUS_TEXT = { now: '进行中', upnext: '下一项', later: '', past: ''
 .legend span { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
 .legend i { width: 8px; height: 8px; border-radius: 50%; background: var(--k); }
 .scope-empty { margin: 10px 2px 0; color: var(--ink-3); font-size: 13px; }
-.day-label { margin: 14px 0 2px; font-size: 12.5px; font-weight: 700; color: var(--ink-3); }
-.day-label.today { color: var(--brand); }
+.day-label { margin: 14px 0 2px; }
+.day-label button { display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px; margin-left: -10px; border: 0; border-radius: 999px; background: none; color: var(--ink-3); font-size: 12.5px; font-weight: 700; cursor: pointer; transition: background-color .15s, color .15s; }
+.day-label button.today { color: var(--brand); }
+.day-label button.on { background: var(--ink); color: #fff; }
+.day-label button .svgi { font-size: 11px; }
+@media (hover: hover) { .day-label button:not(.on):hover { background: var(--bg-2); color: var(--ink); } }
+.day { transition: opacity .2s; }
+.day.dim { opacity: .4; }
+.day-hint { margin: 6px 2px 0; font-size: 11.5px; color: var(--ink-3); }
 .agenda { display: flex; flex-direction: column; }
 .ag { display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line); }
 .ag:last-child { border-bottom: 0; }
