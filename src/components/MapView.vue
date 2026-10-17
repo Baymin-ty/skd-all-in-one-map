@@ -626,10 +626,9 @@ function drawCrowd() {
 
 /** 统一蓝色展示地面栅格的实际八邻接连接，不区分来源和遮挡属性。 */
 function toggleRoads(on: boolean) {
-  if (!on) {
-    roadLayer?.remove()
-    return
-  }
+  roadLayer?.remove()
+  roadLayer = null
+  if (!on) return
   if (!roadLayer) {
     const renderer = L.canvas({ padding: 0.3 })
     roadLayer = L.layerGroup()
@@ -871,7 +870,7 @@ watch(() => state.labelVisibility, () => {
   drawEvents()
 }, { deep: true })
 watch(() => state.mapSettings, restyle, { deep: true })
-watch(() => state.showRoads, toggleRoads)
+watch(() => [state.showRoads, state.rainMode], () => toggleRoads(state.showRoads))
 watch(() => [state.showUnderground, state.underground, state.route.network], drawUnderground, { deep: true })
 watch(() => [state.route.network, state.undergroundSketch.paths, state.undergroundSketch.current], drawUndergroundSketch, { deep: true })
 // 不用 :class 绑定：Vue 会整个覆盖 className，把 Leaflet 加在容器上的 class 冲掉

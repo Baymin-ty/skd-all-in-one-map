@@ -12,7 +12,8 @@ const metaSchema = 'CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value
 const mapSchema = `${metaSchema}
   CREATE TABLE IF NOT EXISTS pois (id TEXT PRIMARY KEY, data TEXT NOT NULL, updated_at INTEGER NOT NULL);
   CREATE TABLE IF NOT EXISTS buildings (id TEXT PRIMARY KEY, data TEXT NOT NULL, updated_at INTEGER NOT NULL);
-  CREATE TABLE IF NOT EXISTS ${undergroundMapTable} (id TEXT PRIMARY KEY, data TEXT NOT NULL, updated_at INTEGER NOT NULL);`
+  CREATE TABLE IF NOT EXISTS ${undergroundMapTable} (id TEXT PRIMARY KEY, data TEXT NOT NULL, updated_at INTEGER NOT NULL);
+  CREATE TABLE IF NOT EXISTS surface_networks (id TEXT PRIMARY KEY, data TEXT NOT NULL, updated_at INTEGER NOT NULL);`
 const hasTable = (db, name) => !!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name)
 
 export function databasePaths(env = process.env) {

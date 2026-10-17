@@ -4,11 +4,13 @@ import type { IconName } from '../lib/icons'
 import Ico from '../components/Ico.vue'
 import PlaceWorkspace from './PlaceWorkspace.vue'
 import UndergroundWorkspace from './UndergroundWorkspace.vue'
+import RainNetworkWorkspace from './RainNetworkWorkspace.vue'
 import MapAppearance from './MapAppearance.vue'
 import TimeMachineLauncher from './TimeMachineLauncher.vue'
 import EventWorkspace from './EventWorkspace.vue'
 import AccountDialog from '../components/AccountDialog.vue'
 import { loadPipeline, pipeline } from './eventPipeline'
+import { rainDirty } from './rainStore'
 import {
   admin, assets, cancelRemove, category, closeLogin, confirmRemove, create, draftDirty, edit,
   exportData, load, loadUnderground, login, logout, missingEntrances, navigate, notify,
@@ -18,6 +20,7 @@ import {
 const nav: { view: View; label: string; icon: IconName; description: string }[] = [
   { view: 'overview', label: '地点管理', icon: 'pin', description: '查找地点，在地图上定位，随时修改信息与位置。' },
   { view: 'underground', label: '地下标注', icon: 'road', description: '标记地下道路（紫色）和出入口（红色），拖动调整，右键删除。' },
+  { view: 'rain', label: '避雨路网', icon: 'road', description: '编辑独立的雨天可走地面栅格版本。' },
   { view: 'events', label: '活动', icon: 'calendar', description: '活动数据自动从官网和通知邮件更新；可疑条目在这里审核后上线。' },
   { view: 'appearance', label: '地图显示', icon: 'eye', description: '调整地图的显示效果，并实时查看预览。' },
   { view: 'data', label: '数据与备份', icon: 'chart', description: '查看地点收录情况，导出校园地图数据。' },
@@ -42,13 +45,17 @@ async function submitLogin() {
   catch (e) { loginError.value = (e as Error).message }
   finally { signingIn.value = false }
 }
+function navigateAdmin(view: View) {
+  if (rainDirty.value && !confirm('避雨路网还未保存，放弃这些修改？')) return
+  navigate(view)
+}
 async function refresh() {
-  if (draftDirty.value || settingsDirty.value || undergroundDirty.value || admin.saving || admin.settingsSaving || admin.undergroundSaving) return notify('请先保存或撤销当前修改')
+  if (draftDirty.value || settingsDirty.value || undergroundDirty.value || rainDirty.value || admin.saving || admin.settingsSaving || admin.undergroundSaving) return notify('请先保存或撤销当前修改')
   await load()
   notify(admin.error ? admin.error : admin.offline ? '服务未连接，当前显示离线数据' : '数据已更新')
 }
 function beforeUnload(e: BeforeUnloadEvent) {
-  if (draftDirty.value || settingsDirty.value || undergroundDirty.value || admin.saving || admin.settingsSaving || admin.undergroundSaving) { e.preventDefault(); e.returnValue = '' }
+  if (draftDirty.value || settingsDirty.value || undergroundDirty.value || rainDirty.value || admin.saving || admin.settingsSaving || admin.undergroundSaving) { e.preventDefault(); e.returnValue = '' }
 }
 function hashChange() {
   const hash = location.hash.slice(1)
@@ -77,7 +84,7 @@ onBeforeUnmount(() => {
     <header class="app-header">
       <a href="/admin/" class="admin-brand"><span class="brand-mark"><Ico name="building" /></span><span>上科大一图通<small>地图管理工作台</small></span></a>
       <nav class="admin-nav" aria-label="管理导航">
-        <button v-for="item in nav" :key="item.view" :class="{ active: admin.view === item.view }" :aria-current="admin.view === item.view ? 'page' : undefined" @click="navigate(item.view)"><Ico :name="item.icon" />{{ item.label }}<span v-if="item.view === 'events' && pendingReview" class="nav-badge" :title="`${pendingReview} 条活动待审核`">{{ pendingReview }}</span></button>
+        <button v-for="item in nav" :key="item.view" :class="{ active: admin.view === item.view }" :aria-current="admin.view === item.view ? 'page' : undefined" @click="navigateAdmin(item.view)"><Ico :name="item.icon" />{{ item.label }}<span v-if="item.view === 'events' && pendingReview" class="nav-badge" :title="`${pendingReview} 条活动待审核`">{{ pendingReview }}</span></button>
       </nav>
       <div class="header-links">
         <TimeMachineLauncher /><a href="/" target="_blank" rel="noopener">查看前台<Ico name="external" /></a>
@@ -99,6 +106,7 @@ onBeforeUnmount(() => {
       <template v-else>
         <PlaceWorkspace v-if="admin.view === 'overview'" @create="createDialog?.showModal()" @refresh="refresh" />
         <UndergroundWorkspace v-else-if="admin.view === 'underground'" />
+        <RainNetworkWorkspace v-else-if="admin.view === 'rain'" />
         <MapAppearance v-else-if="admin.view === 'appearance'" />
         <EventWorkspace v-else-if="admin.view === 'events'" />
           <div v-else class="data-grid">

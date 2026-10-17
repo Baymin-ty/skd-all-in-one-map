@@ -8,7 +8,7 @@ import {
   roundPos, splitEdge, ugId, unbindEntrance, type UgStreetViewPoint, type UndergroundGraph,
 } from '../lib/undergroundGraph'
 export type Kind = 'building' | 'poi'
-export type View = 'overview' | 'underground' | 'appearance' | 'data' | 'events'
+export type View = 'overview' | 'underground' | 'rain' | 'appearance' | 'data' | 'events'
 export type Asset = { kind: Kind; data: Building | Poi }
 export type UndergroundSelection = { kind: 'node' | 'edge' | 'entrance' | 'point'; id: string }
 /** 选择/拖动、画道路、放出入口、点哪删哪 */

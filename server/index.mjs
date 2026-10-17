@@ -14,6 +14,7 @@ import { installAccount } from './account.mjs'
 import { installCheckin } from './checkin.mjs'
 import { installOrganizer } from './organizer.mjs'
 import { installSchedule } from './schedule.mjs'
+import { installSurfaceNetworks } from './surfaceNetworks.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const root = resolve(here, '..')
@@ -62,7 +63,7 @@ function position(v) {
   const [lng, lat] = v
   const [[x0, y0], [x1, y1]] = campus.bounds
   if (!(lng >= x0 && lng <= x1 && lat >= y0 && lat <= y1)) throw new BadRequest('位置不在校园地图范围内')
-  return [+lng.toFixed(6), +lat.toFixed(6)]
+  return [lng, lat]
 }
 function clean(table, p) {
   const name = i18n(p.name, 120)
@@ -185,6 +186,7 @@ const eventPipeline = installEventPipeline(app, db, { authorize: requireAdmin, e
 installCheckin(app, db, root, { isAdmin })
 installOrganizer(app, db, { isAdmin })
 app.use('/api', (_req, res, next) => { res.set('Cache-Control', 'no-store'); next() })
+installSurfaceNetworks(app, staticDb, campus, { authorize: requireAdmin })
 app.get('/api/places', (_req, res) => res.json({ categories: seed.categories, buildings: list('buildings'), pois: list('pois') }))
 app.post('/api/auth', requireAdmin, (_req, res) => res.json({ ok: true }))
 app.get('/api/map-settings', (_req, res) => {
@@ -273,7 +275,7 @@ app.get('/admin', (_req, res) => res.redirect(302, '/admin/'))
 const dist = join(root, 'dist')
 if (existsSync(dist)) app.use(express.static(dist))
 app.use((err, _req, res, _next) => {
-  if (err instanceof BadRequest || err.type === 'entity.parse.failed') return res.status(400).json({ error: err instanceof BadRequest ? err.message : 'JSON 格式不正确' })
+  if (err.name === 'SurfaceNetworkError' || err instanceof BadRequest || err.type === 'entity.parse.failed') return res.status(400).json({ error: err.message || (err instanceof BadRequest ? err.message : 'JSON 格式不正确') })
   if (err.type === 'entity.too.large') return res.status(413).json({ error: '数据过大，请减少内容后重试' })
   console.error(err)
   res.status(500).json({ error: '服务器出错了' })

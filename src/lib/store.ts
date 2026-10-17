@@ -2,6 +2,7 @@ import { computed, reactive } from 'vue'
 import type { IconName } from './icons'
 import { groupBuildings, type BuildingGroup } from './groups'
 import { initRouting, type RouteResult, type Target } from './route'
+import { copyGrid, validSurfaceGrid, type SurfaceGrid } from './network'
 import { findIntegratedRoute } from './integratedRoute'
 import type { UndergroundRouteResult } from './undergroundRoute'
 import { openSheet, ui } from './ui'
@@ -64,6 +65,9 @@ export const state = reactive({
   groups: [] as BuildingGroup[],
   pois: [] as Poi[],
   campus: null as Campus | null,
+  rainGrid: null as SurfaceGrid | null,
+  rainAvailable: false,
+  rainMode: false,
   underground: null as UndergroundMap | null,
   undergroundErrors: [] as string[],
   mapSettings: { ...DEFAULT_MAP_SETTINGS },
@@ -212,6 +216,10 @@ export async function loadData() {
     const underground = await getJson<UndergroundMap>('/api/underground', undefined, 4000).catch(() => getJson<UndergroundMap>('/data/underground.json').catch(() => null))
     state.categories = places.categories
     state.campus = campus
+    try {
+      const rain = await getJson<{ grid: SurfaceGrid | null; available: boolean }>('/api/surface-networks/rain', undefined, 4000)
+      if (rain.grid && validSurfaceGrid(rain.grid, campus.grid)) { state.rainGrid = copyGrid(rain.grid); state.rainAvailable = true }
+    } catch { /* 静态/离线运行时没有 rain 版本 */ }
     state.undergroundErrors = underground ? validateUndergroundMap(underground, campus) : []
     state.underground = underground && !state.undergroundErrors.length ? mergeUndergroundSketch(underground, state.undergroundSketch.paths) : null
     state.mapSettings = validMapSettings(mapSettings) ? mapSettings : { ...DEFAULT_MAP_SETTINGS }
@@ -633,10 +641,20 @@ export function clearUndergroundSketch() {
   persistUndergroundSketch()
 }
 
+export function setRainMode(enabled: boolean) {
+  if (!state.campus) return
+  if (enabled && !state.rainGrid) { toast('暂无避雨路网，已继续使用普通路网'); state.rainMode = false; return }
+  state.rainMode = enabled
+  initRouting({ ...state.campus, grid: enabled ? state.rainGrid! : state.campus.grid })
+  computeRoute(false)
+}
+
 export function openRoute() {
   state.panel = 'home'
   state.route.open = true
   state.route.network = 'surface'
+  state.rainMode = false
+  if (state.campus) initRouting(state.campus)
   state.route.undergroundResult = null
   if (!state.route.from) state.route.picking = 'from'
   else if (!state.route.to) state.route.picking = 'to'
@@ -677,5 +695,7 @@ export function computeRoute(fit = true) {
 }
 
 export function closeRoute() {
+  state.rainMode = false
+  if (state.campus) initRouting(state.campus)
   Object.assign(state.route, { open: false, network: 'surface', from: null, to: null, picking: null, result: null, undergroundResult: null, failed: false })
 }
