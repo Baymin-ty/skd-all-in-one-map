@@ -5,7 +5,7 @@ import { computeRoute, mapApi, setEnd, state, toast, type RouteEnd } from './sto
 import type { LngLat } from './types'
 
 /**
- * 实时定位：蓝点 + 精度圈 + 朝向，地图跟随；导航起点是「我的位置」时边走边重算路线，偏离时提示，到达时提醒。
+ * 实时定位：蓝点 + 精度圈 + 朝向，地图跟随；「我的位置」只在选择时作为导航起点快照，后续不随 GPS 变化。
  * 浏览器只在 HTTPS（或 localhost）下给定位权限。室内 GPS 不准，演示用 `?mock` 模拟定位：
  * 右键或长按地图把自己放到那里，也可以沿当前路线模拟走一遍。
  */
@@ -37,8 +37,9 @@ let walkTimer = 0
 
 const mockParam = () => new URLSearchParams(window.location.search).get('mock')
 
+/** 将当前位置作为一次性的导航起点快照；后续 GPS 更新只更新定位蓝点，不移动导航起点。 */
 export function myLocationEnd(): RouteEnd | null {
-  return locator.status === 'on' && locator.pos ? { name: '我的位置', point: locator.pos, live: true } : null
+  return locator.status === 'on' && locator.pos ? { name: '我的位置', point: [...locator.pos] as LngLat, live: false } : null
 }
 
 /** 打开页面时静默申请定位：只显示蓝点，不移动地图，也不弹不支持定位的提示 */
@@ -149,7 +150,7 @@ function update(pos: LngLat, accuracy: number) {
   followRoute(pos)
 }
 
-/** 起点是「我的位置」时：走动中按当前位置重算，偏离时提示，到终点附近提醒 */
+/** 兼容旧的实时起点；当前「我的位置」使用快照，因此不会进入此分支。 */
 function followRoute(pos: LngLat) {
   const r = state.route
   if (!r.open || !r.from?.live || !r.to) return
