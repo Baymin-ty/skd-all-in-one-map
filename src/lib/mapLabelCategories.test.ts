@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { allMapLabels, labelShown, PICKER_CATEGORIES } from './mapLabelCategories'
+import { allMapLabels, defaultMapLabels, labelShown, PICKER_CATEGORIES } from './mapLabelCategories'
 
 describe('on-demand label categories', () => {
   it('keeps parking out of the picker', () => {
@@ -13,5 +13,9 @@ describe('on-demand label categories', () => {
     expect(labelShown(all, 'transport')).toBe(false)
     expect(labelShown(all, 'academic')).toBe(true)
     expect(labelShown(allMapLabels(false), 'academic')).toBe(false)
+  })
+
+  it('shows life services by default on the whole-campus map', () => {
+    expect(defaultMapLabels().service).toBe(true)
   })
 })

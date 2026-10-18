@@ -29,7 +29,7 @@ export function allMapLabels(visible: boolean): MapLabelVisibility {
 
 /** 默认只开最常用的几类，其余按需打开；名称仍会按空间避让。 */
 export function defaultMapLabels(): MapLabelVisibility {
-  return { ...allMapLabels(true), housing: false, service: false, transport: false }
+  return { ...allMapLabels(true), housing: false, transport: false }
 }
 
 export function buildingLabelCategory(b: Pick<Building, 'cat'>): MapLabelCategory {

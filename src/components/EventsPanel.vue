@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { discovery, EVENT_CATS, EVENT_RANGES, eventsIn, loadDiscovery } from '../lib/discoveryData'
-import { dateKey, dayLabel, eventStatus, evStart, STATUS_LABELS, timeRange } from '../lib/campusTime'
+import { dateKey, dayLabel, eventStatus, evStart, nowTick, STATUS_LABELS, timeRange } from '../lib/campusTime'
 import { fitEvents, navigateToPlace, placeName, placeSelection, select, state, toast } from '../lib/store'
 import { addItem, itemFromEvent, plan } from '../lib/today'
+import { suggestEvents } from '../lib/planner'
+import { walkMinutes } from '../lib/walkTime'
 import { buildLink, openShare } from '../lib/deepLink'
 import CommunityEntry from './CommunityEntry.vue'
 import EventCard from './EventCard.vue'
@@ -11,6 +13,7 @@ import Ico from './Ico.vue'
 import { checkin, loadCheckins } from '../lib/checkin'
 import { displayText, isEnglish, t } from '../lib/i18n'
 import { techathonBadge } from '../lib/eventVisuals'
+import ActivityPushPanel from './ActivityPushPanel.vue'
 
 const shown = ref(30)
 const list = computed(() => eventsIn(state.radar.range, state.radar.cat, state.radar.place))
@@ -50,7 +53,21 @@ function share() {
     ...e.place ? [{ label: '导航到会场', url: buildLink({ kind: 'to', place: e.place, room: e.room || undefined }), hint: '扫码后直接导航到活动地点' }] : [],
   ] })
 }
-const planned = computed(() => !!event.value && (plan.items.some((i) => !i.deleted && i.eventId === event.value!.id) || dateKey(evStart(event.value)) === plan.date))
+const planned = computed(() => !!event.value && plan.items.some((i) => !i.deleted && i.eventId === event.value!.id))
+const eventSuggestion = computed(() => {
+  const current = event.value
+  if (!current || current.hidden || current.status === 'cancelled' || current.allDay || !current.place) return null
+  const suggestion = suggestEvents({
+    date: dateKey(evStart(current)), now: nowTick.value, items: plan.items, events: [current], walk: walkMinutes,
+  }, 1)[0]
+  return suggestion ? { ...suggestion, date: dateKey(evStart(current)) } : null
+})
+const eventPushEmptyText = computed(() => {
+  if (planned.value) return '这场活动已经加入你的今天。'
+  if (!event.value?.place) return '活动地点尚未映射，暂时无法估算步行衔接。'
+  if (event.value.allDay) return '全天活动暂时不参与空档推送。'
+  return '这场活动与已有课程或安排有时间冲突，或预留的步行时间不够。'
+})
 watch(event, (value) => { if (value) void loadCheckins(value.id) }, { immediate: true })
 function addToToday() {
   if (!event.value || planned.value) return
@@ -73,6 +90,15 @@ function addToToday() {
         <button type="button" class="act" @click="share"><Ico name="external" />{{ isEnglish ? 'Share' : '分享' }}</button>
         <a v-if="event.url" class="act" :href="event.url" target="_blank" rel="noopener noreferrer"><Ico name="external" />原始通知</a>
       </div>
+      <ActivityPushPanel
+        v-if="status !== 'past' && event.status !== 'cancelled'"
+        :suggestions="eventSuggestion ? [eventSuggestion] : []"
+        title="课表冲突检查"
+        subtitle="根据当前课表和已有安排判断能否参加"
+        :empty-text="eventPushEmptyText"
+        :show-empty="true"
+        :allow-add="false"
+      />
       <CommunityEntry :target="{ type: 'event', id: event.id, name: displayText(event.title, event.title_en) }" />
       <p v-if="isEnglish && event.desc_en" class="event-description">{{ event.desc_en }}</p>
       <section class="checkin-card"><div><b>{{ isEnglish ? 'Event check-in' : '活动签到' }}</b><small>{{ checkin.me ? (isEnglish ? 'You checked in' : '你已签到') : (isEnglish ? `${checkin.count} checked in` : `${checkin.count} 人已签到`) }}</small></div><span v-if="checkin.me" class="pill live">{{ isEnglish ? 'Attended' : '已到场' }}</span></section>

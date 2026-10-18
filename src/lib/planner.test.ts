@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { nowTick, timestamp } from './campusTime'
 import { crowdAt } from './crowd'
 import type { CampusEvent, Canteen } from './discoveryTypes'
-import { lateLegs, nextStep, suggestEvents, suggestMeals, type PlanContext } from './planner'
+import { lateLegs, nextStep, suggestActivityPushes, suggestEvents, suggestMeals, type PlanContext } from './planner'
 import { addItem, endMin, fromMin, initPlan, itemFromEvent, itemsOn, itemsOnIncludingEvents, plan, weekdayOf, type PlanItem } from './today'
 
 const canteen = (id: string, place: string, hours: [string, string, 'lunch' | 'dinner' | 'allday'][], extra: Partial<Canteen['outlets'][number]> = {}): Canteen => ({
@@ -102,6 +102,25 @@ describe('我的今天：建议', () => {
     const events = [event({ id: 'fits', place: 'lib', start: '2026-10-16T14:00', end: '2026-10-16T15:00' }), event({ id: 'clash', start: '2026-10-16T13:30', end: '2026-10-16T14:30' }),
       event({ id: 'tooLate', place: 'xx', start: '2026-10-16T14:05', end: '2026-10-16T15:05' }), event({ id: 'allDay', allDay: true, start: '2026-10-16', end: null })]
     expect(suggestEvents(ctx(items, { events })).map((s) => s.event.id)).toEqual(['fits'])
+  })
+  it('智能推送只占用课程和用户明确加入的安排，并覆盖未来七天', () => {
+    const items = [item({ id: 'class', date: undefined, weekdays: [5], place: 'sem', start: '13:00', end: '13:50' })]
+    const events = [
+      event({ id: 'free-today', place: 'lib', start: '2026-10-16T14:00', end: '2026-10-16T15:00' }),
+      event({ id: 'free-tomorrow', place: 'lib', start: '2026-10-17T10:00', end: '2026-10-17T11:00' }),
+      event({ id: 'cancelled', place: 'lib', status: 'cancelled', start: '2026-10-17T12:00', end: '2026-10-17T13:00' }),
+      event({ id: 'hidden', place: 'lib', hidden: true, start: '2026-10-17T14:00', end: '2026-10-17T15:00' }),
+    ]
+    const suggestions = suggestActivityPushes({
+      startDate: '2026-10-16', now: timestamp('2026-10-16T08:00'), items, events, walk,
+    })
+    expect(suggestions.map((s) => s.event.id)).toEqual(['free-today', 'free-tomorrow'])
+    expect(suggestions.map((s) => s.date)).toEqual(['2026-10-16', '2026-10-17'])
+  })
+  it('智能推送排除已经加入我的今天的活动', () => {
+    const events = [event({ id: 'saved', place: 'lib', start: '2026-10-16T14:00', end: '2026-10-16T15:00' })]
+    const saved = { ...itemFromEvent(events[0]), id: 'saved-item', source: 'event' as const }
+    expect(suggestActivityPushes({ startDate: '2026-10-16', now: timestamp('2026-10-16T08:00'), items: [saved], events, walk })).toEqual([])
   })
   it('下一项：算出出发时间，晚了是负数', () => {
     const items = [item({ id: 'a', place: 'sem', start: '08:00', end: '09:35' }), item({ id: 'b', place: 'lib', start: '10:00', end: '11:35' })]

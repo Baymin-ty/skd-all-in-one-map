@@ -3,7 +3,7 @@ import { computed, ref } from 'vue'
 import { dateKey, dayName, nowTick, timestamp } from '../lib/campusTime'
 import { CROWD_LABELS, crowdAt } from '../lib/crowd'
 import { discovery } from '../lib/discoveryData'
-import { lateLegs, nextStep, suggestEvents, suggestMeals, type PlanContext } from '../lib/planner'
+import { lateLegs, nextStep, suggestActivityPushes, suggestMeals, type PlanContext } from '../lib/planner'
 import { navigateToPlace, openEvent, placeName, placeSelection, select, toast } from '../lib/store'
 import { addItem, endMin, fromMin, isWeeklyClass, itemFromEvent, itemsOnIncludingEvents, nowMinute, plan, PLAN_KINDS, removeItem, startMin, withDiscoveryEvents, type PlanItem } from '../lib/today'
 import { walkMinutes } from '../lib/walkTime'
@@ -11,6 +11,7 @@ import { account } from '../lib/account'
 import { openProfile } from '../lib/profile'
 import Ico from './Ico.vue'
 import TodayItemForm from './TodayItemForm.vue'
+import ActivityPushPanel from './ActivityPushPanel.vue'
 
 const DAY = 86_400_000
 const days = computed(() => [0, 1, 2].map((n) => {
@@ -26,7 +27,9 @@ const legs = computed(() => lateLegs(ctx.value))
 const step = computed(() => nextStep(ctx.value))
 const meals = computed(() => suggestMeals(ctx.value))
 const mealCrowdLabel = computed(() => meals.value.some((s) => s.crowd.source === 'live') ? '含实时反馈' : '排队时间为估算')
-const freeEvents = computed(() => suggestEvents(ctx.value))
+const pushSuggestions = computed(() => classCount.value
+  ? suggestActivityPushes({ startDate: plan.date, now: nowTick.value, items: plan.items, events: discovery.events, walk: walkMinutes })
+  : [])
 const editing = ref<PlanItem | 'new' | null>(null)
 const classCount = computed(() => plan.items.filter(isWeeklyClass).length)
 const autoEvent = (i: PlanItem) => !!i.eventId && i.id.startsWith('event:')
@@ -51,7 +54,7 @@ function addMeal(s: (typeof meals.value)[number]) {
   addItem({ kind: 'meal', title: `${s.meal === 'lunch' ? '午饭' : '晚饭'} · ${s.canteen.zh}`, place: s.canteen.place, start: fromMin(s.arrive), end: fromMin(s.done), date: plan.date, source: 'planner' })
   toast('已加入吃饭安排')
 }
-function addEvent(e: (typeof freeEvents.value)[number]) {
+function addEvent(e: (typeof pushSuggestions.value)[number]) {
   addItem(itemFromEvent(e.event))
   toast('已加入活动')
 }
@@ -77,6 +80,13 @@ const leaveText = computed(() => {
       <span class="grow">{{ classCount ? `课表 ${classCount} 门课，按星期自动排进来` : '还没有课表：导入截图后每天自动排课' }}</span>
       <span class="sl-go">{{ classCount ? '管理课表' : '去导入' }}<Ico name="chevron" /></span>
     </button>
+
+    <ActivityPushPanel
+      :suggestions="pushSuggestions"
+      :show-empty="classCount > 0"
+      empty-text="未来 7 天没有能放进课表空档的活动。"
+      @add="addEvent"
+    />
 
     <section v-if="step?.next" class="next-card" :class="{ late: (step.leaveIn ?? 0) < 0 }">
       <span class="nc-eyebrow"><Ico name="clock" />下一项 · {{ step.next.start }}</span>
@@ -134,18 +144,6 @@ const leaveText = computed(() => {
             <button type="button" class="act small" @click="addMeal(s)"><Ico name="plus" />加入安排</button>
             <button type="button" class="act small" @click="navigateToPlace(s.canteen.place)"><Ico name="walk" />到这去</button>
           </span>
-        </div>
-      </div>
-    </section>
-
-    <section v-if="freeEvents.length" class="sec">
-      <h3>空档里可以去 <span class="muted">不和已有安排冲突</span></h3>
-      <div v-for="s in freeEvents" :key="s.event.id" class="suggest">
-        <span class="sg-icon"><Ico name="calendar" /></span>
-        <div class="grow">
-          <button type="button" class="stop-title" @click="openEvent(s.event.id)">{{ s.event.title }}</button>
-          <p>{{ fromMin(s.start) }}–{{ fromMin(s.end) }} · {{ placeName(placeSelection(s.event.place)!) }}<template v-if="s.prev?.place"> · 从上一站步行 {{ s.walkIn }} 分钟</template></p>
-          <span class="sg-actions"><button type="button" class="act small" @click="addEvent(s)"><Ico name="plus" />加入安排</button></span>
         </div>
       </div>
     </section>

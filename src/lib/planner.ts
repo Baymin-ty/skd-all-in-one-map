@@ -1,4 +1,4 @@
-import { dateKey, evEnd, evStart, clockText } from './campusTime'
+import { dateKey, evEnd, evStart, clockText, timestamp } from './campusTime'
 import type { Crowd } from './crowd'
 import type { CampusEvent, Canteen, Meal, Outlet } from './discoveryTypes'
 import { atMinute, endMin, itemsOn, nowMinute, overlaps, startMin, toMin, type PlanItem } from './today'
@@ -114,12 +114,15 @@ export function suggestMeals(ctx: PlanContext): MealSuggestion[] {
 export interface EventSuggestion { event: CampusEvent; start: number; end: number; walkIn: number; walkOut: number; prev?: PlanItem; next?: PlanItem }
 
 /** 当天还没开始、时间完全放得进空档的活动（来得及走过去，结束后也赶得上下一项） */
-export function suggestEvents(ctx: PlanContext, limit = 3): EventSuggestion[] {
+type EventPlanContext = Pick<PlanContext, 'date' | 'now' | 'items' | 'events' | 'walk'>
+
+export function suggestEvents(ctx: EventPlanContext, limit = 3): EventSuggestion[] {
   const day = itemsOn(ctx.items, ctx.date)
   const now = nowMinute(ctx.date, ctx.now)
   const taken = new Set(day.map((i) => i.eventId).filter(Boolean))
   const out: EventSuggestion[] = []
   for (const event of ctx.events) {
+    if (event.hidden || event.status === 'cancelled') continue
     if (!event.place || event.allDay || taken.has(event.id) || dateKey(evStart(event)) !== ctx.date || dateKey(evEnd(event) - 1) !== ctx.date) continue
     const start = toMin(clockText(evStart(event)))
     const end = start + Math.round((evEnd(event) - evStart(event)) / 60_000)
@@ -135,6 +138,36 @@ export function suggestEvents(ctx: PlanContext, limit = 3): EventSuggestion[] {
     out.push({ event, start, end, walkIn, walkOut, prev, next })
   }
   return out.sort((a, b) => a.start - b.start || a.walkIn - b.walkIn).slice(0, limit)
+}
+
+export interface ActivityPushContext {
+  /** 推送窗口的第一天（校园时区） */
+  startDate: string
+  now: number
+  /** 只传课程和用户明确加入的安排；不要传自动并入的活动时间线。 */
+  items: PlanItem[]
+  events: CampusEvent[]
+  walk: (from?: string, to?: string) => number | null
+}
+
+export interface ActivityPushSuggestion extends EventSuggestion {
+  date: string
+}
+
+/**
+ * 从指定日期开始找一周内能完整参加的活动。
+ * 课程与用户明确加入的安排会占用时间，活动雷达自动展示的条目不会被当成已报名。
+ */
+export function suggestActivityPushes(ctx: ActivityPushContext, days = 7, limit = 5): ActivityPushSuggestion[] {
+  const out: ActivityPushSuggestion[] = []
+  for (let offset = 0; offset < days; offset++) {
+    const date = dateKey(timestamp(ctx.startDate) + offset * 86_400_000)
+    const suggestions = suggestEvents({
+      date, now: ctx.now, items: ctx.items, events: ctx.events, walk: ctx.walk,
+    }, limit)
+    for (const suggestion of suggestions) out.push({ ...suggestion, date })
+  }
+  return out.sort((a, b) => a.date.localeCompare(b.date) || a.start - b.start || a.walkIn - b.walkIn).slice(0, limit)
 }
 
 export interface NextStep {
