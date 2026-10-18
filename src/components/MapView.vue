@@ -1172,6 +1172,8 @@ const toolsHidden = computed(() => tm.open || parcel.open || !ui.desktop && ui.s
 <style>
 .map { position: absolute; inset: 0; background: #fbfaf7; isolation: isolate; transition: inset .25s, width .25s, height .25s, border-radius .25s; }
 .map.streetview-map { z-index: 3001; top: 18px; right: 18px; left: auto; bottom: auto; width: min(34vw, 420px); height: min(30vh, 260px); border: 3px solid #fff; border-radius: 16px; box-shadow: 0 8px 28px #0008; overflow: hidden; }
+/* 手机上小地图下移到标题栏下方，不挡标题和退出按钮 */
+@media (max-width: 700px) { .map.streetview-map { top: calc(64px + env(safe-area-inset-top)); right: 12px; } }
  .streetview-point-marker { display: block; width: 10px; height: 10px; border: 2px solid #fff; border-radius: 2px; background: #f5c542; box-shadow: 0 1px 4px #0008; }
 .map.leaflet-container { font: inherit; }
 .map-opacity-cutout { transition: fill 240ms ease-in-out; }

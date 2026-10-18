@@ -178,8 +178,9 @@ function resizeByKey(e: KeyboardEvent) {
     <BuildingExplorer />
     <UndergroundStreetView />
 
-    <div v-if="state.route.picking" class="pick-hint" role="status" :style="ui.desktop ? undefined : { top: ui.topH + 4 + 'px' }">
-      {{ state.route.network === 'underground' ? '地下标注模式：在窗口中逐点标记道路或上下连接点' : `点地图上的楼、点位或任意位置作为${state.route.picking === 'from' ? '起点' : '终点'}` }}
+    <!-- 地面选点不再弹浮层提示，路线卡片里已有说明 -->
+    <div v-if="state.route.picking && state.route.network === 'underground'" class="pick-hint" role="status" :style="ui.desktop ? undefined : { top: ui.topH + 4 + 'px' }">
+      地下标注模式：在窗口中逐点标记道路或上下连接点
       <button type="button" @click="cancelPick">取消</button>
     </div>
     <div v-if="demoClockEnabled && !hideDemoClock" class="demo-clock" role="status" :style="ui.desktop ? undefined : { top: ui.topH + 'px' }">演示时间 {{ clockText(nowTick) }}</div>

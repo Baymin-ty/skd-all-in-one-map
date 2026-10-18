@@ -73,6 +73,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 @media (prefers-reduced-motion:reduce){.ground-arrow{transition:none}.ground-arrow:hover,.ground-arrow:focus-visible{transform:none}}
 .demo-plan{position:fixed;z-index:3002;top:18px;right:18px;width:min(34vw,420px);height:min(30vh,260px);padding:0;border:3px solid #fff;border-radius:16px;background:#fff;box-shadow:0 8px 28px #0008;overflow:hidden;display:flex;flex-direction:column}.demo-plan.zoom{width:min(92vw,1100px);height:min(80vh,800px)}
 .demo-plan-inner{flex:1;min-height:0;display:grid;place-items:center;container-type:size}.demo-plan-fit{position:relative;display:block}.demo-plan-inner img{max-width:100cqw;max-height:100cqh;object-fit:contain;display:block}
+@media (max-width:700px){.demo-plan{top:calc(64px + env(safe-area-inset-top));right:12px}}
 .demo-plan small{color:#333;font-size:12px;padding:2px 0 4px}
 .demo-room{position:absolute;display:grid;place-items:center;border:2px solid #e23;background:#e2333330;color:#e23;font-style:normal;font-weight:700;font-size:12px;animation:demo-pulse 1.2s infinite alternate}
 @keyframes demo-pulse{to{background:#e2333366}}
