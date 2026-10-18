@@ -94,3 +94,14 @@
 
 /* 命中框保持固定；鼠标只影响颜色与阴影。父标签临时隐藏时仍保留原布局。 */
 .hover-suppressed { visibility: hidden; pointer-events: none; }
+
+/* 缩放期间暂停标签、标记和路径的动画与过渡。 */
+/* 不能匹配 .leaflet-zoom-animated，否则会打断 Leaflet 自己的缩放过渡。 */
+.map-zooming .leaflet-marker-icon :not(.leaflet-zoom-animated), .map-zooming .leaflet-marker-icon :not(.leaflet-zoom-animated)::before,
+.map-zooming .leaflet-marker-icon :not(.leaflet-zoom-animated)::after, .map-zooming .leaflet-pane path { animation-play-state: paused !important; transition: none !important; }
+
+/* 触屏设备：标签只留一层浅阴影，去掉指针光晕。 */
+@media (hover: none) {
+  .blabel, .pmark, .blabel.group { box-shadow: 0 1px 3px #24372d1f; }
+  .blabel::before, .pmark::before { content: none; }
+}

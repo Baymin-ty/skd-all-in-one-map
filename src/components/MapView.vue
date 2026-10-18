@@ -443,16 +443,28 @@ function drawPoiTargets() {
 
 let declutterFrame = 0
 const CENTER: LabelSlot = { slot: 'c', dx: 0, dy: 0 }
+/** 标签尺寸及相对锚点的偏移，按（容器 class、标签 class、层级、内容）缓存，平移时不必重新测量 */
+type LabelBox = { w: number; h: number; ox: number; oy: number }
+const labelBoxes = new Map<string, LabelBox>()
+const LEVEL_CLASSES = ['lv-list', 'lv-brief', 'lv-icon']
+const KEY_IGNORED = new Set(['clash', ...LEVEL_CLASSES, 'near-pointer', 'is-hovered', 'hover-suppressed'])
+const setLevel = (n: HTMLElement, level: LabelLevel) => {
+  n.classList.toggle('lv-list', level === 'list')
+  n.classList.toggle('lv-brief', level === 'brief')
+  n.classList.toggle('lv-icon', level === 'icon')
+}
 function declutter() {
   cancelAnimationFrame(declutterFrame)
   declutterFrame = requestAnimationFrame(() => {
-    if (!el.value) return
-    el.value.classList.add('label-layout')
-    const nodes = [...el.value.querySelectorAll<HTMLElement>('[data-prio]')]
-    for (const n of nodes) n.classList.remove('clash', 'lv-list', 'lv-brief', 'lv-icon')
+    const root = el.value
+    if (!root) return
+    // 写：清掉上一轮结果
+    const nodes = [...root.querySelectorAll<HTMLElement>('[data-prio]')]
+    for (const n of nodes) n.classList.remove('clash', ...LEVEL_CLASSES)
     // 同级按地点排序，结果不随图层插入顺序变化
     nodes.sort((a, b) => Number(b.dataset.prio) - Number(a.dataset.prio) || (a.dataset.place ?? '').localeCompare(b.dataset.place ?? ''))
-    const bounds = el.value.getBoundingClientRect()
+    // 读：容器、遮挡区、可见性一次读完
+    const bounds = root.getBoundingClientRect()
     const cov = covered()
     const viewport: LabelRect = { left: bounds.left + cov.l + 8, right: bounds.right - cov.r - 8,
       top: bounds.top + cov.t + 8, bottom: bounds.bottom - (ui.desktop || ui.overlay ? cov.b : ui.sheet) - 8 }
@@ -460,59 +472,101 @@ function declutter() {
     const placed: LabelRect[] = [mapTools.value, document.querySelector<HTMLElement>('.map-chips-float')]
       .filter((node): node is HTMLElement => !!node && node.offsetParent !== null)
       .map((node) => node.getBoundingClientRect())
+    // 锚点：Leaflet 记录的图层坐标换算成屏幕坐标，不读 DOM
+    const anchorOf = (layerPoint: L.Point) => {
+      const p = map.layerPointToContainerPoint(layerPoint)
+      return { x: bounds.left + p.x, y: bounds.top + p.y }
+    }
+    const rootKey = root.className.split(/\s+/).filter((c) => c !== 'label-layout').sort().join(' ')
+    const items = nodes.filter((n) => n.offsetParent !== null).map((n) => {
+      const pinned = Number(n.dataset.prio) >= 130
+      const levels = labelLevels(n.dataset.levels)
+      const gm = n.dataset.group ? groupMarkers.get(n.dataset.group) : undefined
+      const pos = n.parentElement ? L.DomUtil.getPosition(n.parentElement) as L.Point | undefined : undefined
+      const base = `${rootKey}|${[...n.classList].filter((c) => !KEY_IGNORED.has(c)).sort().join(' ')}|${markerHtml.get(n) ?? n.innerHTML}`
+      return { n, pinned, levels, gm, pos, base, boxes: new Map<LabelLevel, LabelBox>() }
+    })
+    // 测量：缺缓存的按层级成批写 class、再成批读，每个层级只触发一次布局
+    const missing = new Map<LabelLevel, typeof items>()
+    for (const it of items) for (const level of new Set<LabelLevel>(['full', ...(it.pinned ? it.levels.slice(0, 1) : it.levels)])) {
+      const box = it.pos && labelBoxes.get(`${it.base}|${level}`)
+      if (box) it.boxes.set(level, box)
+      else missing.set(level, [...(missing.get(level) ?? []), it])
+    }
+    if (missing.size) {
+      root.classList.add('label-layout')
+      if (labelBoxes.size > 3000) labelBoxes.clear()
+      for (const [level, list] of missing) {
+        for (const it of list) setLevel(it.n, level)
+        for (const it of list) {
+          const r = it.n.getBoundingClientRect()
+          const a = it.pos ? anchorOf(it.pos) : { x: 0, y: 0 }
+          const box = { w: r.width, h: r.height, ox: r.left - a.x, oy: r.top - a.y }
+          it.boxes.set(level, box)
+          if (it.pos) labelBoxes.set(`${it.base}|${level}`, box)
+        }
+      }
+      for (const it of items) setLevel(it.n, 'full')
+      root.classList.remove('label-layout')
+    }
+    // 计算：纯数值，不碰 DOM
     const gapX = map.getZoom() <= 17 ? 16 : 10
     const gapY = 8
     // 文字之间要留读得开的间距；只剩图标时贴近一些也不会看错
     const hits = (r: LabelRect, level: LabelLevel = 'full') => !labelFits(r, viewport)
       || placed.some((q) => level === 'icon' ? labelsOverlap(r, q, 6, 4) : labelsOverlap(r, q, gapX, gapY))
-    const setLevel = (n: HTMLElement, level: LabelLevel) => {
-      n.classList.toggle('lv-list', level === 'list')
-      n.classList.toggle('lv-brief', level === 'brief')
-      n.classList.toggle('lv-icon', level === 'icon')
+    const rectAt = (box: LabelBox, layerPoint: L.Point | undefined): LabelRect => {
+      const a = layerPoint ? anchorOf(layerPoint) : { x: 0, y: 0 }
+      return { left: a.x + box.ox, top: a.y + box.oy, right: a.x + box.ox + box.w, bottom: a.y + box.oy + box.h }
     }
-    const setSlot = (n: HTMLElement, s: LabelSlot) => {
-      n.dataset.slot = s.slot
-      n.style.setProperty('--dx', `${s.dx}px`)
-      n.style.setProperty('--dy', `${s.dy}px`)
-    }
-    for (const n of nodes) {
-      if (n.offsetParent === null) continue // 被缩放级别的样式藏掉了
-      // 选中、活动标注等必须出现的标签固定在原位、完整显示，其他标签给它们让路
-      const pinned = Number(n.dataset.prio) >= 130
-      const levels = labelLevels(n.dataset.levels)
-      const gm = n.dataset.group ? groupMarkers.get(n.dataset.group) : undefined
-      if (!n.getBoundingClientRect().width) continue
+    const results: { n: HTMLElement; level: LabelLevel; slot?: LabelSlot; clash?: boolean; spot?: L.LatLng }[] = []
+    for (const { n, pinned, levels, gm, pos, boxes } of items) {
+      if (!boxes.get('full')?.w) continue
       // 楼群：先试上次的位置，再从各栋中心的平均点起依次试离它最近的楼
       const here = gm?.marker.getLatLng()
       const spots: (L.LatLng | undefined)[] = gm ? [here, ...gm.spots.map(toLatLng)] : [undefined]
       let done = false
       for (const level of pinned ? levels.slice(0, 1) : levels) {
-        setLevel(n, level)
+        const box = boxes.get(level)!
         for (const spot of spots) {
-          if (spot) gm!.marker.setLatLng(spot)
-          const r = n.getBoundingClientRect()
+          // 与 Marker._setPos 一致：图层坐标取整
+          const r = rectAt(box, spot ? map.latLngToLayerPoint(spot).round() : pos)
           // 先在地点附近挪位置，挪不开再换备选位置、精简内容
-          const slot = (n.dataset.shift ? labelSlots(r.width, r.height, n.dataset.slot) : [CENTER])
+          const slot = (n.dataset.shift ? labelSlots(box.w, box.h, n.dataset.slot) : [CENTER])
             .find((s) => !hits(shiftRect(r, s.dx, s.dy), level))
           if (!slot) continue
-          setSlot(n, slot)
           placed.push(shiftRect(r, slot.dx, slot.dy))
-          if (gm) groupPositions.set(n.dataset.group!, [gm.marker.getLatLng().lng, gm.marker.getLatLng().lat])
+          results.push({ n, level, slot, spot })
           done = true
           break
         }
         if (done) break
       }
-      if (gm && !done) gm.marker.setLatLng(toLatLng(gm.spots[0]))
       if (done) continue
-      // 藏起来的标签回到完整内容和正中，悬停时按原样补出；上次的位置保留，重新出现时优先用
-      setLevel(n, levels[0])
-      n.style.setProperty('--dx', '0px')
-      n.style.setProperty('--dy', '0px')
-      if (pinned) placed.push(n.getBoundingClientRect())
-      else n.classList.add('clash')
+      // 藏起来的标签回到完整内容和正中；必须显示的仍占位
+      const spot = gm ? toLatLng(gm.spots[0]) : undefined
+      results.push({ n, level: levels[0], spot, clash: !pinned })
+      if (pinned) placed.push(rectAt(boxes.get(levels[0])!, spot ? map.latLngToLayerPoint(spot).round() : pos))
     }
-    el.value.classList.remove('label-layout')
+    // 写：一次性应用结果
+    for (const { n, level, slot, clash, spot } of results) {
+      setLevel(n, level)
+      const gm = n.dataset.group ? groupMarkers.get(n.dataset.group) : undefined
+      if (gm && spot) {
+        if (!gm.marker.getLatLng().equals(spot)) gm.marker.setLatLng(spot)
+        if (slot) groupPositions.set(n.dataset.group!, [spot.lng, spot.lat])
+      }
+      if (slot) {
+        n.dataset.slot = slot.slot
+        n.style.setProperty('--dx', `${slot.dx}px`)
+        n.style.setProperty('--dy', `${slot.dy}px`)
+      } else {
+        // 上次的位置保留，重新出现时优先用
+        n.style.setProperty('--dx', '0px')
+        n.style.setProperty('--dy', '0px')
+      }
+      if (clash) n.classList.add('clash')
+    }
     updateHoverLabel()
   })
 }
@@ -968,6 +1022,17 @@ onMounted(() => {
   if (mineFocus.value && !state.selected && !state.eventId) fitToday()
   unmountLocate = mountLocateLayer(map)
   unmountTimeMachine = mountTimeMachineLayer(map)
+  // 缩放期间暂停滤镜、遮罩和动画，减少逐帧重绘；zoomend 丢失时由定时器兜底
+  let zoomingTimer = 0
+  const endZooming = () => { clearTimeout(zoomingTimer); el.value?.classList.remove('map-zooming') }
+  map.on('zoomstart', () => {
+    el.value?.classList.add('map-zooming')
+    clearTimeout(zoomingTimer)
+    zoomingTimer = window.setTimeout(endZooming, 1500)
+  })
+  map.on('zoomend', endZooming)
+  onBeforeUnmount(() => clearTimeout(zoomingTimer))
+  document.fonts?.addEventListener?.('loadingdone', () => { labelBoxes.clear(); declutter() })
   map.on('zoomend', () => {
     zoomClass()
     drawLabels()
@@ -977,6 +1042,7 @@ onMounted(() => {
   map.on('movestart', () => labelInteraction?.setMoving(true))
   map.on('moveend', () => { labelInteraction?.setMoving(false); declutter() })
   map.on('resize', () => {
+    labelBoxes.clear()
     limitZoomOut()
     keepInside()
     declutter()

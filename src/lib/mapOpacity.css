@@ -2,3 +2,7 @@
 .leaflet-tile-pane {
   filter: var(--map-shadow-filter, none);
 }
+
+/* 缩放动画期间不跑 SVG 滤镜和遮罩，结束后恢复。 */
+.map-zooming .leaflet-tile-pane { filter: none; }
+.map-zooming .leaflet-mapOpacity-pane { visibility: hidden; }

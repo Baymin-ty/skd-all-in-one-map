@@ -114,11 +114,19 @@ export function createMapOpacity(map: L.Map, buildings: (OutlineGeometry & { id:
   const tilePane = map.getPane('tilePane')!
   layer.on('add', () => tilePane.style.setProperty('--map-shadow-filter', `url(#${tonesId})`))
   // viewBox 使用 z18 的坐标，反向补偿缩放，让各级地图都有约 24px 的柔和过渡带。
-  const resizeFeather = () => blur.setAttribute('stdDeviation', String(EDGE_SOFTNESS_PX / map.getZoomScale(map.getZoom(), 18)))
+  // 缩放级别没变就不改模糊半径，避免整张遮罩重新栅格化
+  let featherZoom = NaN
+  const resizeFeather = () => {
+    const zoom = map.getZoom()
+    if (zoom === featherZoom) return
+    featherZoom = zoom
+    blur.setAttribute('stdDeviation', String(EDGE_SOFTNESS_PX / map.getZoomScale(zoom, 18)))
+  }
   layer.on('add', resizeFeather)
   map.on('zoomend', resizeFeather)
   layer.on('remove', () => {
     map.off('zoomend', resizeFeather)
+    featherZoom = NaN
     tilePane.style.removeProperty('--map-shadow-filter')
   })
 

@@ -44,13 +44,15 @@ export function createLabelInteraction(container: HTMLElement, onLeave: () => vo
     schedule()
   }
   function refresh() {
+    // 触屏设备没有悬停效果，跳过整批测量
+    if (!hoverMedia.matches) { targets = []; return }
     // 排布阶段会清除动效 class，使这里拿到不受浮起 / 缩放影响的位置。
     targets = [...container.querySelectorAll<HTMLElement>('.blabel:not(.clash):not(.hover-suppressed), .pmark:not(.clash):not(.hover-suppressed)')]
       .filter((node) => node.offsetParent !== null)
       .map((node) => ({ node, rect: node.getBoundingClientRect() }))
     if (pointer) schedule()
   }
-  function mediaChanged() { reset() }
+  function mediaChanged() { reset(); refresh() }
   container.addEventListener('pointermove', move, { passive: true })
   container.addEventListener('pointerleave', reset)
   container.addEventListener('pointerdown', pointerDown, { passive: true })
