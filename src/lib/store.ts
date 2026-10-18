@@ -4,7 +4,7 @@ import { demoIndoor503Arrived, demoIndoor503Points, type DemoStreetViewPoint } f
 import { computed, reactive } from 'vue'
 import type { IconName } from './icons'
 import { groupBuildings, type BuildingGroup } from './groups'
-import { initRouting, type RouteResult, type Target } from './route'
+import { findRoute, initRouting, type RouteResult, type Target } from './route'
 import { copyGrid, validSurfaceGrid, type SurfaceGrid } from './network'
 import { findIntegratedRoute, type FixedUndergroundConnectors } from './integratedRoute'
 import type { UndergroundRouteResult } from './undergroundRoute'
@@ -767,7 +767,9 @@ export function setRainMode(enabled: boolean) {
   if (!state.campus) return
   if (enabled && !state.rainGrid) { toast('暂无避雨路网，已继续使用普通路网'); state.rainMode = false; return }
   state.rainMode = enabled
-  initRouting({ ...state.campus, grid: enabled ? state.rainGrid! : state.campus.grid }, rampConnectorPositions(state.underground))
+  // 关闭避雨：原版地面路网，不把地下车库坡道视为可走
+  if (enabled) initRouting({ ...state.campus, grid: state.rainGrid! }, rampConnectorPositions(state.underground))
+  else initRouting(state.campus)
   computeRoute(false)
 }
 
@@ -844,11 +846,16 @@ export function computeRoute(fit = true) {
     r.failed = false
     return
   }
-  const fixedUndergroundConnectors = fixedUndergroundConnectorsForRoute(r.from, r.to)
-  r.result = findIntegratedRoute(r.from, r.to, state.underground, {
-    ...(state.rainMode ? { forceUnderground: true } : {}),
-    ...(fixedUndergroundConnectors ? { fixedUndergroundConnectors } : {}),
-  })
+  if (!state.rainMode) {
+    // 不避雨：只走地面（原版路网），完全不用地下路网
+    r.result = findRoute(r.from, r.to)
+  } else {
+    const fixedUndergroundConnectors = fixedUndergroundConnectorsForRoute(r.from, r.to)
+    r.result = findIntegratedRoute(r.from, r.to, state.underground, {
+      forceUnderground: true,
+      ...(fixedUndergroundConnectors ? { fixedUndergroundConnectors } : {}),
+    })
+  }
   r.failed = !r.result
   if (r.result && fit) mapApi.fit(r.result.segments.flatMap((s) => s.path), 19)
 }
