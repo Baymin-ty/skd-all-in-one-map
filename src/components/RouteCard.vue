@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { closeRoute, computeRoute, finishUndergroundSketch, persistUndergroundSketchNow, setEnd, startUndergroundSketch, state, undoUndergroundSketch } from '../lib/store'
+import { closeRoute, computeRoute, finishUndergroundSketch, persistUndergroundSketchNow, setEnd, setRainMode, startUndergroundSketch, state, undoUndergroundSketch } from '../lib/store'
 import { locator, myLocationEnd, simulateWalk, startLocating } from '../lib/locate'
 import Ico from './Ico.vue'
 import { isEnglish, t } from '../lib/i18n'
@@ -47,6 +47,16 @@ function fromMe() {
       <button type="button" class="swap" aria-label="交换起点终点" title="交换起点终点" @click="swap"><Ico name="swap" /></button>
     </div>
 
+    <div v-if="r.network === 'surface'" class="rain-row" :class="{ on: state.rainMode, disabled: !state.rainAvailable }">
+      <label class="rain-toggle">
+        <span class="rain-text">
+          <span class="label-text">我要避雨！</span>
+          <small v-if="!state.rainAvailable">暂无避雨版本</small>
+        </span>
+        <input type="checkbox" :checked="state.rainMode" :disabled="!state.rainAvailable" @change="setRainMode(($event.target as HTMLInputElement).checked)" />
+        <span class="switch" aria-hidden="true"><span class="knob"></span></span>
+      </label>
+    </div>
     <div v-if="r.network === 'surface'" class="me-row">
       <button v-if="!r.from?.live" type="button" class="text-link" @click="fromMe"><Ico name="target" />{{ locator.status === 'locating' ? (isEnglish ? 'Locating…' : '正在定位…') : t('route.myLocation') }}</button>
       <span v-else class="live-note"><Ico name="target" />{{ isEnglish ? 'Route follows your location' : '跟着你的位置实时更新路线' }}</span>
