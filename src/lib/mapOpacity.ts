@@ -1,152 +1,95 @@
-import L from 'leaflet'
-import { PAINTED_OUTLINE, toLatLng } from './geo'
+import type L from 'leaflet'
+import { toLatLng } from './geo'
 import { outlineRings, type OutlineGeometry } from './outlineGeometry'
 import { DEFAULT_MAP_SETTINGS } from './mapSettings'
-import './mapOpacity.css'
+import { FadedTileLayer, type Bbox, type VeilBuilding, type VeilEffect } from './fadedTileLayer'
+import { blendCss, parseColor, type RGB } from './fadedTiles'
 
-const EDGE_SOFTNESS_PX = 6
-// 只小幅提亮最深的色块，调整在 40% 色阶处归零，中间调和亮部沿用原值。
-const SHADOW_TONES = '0.14 0.225 0.30 0.375 0.46 0.56 0.66 0.75 0.84 0.92 1'
-const MAP_SATURATION = 1
+/** 盖在底图上的底色 #fbfaf7 */
+const VEIL: RGB = [0xfb, 0xfa, 0xf7]
+type Shape = OutlineGeometry & { id: string }
 
-/** 用底色遮罩淡化原瓦片，建筑轮廓作为补集中的孔，保留手绘细节。 */
-export function createMapOpacity(map: L.Map, buildings: (OutlineGeometry & { id: string })[]) {
-  const bounds = L.latLngBounds(PAINTED_OUTLINE.map(toLatLng)).pad(1)
-  const origin = map.project(bounds.getNorthWest(), 18)
-  const size = map.project(bounds.getSouthEast(), 18).subtract(origin)
-  const svg = L.SVG.create('svg')
-  svg.setAttribute('viewBox', `0 0 ${size.x} ${size.y}`)
-  svg.setAttribute('preserveAspectRatio', 'none')
-  svg.setAttribute('aria-hidden', 'true')
-  const defs = L.SVG.create('defs')
-  const tones = L.SVG.create('filter')
-  const tonesId = `map-shadow-tones-${L.Util.stamp(svg)}`
-  tones.id = tonesId
-  tones.setAttribute('x', '0')
-  tones.setAttribute('y', '0')
-  tones.setAttribute('width', '100%')
-  tones.setAttribute('height', '100%')
-  tones.setAttribute('color-interpolation-filters', 'sRGB')
-  // 保留底图原本的饱和度，避免草地、水面和建筑颜色发灰。
-  const saturation = L.SVG.create('feColorMatrix')
-  saturation.setAttribute('type', 'saturate')
-  saturation.setAttribute('values', String(MAP_SATURATION))
-  const transfer = L.SVG.create('feComponentTransfer')
-  for (const channel of ['feFuncR', 'feFuncG', 'feFuncB'] as const) {
-    const curve = L.SVG.create(channel)
-    curve.setAttribute('type', 'table')
-    curve.setAttribute('tableValues', SHADOW_TONES)
-    transfer.append(curve)
+const sameRings = (a: readonly Float64Array[], b: readonly Float64Array[]) =>
+  a.length === b.length && a.every((ring, i) => ring.length === b[i].length && ring.every((v, k) => v === b[i][k]))
+
+/**
+ * 用底色遮罩淡化底图，建筑轮廓处按各自透明度露出原图（边缘羽化 6px）。
+ * 效果预先合成进 canvas 瓦片（见 fadedTileLayer.ts），缩放时只缩放位图；
+ * 透明度或轮廓变化时只重算受影响的瓦片。
+ */
+export function createMapOpacity(map: L.Map, buildings: Shape[]) {
+  let layer: FadedTileLayer | undefined
+  map.eachLayer((l) => { if (l instanceof FadedTileLayer) layer = l })
+  // 瓦片范围外只有容器底色：按背景透明度预先混入遮罩色，与瓦片边缘衔接
+  const container = map.getContainer()
+  const baseColor = parseColor(getComputedStyle(container).backgroundColor)
+  const paintContainer = () => {
+    if (baseColor && baseColor[3] > 0) container.style.backgroundColor = blendCss([baseColor[0], baseColor[1], baseColor[2]], VEIL, 1 - effect.background)
   }
-  tones.append(saturation, transfer)
-  defs.append(tones)
-  const feather = L.SVG.create('filter')
-  const featherId = `map-feather-${L.Util.stamp(svg)}`
-  feather.id = featherId
-  feather.setAttribute('x', '-10%')
-  feather.setAttribute('y', '-10%')
-  feather.setAttribute('width', '120%')
-  feather.setAttribute('height', '120%')
-  feather.setAttribute('color-interpolation-filters', 'sRGB')
-  const blur = L.SVG.create('feGaussianBlur')
-  feather.append(blur)
-  defs.append(feather)
-  const mask = L.SVG.create('mask')
-  const maskId = `map-opacity-${L.Util.stamp(svg)}`
-  mask.id = maskId
-  mask.setAttribute('maskUnits', 'userSpaceOnUse')
-  mask.setAttribute('x', '0')
-  mask.setAttribute('y', '0')
-  mask.setAttribute('width', String(size.x))
-  mask.setAttribute('height', String(size.y))
-  mask.style.maskType = 'luminance'
-  mask.style.colorInterpolation = 'sRGB'
-  mask.style.isolation = 'isolate'
+  const shapes = new Map<string, { source: Shape; shape: VeilBuilding }>()
+  let opacityFor: (building: Shape) => number = () => DEFAULT_MAP_SETTINGS.selectable
+  const effect: VeilEffect = { color: VEIL, background: DEFAULT_MAP_SETTINGS.background, buildings: [] }
 
-  const rect = () => {
-    const node = L.SVG.create('rect')
-    node.setAttribute('width', String(size.x))
-    node.setAttribute('height', String(size.y))
-    return node
+  function project(building: Shape): VeilBuilding {
+    const bbox: VeilBuilding['bbox'] = [Infinity, Infinity, -Infinity, -Infinity]
+    const rings = outlineRings(building).filter((ring) => ring.length >= 3).map((ring) => {
+      const points = new Float64Array(ring.length * 2)
+      ring.forEach((p, i) => {
+        const { x, y } = map.project(toLatLng(p), 18)
+        points[i * 2] = x
+        points[i * 2 + 1] = y
+        bbox[0] = Math.min(bbox[0], x); bbox[1] = Math.min(bbox[1], y)
+        bbox[2] = Math.max(bbox[2], x); bbox[3] = Math.max(bbox[3], y)
+      })
+      return points
+    })
+    return { id: building.id, rings, bbox, value: NaN }
   }
-  const background = rect()
-  background.setAttribute('fill', '#fff')
-  mask.append(background)
-  // 只羽化遮罩，原始手绘瓦片保持清晰；先合并轮廓再模糊，交叠处不会出现硬接缝。
-  const cutouts = L.SVG.create('g')
-  cutouts.setAttribute('filter', `url(#${featherId})`)
-  cutouts.style.isolation = 'isolate'
-  mask.append(cutouts)
-  const paths = new Map<string, SVGPathElement>()
-  function setBuildings(next: typeof buildings) {
-    buildings = next
-    const ids = new Set(buildings.map((b) => b.id))
-    for (const [id, path] of paths) if (!ids.has(id)) { path.remove(); paths.delete(id) }
-    for (const building of buildings) {
-      let path = paths.get(building.id)
-      if (!path) {
-        path = L.SVG.create('path')
-        path.setAttribute('class', 'map-opacity-cutout')
-        // Overlapping silhouettes use the darker mask, keeping the clearer image.
-        path.style.mixBlendMode = 'darken'
-        path.dataset.building = building.id
-        paths.set(building.id, path)
-        cutouts.append(path)
-      }
-      path.setAttribute('d', outlineRings(building).filter((ring) => ring.length >= 3).map((ring) => {
-        const points = ring.map((p) => map.project(toLatLng(p), 18).subtract(origin))
-        return `${points.map((p, i) => `${i ? 'L' : 'M'}${p.x},${p.y}`).join(' ')} Z`
-      }).join(' '))
+
+  /** 按当前透明度刷新各楼的遮罩值，只重算值有变化的楼附近的瓦片 */
+  function apply(dirty: Bbox[], all = false) {
+    for (const { source, shape } of shapes.values()) {
+      const value = 1 - opacityFor(source)
+      if (value === shape.value) continue
+      if (!Number.isNaN(shape.value)) dirty.push(shape.bbox)
+      shape.value = value
     }
+    if (all) layer?.invalidate('all')
+    else layer?.invalidate(dirty)
   }
-  setBuildings(buildings)
-  defs.append(mask)
-  const veil = rect()
-  veil.setAttribute('fill', '#fbfaf7')
-  veil.setAttribute('mask', `url(#${maskId})`)
-  svg.append(defs, veil)
 
-  const pane = map.createPane('mapOpacity')
-  pane.style.zIndex = '250'
-  pane.style.pointerEvents = 'none'
-  const layer = L.svgOverlay(svg, bounds, { pane: 'mapOpacity', interactive: false })
-  // 在透明度遮罩之前校正瓦片；标签、描边和路线保持原来的颜色和对比度。
-  const tilePane = map.getPane('tilePane')!
-  layer.on('add', () => tilePane.style.setProperty('--map-shadow-filter', `url(#${tonesId})`))
-  // viewBox 使用 z18 的坐标，反向补偿缩放，让各级地图都有约 24px 的柔和过渡带。
-  // 缩放级别没变就不改模糊半径，避免整张遮罩重新栅格化
-  let featherZoom = NaN
-  const resizeFeather = () => {
-    const zoom = map.getZoom()
-    if (zoom === featherZoom) return
-    featherZoom = zoom
-    blur.setAttribute('stdDeviation', String(EDGE_SOFTNESS_PX / map.getZoomScale(zoom, 18)))
+  function setBuildings(next: Shape[], refresh = true) {
+    const dirty: Bbox[] = []
+    const previous = new Map(shapes)
+    shapes.clear()
+    for (const source of next) {
+      const old = previous.get(source.id)
+      previous.delete(source.id)
+      // 同一对象视为轮廓未变，免得每次都重新投影
+      if (old?.source === source) { shapes.set(source.id, old); continue }
+      const shape = project(source)
+      if (old && sameRings(old.shape.rings, shape.rings)) shape.value = old.shape.value
+      else { if (old) dirty.push(old.shape.bbox); dirty.push(shape.bbox) }
+      shapes.set(source.id, { source, shape })
+    }
+    for (const { shape } of previous.values()) dirty.push(shape.bbox)
+    effect.buildings = [...shapes.values()].map(({ shape }) => shape)
+    if (refresh) apply(dirty)
   }
-  layer.on('add', resizeFeather)
-  map.on('zoomend', resizeFeather)
-  layer.on('remove', () => {
-    map.off('zoomend', resizeFeather)
-    featherZoom = NaN
-    tilePane.style.removeProperty('--map-shadow-filter')
-  })
 
-  function update(opacityFor: (building: OutlineGeometry & { id: string }) => number, backgroundOpacity = DEFAULT_MAP_SETTINGS.background) {
-    const values = buildings.map((building) => ({ building, opacity: opacityFor(building) }))
-    // 用最小透明度作为底层，三项可独立调整，也能处理全部为 100% 的情况。
-    const strength = 1 - Math.min(backgroundOpacity, ...values.map(({ opacity }) => opacity))
-    const shadeFor = (opacity: number) => {
-      const shade = strength ? (1 - opacity) / strength * 100 : 0
-      return `rgb(${shade}%, ${shade}%, ${shade}%)`
+  function update(next: (building: Shape) => number, backgroundOpacity = DEFAULT_MAP_SETTINGS.background) {
+    opacityFor = next
+    const backgroundChanged = backgroundOpacity !== effect.background
+    if (backgroundChanged) {
+      effect.background = backgroundOpacity
+      paintContainer()
     }
-    veil.setAttribute('fill-opacity', String(strength))
-    background.style.fill = shadeFor(backgroundOpacity)
-    for (const { building, opacity } of values) {
-      const path = paths.get(building.id)!
-      path.style.fill = shadeFor(opacity)
-      path.dataset.opacity = String(opacity)
-    }
+    apply([], backgroundChanged)
   }
+
+  setBuildings(buildings, false)
   update(() => DEFAULT_MAP_SETTINGS.selectable)
-  layer.addTo(map)
-  return { update, setBuildings }
+  paintContainer()
+  layer?.setVeil(effect)
+  return { update, setBuildings: (next: Shape[]) => setBuildings(next) }
 }

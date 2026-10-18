@@ -52,14 +52,6 @@ export const BaiduCRS: L.CRS = L.extend({}, L.CRS.Earth, {
   infinite: true,
 })
 
-/** 本地瓦片，百度编号：y 要写成 -y-1 */
-export function baiduTiles(opts: L.TileLayerOptions) {
-  const Layer = L.TileLayer.extend({
-    getTileUrl: (c: L.Coords) => `/tiles/${c.z}/tile${c.x}_${-c.y - 1}.png`,
-  })
-  return new (Layer as unknown as new (url: string, o: L.TileLayerOptions) => L.TileLayer)('', opts)
-}
-
 /** 手绘底图画出来的范围（八边形），拖动不超过它的外接矩形 */
 export const PAINTED_OUTLINE: LngLat[] = [
   [121.605279, 31.187255], [121.608333, 31.184629], [121.608333, 31.181787], [121.605063, 31.178976],

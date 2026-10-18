@@ -1022,7 +1022,7 @@ onMounted(() => {
   if (mineFocus.value && !state.selected && !state.eventId) fitToday()
   unmountLocate = mountLocateLayer(map)
   unmountTimeMachine = mountTimeMachineLayer(map)
-  // 缩放期间暂停滤镜、遮罩和动画，减少逐帧重绘；zoomend 丢失时由定时器兜底
+  // 缩放期间暂停标签和轮廓动画，减少逐帧重绘；zoomend 丢失时由定时器兜底
   let zoomingTimer = 0
   const endZooming = () => { clearTimeout(zoomingTimer); el.value?.classList.remove('map-zooming') }
   map.on('zoomstart', () => {
