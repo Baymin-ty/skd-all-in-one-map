@@ -9,6 +9,7 @@ import { ICONS } from '../lib/icons'
 import { buildingOutline, constructionOutline } from '../lib/buildingOutline'
 import { outlineLatLngs } from '../lib/outlineGeometry'
 import { createMapOpacity } from '../lib/mapOpacity'
+import { batchHighlightOpacity } from '../lib/mapSettings'
 import {
   collapsedLabelGroups, labelFits, labelLevels, labelPresentation, labelSlots, labelsOverlap, poiPresentation, shiftRect,
   type LabelLevel, type LabelRect, type LabelSlot,
@@ -80,7 +81,7 @@ function includesBuilding(selection: Selection | null, b: { id: string }) {
 }
 function updateOpacity() {
   const settings = state.mapSettings
-  const selectable = mapHighlights.value.size ? settings.selectable * 0.45 : settings.selectable
+  const selectable = mapHighlights.value.size ? batchHighlightOpacity(settings) : settings.selectable
   opacityLayer?.update((b) => includesBuilding(state.selected, b) || includesBuilding(hovered, b) ? settings.selected
     : mapHighlights.value.has(b.id) ? settings.selected
     : selectable, settings.background)
@@ -105,7 +106,8 @@ function leaveHover(selection: Selection, event: L.LeafletMouseEvent) {
 // ---------- 楼的多边形：底图上楼已经画好了，平时透明只接点击；风雨长廊常亮 ----------
 const batchStyle = (): L.PathOptions => ({
   ...buildingOutline(true, false, state.mapSettings),
-  weight: 3, fillColor: '#a8242b', fillOpacity: 0.1 * state.mapSettings.selected,
+  color: '#d94b55', weight: 1.8, dashArray: '5 7', lineCap: 'round', lineJoin: 'round',
+  fillColor: '#d94b55', fillOpacity: 0.06 * state.mapSettings.selected,
 })
 /** 展开的楼群：虚线圈出同组的楼 */
 const memberStyle = (c: string): L.PathOptions => ({ stroke: true, color: c, weight: 1.5, opacity: 0.5, dashArray: '4 3', fillOpacity: 0 })
@@ -123,7 +125,11 @@ function styleFor(b: Building): L.PathOptions {
   return buildingOutline(false, false, state.mapSettings)
 }
 const restyle = () => {
-  state.buildings.forEach((b) => polys.get(b.id)?.setStyle(styleFor(b)))
+  state.buildings.forEach((b) => {
+    const polygon = polys.get(b.id)
+    polygon?.setStyle(styleFor(b))
+    polygon?.getElement()?.classList.toggle('batch-highlight', mapHighlights.value.has(b.id))
+  })
   for (const id of mapHighlights.value) polys.get(id)?.bringToFront()
   for (const b of state.buildings) if (includesBuilding(state.selected, b) || includesBuilding(hovered, b)) polys.get(b.id)?.bringToFront()
   updateOpacity()
@@ -1178,6 +1184,8 @@ const toolsHidden = computed(() => tm.open || parcel.open || !ui.desktop && ui.s
 .map.leaflet-container { font: inherit; }
 .map-opacity-cutout { transition: fill 240ms ease-in-out; }
 .building-outline { transition: stroke 240ms ease-in-out, stroke-opacity 240ms ease-in-out, stroke-width 240ms ease-in-out, fill-opacity 240ms ease-in-out; }
+.building-outline.batch-highlight { animation: batch-highlight-flow 1.8s linear infinite; }
+@keyframes batch-highlight-flow { to { stroke-dashoffset: -24; } }
 /* 描边仅作提示，命中范围沿轮廓内部，避免粗线抢到相邻建筑。 */
 .building-outline.leaflet-interactive { pointer-events: fill; }
 .map.picking, .map.picking .leaflet-interactive { cursor: crosshair; }
@@ -1208,7 +1216,7 @@ const toolsHidden = computed(() => tm.open || parcel.open || !ui.desktop && ui.s
 
 
 @media (prefers-reduced-motion: reduce) {
-  .map-opacity-cutout, .building-outline, .map .blabel, .map .pmark { transition: none; }
+  .map-opacity-cutout, .building-outline, .map .blabel, .map .pmark { transition: none; animation: none; }
 }
 
 /* 我的地图：其余地点退到背景，只留楼名做方位参照；小设施图标先收起来 */

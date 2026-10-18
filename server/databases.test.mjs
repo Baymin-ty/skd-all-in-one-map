@@ -61,12 +61,33 @@ test('online backup includes committed WAL, preserves business and source; retry
   expect(source.prepare('SELECT count(*) AS n FROM buildings').get().n).toBe(1)
 })
 
+test('migrates the saved rain surface network when creating static database', async () => {
+  const source = fixture(paths.legacyPath)
+  source.exec('CREATE TABLE surface_networks (id TEXT PRIMARY KEY, data TEXT NOT NULL, updated_at INTEGER NOT NULL)')
+  source.prepare('INSERT INTO surface_networks VALUES (?, ?, ?)').run('rain', JSON.stringify({ grid: 'rain-grid' }), 456)
+  source.close()
+
+  const { staticDb } = await open()
+  expect(staticDb.prepare("SELECT data, updated_at FROM surface_networks WHERE id='rain'").get()).toEqual({
+    data: JSON.stringify({ grid: 'rain-grid' }),
+    updated_at: 456,
+  })
+})
+
 test('empty installation creates only map tables in static and meta in dynamic', async () => {
   const { db, staticDb } = await open()
   expect(hasTable(db, 'buildings')).toBe(false)
   expect(staticDb.prepare('SELECT * FROM underground_maps').all()).toEqual([])
   expect(staticDb.prepare('SELECT * FROM meta').all()).toEqual([])
   expect(existsSync(paths.legacyPath)).toBe(false)
+})
+
+test('keeps SQLite read caches at the minimum and disables memory mapping', async () => {
+  const { db, staticDb } = await open()
+  for (const connection of [db, staticDb]) {
+    expect(connection.prepare('PRAGMA cache_size').get().cache_size).toBe(1)
+    expect(connection.prepare('PRAGMA mmap_size').get().mmap_size).toBe(0)
+  }
 })
 
 test('old underground meta migrates to the table and existing target wins', async () => {

@@ -17,7 +17,7 @@ const shown = computed(() => hasMyMap.value && state.panel === 'home' && !state.
 </template>
 
 <style scoped>
-.fab.campus-toggle { height: auto; padding: 7px 0 6px; border-radius: 14px; display: flex; flex-direction: column; align-items: center; gap: 1px; font-size: 18px; }
-.campus-toggle span { font-size: 10.5px; font-weight: 700; line-height: 1.2; }
+.fab.campus-toggle { position: relative; }
+.campus-toggle > span:last-child { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .fab.campus-toggle.on { background: var(--brand); color: #fff; }
 </style>

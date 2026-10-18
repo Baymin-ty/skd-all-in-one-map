@@ -4,6 +4,7 @@ import defaults from '../../public/data/map-settings.json'
 export type MapSettings = typeof defaults
 export const DEFAULT_MAP_SETTINGS: Readonly<MapSettings> = Object.freeze({ ...defaults })
 export const matchingOpacity = (settings: MapSettings) => (settings.selectable + settings.selected) / 2
+export const batchHighlightOpacity = (settings: MapSettings) => settings.selectable * 0.8
 
 export function validMapSettings(value: unknown): value is MapSettings {
   if (!value || typeof value !== 'object') return false

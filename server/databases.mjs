@@ -16,6 +16,14 @@ const mapSchema = `${metaSchema}
   CREATE TABLE IF NOT EXISTS surface_networks (id TEXT PRIMARY KEY, data TEXT NOT NULL, updated_at INTEGER NOT NULL);`
 const hasTable = (db, name) => !!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name)
 
+// SQLite always keeps a small internal page cache, so it cannot be reduced to a literal
+// zero-cache mode. Keep one page and disable memory mapping to ensure reads do not retain
+// a larger connection-level snapshot than necessary.
+function configureConnection(db, journalMode = '') {
+  db.exec('PRAGMA busy_timeout = 5000; PRAGMA cache_size = 1; PRAGMA mmap_size = 0;')
+  if (journalMode) db.exec(`PRAGMA journal_mode = ${journalMode};`)
+}
+
 export function databasePaths(env = process.env) {
   const dynamicPath = resolve(env.DYNAMIC_DB_PATH ?? env.DB_PATH ?? join(here, 'dynamic.db'))
   return {
@@ -50,12 +58,13 @@ export async function openDatabases(options = databasePaths()) {
     try {
       if (legacyPath && existsSync(legacyPath)) {
         source = new DatabaseSync(legacyPath, { readOnly: true })
+        configureConnection(source)
         // SQLite online backup 包含已提交 WAL，绝不能直接复制运行库的主文件。
         await backup(source, temp)
         source.close(); source = null
       }
       fresh = new DatabaseSync(temp)
-      fresh.exec('PRAGMA journal_mode = DELETE;')
+      configureConnection(fresh, 'DELETE')
       fresh.exec(metaSchema)
       fresh.close(); fresh = null
       publish(temp, dynamicPath)
@@ -67,7 +76,7 @@ export async function openDatabases(options = databasePaths()) {
   let db, staticDb
   try {
     db = new DatabaseSync(dynamicPath)
-    db.exec('PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL;')
+    configureConnection(db, 'WAL')
     db.exec('BEGIN IMMEDIATE')
     try {
       db.exec(metaSchema)
@@ -77,9 +86,10 @@ export async function openDatabases(options = databasePaths()) {
         let target
         try {
           target = new DatabaseSync(temp)
+          configureConnection(target, 'DELETE')
           target.exec(mapSchema)
           target.exec('BEGIN IMMEDIATE')
-          for (const table of ['pois', 'buildings']) {
+          for (const table of ['pois', 'buildings', 'surface_networks']) {
             if (!hasTable(db, table)) continue
             const insert = target.prepare(`INSERT INTO ${table} (id, data, updated_at) VALUES (?, ?, ?)`)
             for (const row of db.prepare(`SELECT id, data, updated_at FROM ${table} ORDER BY rowid`).all()) insert.run(row.id, row.data, row.updated_at)
@@ -99,7 +109,7 @@ export async function openDatabases(options = databasePaths()) {
       }
       // static 一经发布即为权威，包括刻意清空的地图；重试不得从旧源覆盖。
       staticDb = new DatabaseSync(staticPath)
-      staticDb.exec('PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL;')
+      configureConnection(staticDb, 'WAL')
       staticDb.exec(mapSchema)
       // underground.map 是旧版单值 meta。目标表优先：只有目标不存在时才迁移旧值，
       // 且每次删除旧 key 前都已成功写入目标，重启重试不会覆盖用户数据。
