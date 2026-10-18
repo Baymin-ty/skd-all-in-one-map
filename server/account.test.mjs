@@ -41,6 +41,17 @@ beforeEach(async () => { folder = mkdtempSync(join(tmpdir(), 'campus-account-'))
 afterEach(stop)
 
 describe('account login and user data API', () => {
+  test('logs into the fixed demo account and allows local-style edits', async () => {
+    const response = await call('/api/account/demo', 'POST', {})
+    expect(response.status).toBe(200)
+    const me = await response.json()
+    expect(me).toMatchObject({ id: 'demo-showcase', demo: true, name: '一图通演示账号', nameSet: true })
+    const cookie = response.headers.get('set-cookie').split(';')[0]
+    expect((await call('/api/me/data', 'GET', undefined, cookie)).status).toBe(200)
+    expect((await call('/api/account/profile', 'PATCH', { name: '改名' }, cookie)).status).toBe(200)
+    expect((await call('/api/me/data/today', 'PUT', { data: { items: [] }, rev: 0 }, cookie)).status).toBe(200)
+  })
+
   // TEMP DEMO(temp-account)
   test('creates a temporary account without email and keeps the anonymous user id', async () => {
     const session = await createSession()

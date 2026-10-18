@@ -29,6 +29,8 @@ export function ensureStallTopics(db, canteens) {
   }
 }
 
+const dishKey = (canteen, outlet, dish) => `${canteen}:${outlet}:${dish}`
+
 // 交流区和排队反馈共用这一份会话；cookie 路径覆盖全部 /api 接口。
 // 未登录时它只是匿名占位（用于点赞、收藏、排队反馈），公开署名的昵称由校园账号在「我的」里设置。
 const communityToken = (req) => (req.headers.cookie || '').split(';').map(v => v.trim()).find(v => v.startsWith('campus_session='))?.slice('campus_session='.length) ?? null
@@ -51,6 +53,8 @@ export function installCommunity(app, db, root, { fetchAI = fetch, staticDb = db
     CREATE TABLE IF NOT EXISTS community_comments (id TEXT PRIMARY KEY, post_id TEXT NOT NULL REFERENCES community_posts(id) ON DELETE CASCADE, user_id TEXT NOT NULL REFERENCES community_users(id), parent_id TEXT REFERENCES community_comments(id) ON DELETE SET NULL, content TEXT NOT NULL, created_at INTEGER NOT NULL);
     CREATE INDEX IF NOT EXISTS community_comments_post ON community_comments(post_id, created_at);
     CREATE TABLE IF NOT EXISTS community_reactions (post_id TEXT NOT NULL REFERENCES community_posts(id) ON DELETE CASCADE, user_id TEXT NOT NULL REFERENCES community_users(id), kind TEXT NOT NULL CHECK(kind IN ('like','save')), PRIMARY KEY(post_id, user_id, kind));
+    CREATE TABLE IF NOT EXISTS community_dish_ratings (dish_id TEXT NOT NULL, user_id TEXT NOT NULL REFERENCES community_users(id), rating INTEGER NOT NULL CHECK(rating BETWEEN 1 AND 5), updated_at INTEGER NOT NULL, PRIMARY KEY(dish_id, user_id));
+    CREATE INDEX IF NOT EXISTS community_dish_ratings_dish ON community_dish_ratings(dish_id);
     CREATE TABLE IF NOT EXISTS community_summaries (topic_id TEXT PRIMARY KEY REFERENCES community_topics(id), fingerprint TEXT NOT NULL, data TEXT NOT NULL, created_at INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS community_ai_usage (bucket INTEGER PRIMARY KEY, calls INTEGER NOT NULL);
   `)
@@ -101,6 +105,21 @@ export function installCommunity(app, db, root, { fetchAI = fetch, staticDb = db
   }
   const session = (req) => communitySession(req, db)
   const user = (req) => session(req) ?? fail(401, '会话已失效，请重新打开交流区')
+  const dish = (id) => {
+    const [canteenId, outletId, dishId] = String(id).split(':')
+    if (!canteenId || !outletId || !dishId || String(id).split(':').length !== 3) fail(404, '这个菜品不存在')
+    const catalog = JSON.parse(db.prepare('SELECT data FROM discovery_catalog WHERE kind=?').get('canteens').data)
+    const canteen = catalog.canteens.find((item) => item.id === canteenId)
+    const outlet = canteen?.outlets.find((item) => item.id === outletId)
+    const item = outlet?.dishes.find((value) => value.id === dishId)
+    if (!item) fail(404, '这个菜品不存在')
+    return { id: dishKey(canteenId, outletId, dishId), item }
+  }
+  const dishRatingJson = (id, me) => {
+    const row = db.prepare('SELECT AVG(rating) AS average, count(*) AS count FROM community_dish_ratings WHERE dish_id=?').get(id)
+    const mine = me ? db.prepare('SELECT rating FROM community_dish_ratings WHERE dish_id=? AND user_id=?').get(id, me.id)?.rating ?? null : null
+    return { average: row.count ? Number(Number(row.average).toFixed(1)) : null, count: row.count, mine }
+  }
   // 公开内容署名用账号昵称：没登录或还没起昵称都不能发布
   const verifiedUser = (req) => {
     const me = user(req)
@@ -150,6 +169,16 @@ export function installCommunity(app, db, root, { fetchAI = fetch, staticDb = db
     // 给旧版 Path=/api/community 的会话补发一次 /api cookie，让排队反馈等接口也能识别。
     if (token) res.cookie('campus_session', token, { httpOnly: true, sameSite: 'lax', secure: req.secure || process.env.COOKIE_SECURE === 'true', maxAge: 365 * 86400_000, path: '/api' })
     res.json(me)
+  })
+  router.get('/dishes/:id/rating', (req, res) => {
+    const target = dish(req.params.id)
+    res.json(dishRatingJson(target.id, session(req)))
+  })
+  router.put('/dishes/:id/rating', (req, res) => {
+    const me = user(req), target = dish(req.params.id), rating = req.body?.rating
+    if (!Number.isInteger(rating) || rating < 1 || rating > 5) fail(400, '评分必须是 1–5 星')
+    transaction(() => db.prepare('INSERT INTO community_dish_ratings (dish_id,user_id,rating,updated_at) VALUES (?,?,?,?) ON CONFLICT(dish_id,user_id) DO UPDATE SET rating=excluded.rating, updated_at=excluded.updated_at').run(target.id, me.id, rating, Date.now()))
+    res.json(dishRatingJson(target.id, me))
   })
   const postJson = (p, me) => ({
     id: p.id, title: p.title, content: p.content, tag: p.tag, createdAt: p.created_at,

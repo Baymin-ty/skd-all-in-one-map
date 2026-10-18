@@ -10,6 +10,7 @@ import EventCard from './EventCard.vue'
 import Ico from './Ico.vue'
 import { checkin, loadCheckins } from '../lib/checkin'
 import { displayText, isEnglish, t } from '../lib/i18n'
+import { techathonBadge } from '../lib/eventVisuals'
 
 const shown = ref(30)
 const list = computed(() => eventsIn(state.radar.range, state.radar.cat, state.radar.place))
@@ -54,6 +55,7 @@ watch(event, (value) => { if (value) void loadCheckins(value.id) }, { immediate:
 function addToToday() {
   if (!event.value || planned.value) return
   const item = addItem(itemFromEvent(event.value))
+  if (!item) return
   toast(`已加入「我的今天」· ${item.date === plan.date ? '' : item.date!.slice(5).replace('-', '/') + ' '}${item.start}`)
 }
 </script>
@@ -63,6 +65,7 @@ function addToToday() {
     <template v-if="event">
       <button class="text-back" type="button" @click="back"><Ico name="back" />{{ isEnglish ? 'Back to events' : '返回活动列表' }}</button>
       <div class="tags detail-tags"><span v-if="event.status === 'cancelled'" class="pill cancelled-pill">{{ isEnglish ? 'Cancelled' : '已取消' }}</span><span v-else class="pill" :class="status">{{ isEnglish ? ({ live: 'Live', soon: 'Starting soon', upcoming: 'Upcoming', past: 'Past' } as Record<string, string>)[status] : STATUS_LABELS[status] }}</span><span class="pill">{{ categoryName }}</span></div>
+      <div v-if="techathonBadge(event)" class="techathon-hero"><span class="techathon-glyph">⚡</span><div><b>{{ isEnglish ? 'TECHATHON · MAIN EVENT' : 'TECHATHON · 今日主活动' }}</b><small>{{ isEnglish ? '48H campus hackathon · Conference Center West Hall' : '48 小时校园黑客松 · 会议中心西厅' }}</small></div></div>
       <h2 class="title">{{ displayText(event.title, event.title_en) }}</h2>
       <div class="actions wrap-actions">
         <button v-if="location" type="button" class="act primary" @click="navigateToPlace(event.place!)"><Ico name="walk" />{{ t('event.navigate') }}</button>
@@ -111,4 +114,7 @@ function addToToday() {
 .event-day h3 { margin-top: 18px; padding-bottom: 5px; font-size: 13px; color: var(--ink-2); }
 .filter-location { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 8px; border: 0; background: #eef4fd; color: var(--blue); font-size: 12px; cursor: pointer; }
 .checkin-card { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 14px 0; padding: 12px 14px; border: 1px solid #d8ebdf; border-radius: 13px; background: #f2faf5; }.checkin-card b,.checkin-card small { display: block; }.checkin-card b { font-size: 13px; }.checkin-card small { margin-top: 3px; color: var(--ink-3); font-size: 11px; }
+.techathon-hero { display: flex; align-items: center; gap: 11px; margin: 10px 0 4px; padding: 11px 13px; border: 1px solid #ff4d5666; border-radius: 13px; background: linear-gradient(120deg, #19080b, #3b1017); color: #fff; box-shadow: 0 10px 24px #a8242b24; }
+.techathon-glyph { display: grid; place-items: center; width: 34px; height: 34px; border: 1px solid #ff4d56aa; border-radius: 10px; color: #ff4d56; font-size: 22px; box-shadow: 0 0 18px #ff4d5655; }
+.techathon-hero b, .techathon-hero small { display: block; }.techathon-hero b { font-size: 12px; letter-spacing: .08em; }.techathon-hero small { margin-top: 3px; color: #ffd9dc; font-size: 11px; }
 </style>

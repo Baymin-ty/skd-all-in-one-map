@@ -63,7 +63,7 @@ const canteens = computed(() => {
     </section>
 
     <!-- 手机没有左侧导航栏，快递站放这里 -->
-    <button v-if="!ui.desktop" type="button" class="act small parcel-action" @click="openParcelStationMap"><Ico name="parcel" />快递站地图</button>
+    <button v-if="!ui.desktop" type="button" class="act small parcel-action" @click="openParcelStationMap()"><Ico name="parcel" />快递站地图</button>
 
     <footer class="foot">
       <p>底图、楼宇、点位来自上海科技大学校园地图；部分道路 © OpenStreetMap contributors · <a href="/admin/" target="_blank" rel="noopener">管理后台</a></p>

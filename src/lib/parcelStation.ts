@@ -235,7 +235,8 @@ export function openParcelPlan(query = '', poi = PARCEL_POI) {
   Object.assign(parcel, { open: true, query: query.trim(), poi })
 }
 /** 首页等固定入口直接打开默认快递站地图，不要求用户先知道取件码或地点名称。 */
-export function openParcelStationMap() {
+export function openParcelStationMap(beforeOpen?: () => void) {
+  beforeOpen?.()
   openParcelPlan('', PARCEL_POI)
 }
 export function closeParcelPlan() {

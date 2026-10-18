@@ -5,13 +5,17 @@ import { EVENT_CATS } from '../lib/discoveryData'
 import { dayLabel, eventStatus, evStart, STATUS_LABELS, timeRange } from '../lib/campusTime'
 import { openEvent } from '../lib/store'
 import { displayText, isEnglish, t } from '../lib/i18n'
+import { techathonBadge } from '../lib/eventVisuals'
 const props = defineProps<{ event: CampusEvent; showDay?: boolean }>()
 const status = computed(() => eventStatus(props.event))
+const badge = computed(() => techathonBadge(props.event))
 </script>
 
 <template>
-  <button type="button" class="event-card tap" @click="openEvent(event.id)">
+  <button type="button" class="event-card tap" :class="{ techathon: badge }" @click="openEvent(event.id)">
+    <span v-if="badge" class="event-mark" aria-hidden="true"><span>⚡</span></span>
     <span class="when">
+      <small v-if="badge" class="main-badge">{{ isEnglish ? 'Main event' : badge.label }}</small>
       <span v-if="status === 'live' || status === 'soon'" class="pill" :class="status">{{ isEnglish ? (status === 'live' ? 'Live' : 'Starting soon') : STATUS_LABELS[status] }}</span>
       <b v-else>{{ timeRange(event) }}</b>
       <small v-if="showDay">{{ dayLabel(evStart(event)) }}</small>
@@ -27,6 +31,13 @@ const status = computed(() => eventStatus(props.event))
 
 <style scoped>
 .event-card { display: grid; grid-template-columns: 76px minmax(0, 1fr); gap: 10px; width: 100%; padding: 13px 3px; border: 0; border-bottom: 1px solid var(--line); border-radius: 8px; background: #fff; text-align: left; color: var(--ink); }
+.event-card.techathon { grid-template-columns: 42px 76px minmax(0, 1fr); padding: 14px 8px; border: 1px solid #3b1116; border-bottom-width: 2px; background: radial-gradient(circle at 16% 20%, #ff4d5620, transparent 42%), linear-gradient(125deg, #16090b, #2a0b13 65%, #0e0d16); color: #fff; box-shadow: 0 8px 22px #8f1e2e22; }
+.event-mark { display: grid; place-items: center; width: 34px; height: 34px; border: 1px solid #ff4d56aa; border-radius: 10px; background: #ff26351f; color: #ff4d56; font-size: 20px; box-shadow: 0 0 16px #ff263555; }
+.event-mark span { transform: translateY(-1px); }
+.main-badge { padding: 2px 6px; border-radius: 5px; background: #ff4d56; color: #22090c !important; font-size: 10px !important; font-weight: 800; letter-spacing: .04em; }
+.techathon .when b, .techathon .event-title { color: #fff; }
+.techathon .meta { color: #ffd9dc; }
+.techathon .secondary { color: #ffadb3; }
 .when { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; }
 .when b { font-size: 12px; font-variant-numeric: tabular-nums; }
 .when small { font-size: 11px; color: var(--ink-3); }

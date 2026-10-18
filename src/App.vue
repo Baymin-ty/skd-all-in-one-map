@@ -25,7 +25,8 @@ import RailAccount from './components/RailAccount.vue'
 const SLOGANS = ['你的校园生活助手', '走遍校园都不怕']
 const slogan = SLOGANS[Math.floor(Math.random() * SLOGANS.length)]
 import MapChips from './components/MapChips.vue'
-import { loadAccount } from './lib/account'
+import { account, loadAccount } from './lib/account'
+import { initDemoPlan } from './lib/demoSession'
 import { loadUserData } from './lib/userData'
 import { applyMapPrefs, presetMapMode } from './lib/profile'
 import { parcel } from './lib/parcelStation'
@@ -60,6 +61,7 @@ onMounted(async () => {
   window.addEventListener('resize', computeAnchors)
   clock = window.setInterval(() => { nowTick.value = demoNow() }, simulated && speed.value > 1 ? 1_000 : 30_000)
   await Promise.all([loadData(), loadDiscovery(), loadCrowd()])
+  if (account.me?.demo) initDemoPlan()
   hydratePlanPlaces()
   applyMapPrefs()
   crowdClock = window.setInterval(() => { void loadCrowd() }, 60_000)

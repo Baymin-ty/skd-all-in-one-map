@@ -6,7 +6,7 @@ import { createCampusMap } from '../lib/campusMap'
 import { clampToOutline, fillZoom, fromLatLng, limitPan, PAINTED_OUTLINE, toLatLng } from '../lib/geo'
 import type { BuildingGroup } from '../lib/groups'
 import { ICONS } from '../lib/icons'
-import { buildingOutline, constructionOutline } from '../lib/buildingOutline'
+import { buildingOutline } from '../lib/buildingOutline'
 import { outlineLatLngs } from '../lib/outlineGeometry'
 import { createMapOpacity } from '../lib/mapOpacity'
 import { batchHighlightOpacity } from '../lib/mapSettings'
@@ -21,7 +21,7 @@ import { createLabelInteraction } from '../lib/mapLabelInteraction'
 import { createLabelHover } from '../lib/mapLabelHover'
 import { buildingLabelCategory, labelShown, mapLabelColor, poiLabelCategory } from '../lib/mapLabelCategories'
 import { discovery, eventsIn } from '../lib/discoveryData'
-import { clockText, dateKey, dayName, dayStart, eventStatus, evStart, nowTick, STATUS_LABELS, timeRange } from '../lib/campusTime'
+import { dateKey, dayName, dayStart, eventStatus, evStart, nowTick, STATUS_LABELS, timeRange } from '../lib/campusTime'
 import type { CampusEvent } from '../lib/discoveryTypes'
 import { walkablePaths } from '../lib/route'
 import {
@@ -39,8 +39,8 @@ import { poiIcon } from '../lib/catalog'
 import { mountLocateLayer } from '../lib/locateLayer'
 import { mountTimeMachineLayer } from '../lib/timeMachineLayer'
 import { tm } from '../lib/timeMachine'
-import { crowdAt, crowdRevision, CROWD_LABELS } from '../lib/crowd'
 import LocateButton from './LocateButton.vue'
+import { isTechathon } from '../lib/eventVisuals'
 
 const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!))
 const el = ref<HTMLDivElement>()
@@ -61,7 +61,6 @@ const poiTargetLayer = L.layerGroup()
 const hoverLabelLayer = L.layerGroup()
 const routeLayer = L.layerGroup()
 const entranceLayer = L.layerGroup()
-const crowdLayer = L.layerGroup()
 const undergroundLayer = L.layerGroup()
 const undergroundSketchLayer = L.layerGroup()
 const streetViewLayer = L.layerGroup()
@@ -411,7 +410,7 @@ const LIST_ROWS = 3
 function eventLine({ events }: PlaceEvents) {
   const rows = events.slice(0, LIST_ROWS).map((e, i) => {
     const tier = eventTier(e)
-    return `<span class="ev ev-${tier}${i ? ' ev-extra' : ''}" data-ev="${escapeHtml(e.id)}"><b>${escapeHtml(eventWhen(e, tier))}</b>`
+    return `<span class="ev ev-${tier}${isTechathon(e) ? ' ev-techathon' : ''}${i ? ' ev-extra' : ''}" data-ev="${escapeHtml(e.id)}"><b>${escapeHtml(eventWhen(e, tier))}</b>`
       + `<span class="ev-t" data-short="${escapeHtml(eventShortTitle(e.title))}"><span>${escapeHtml(e.title)}</span></span>`
       + `${!i && events.length > 1 ? `<em>+${events.length - 1}</em>` : ''}</span>`
   }).join('')
@@ -730,7 +729,7 @@ function drawRoute() {
 }
 
 function drawStreetViewLayers(open: boolean) {
-  const fullMapLayers = [buildingLayer, labelLayer, poiTargetLayer, hoverLabelLayer, entranceLayer, poiLayer, eventFocusLayer, crowdLayer, undergroundLayer, undergroundSketchLayer]
+  const fullMapLayers = [buildingLayer, labelLayer, poiTargetLayer, hoverLabelLayer, entranceLayer, poiLayer, eventFocusLayer, undergroundLayer, undergroundSketchLayer]
   if (open) {
     for (const layer of fullMapLayers) layer.remove()
     roadLayer?.remove()
@@ -745,7 +744,6 @@ function drawStreetViewLayers(open: boolean) {
     drawPois()
     drawEntrances()
     drawEvents()
-    drawCrowd()
     drawUnderground()
     drawUndergroundSketch()
   }
@@ -810,7 +808,7 @@ function focusStreetView(p: LngLat) {
 }
 
 function restoreFullMapAfterStreetView() {
-  const fullMapLayers = [buildingLayer, labelLayer, poiTargetLayer, hoverLabelLayer, entranceLayer, poiLayer, eventFocusLayer, crowdLayer, undergroundLayer, undergroundSketchLayer, streetViewCurrentLayer]
+  const fullMapLayers = [buildingLayer, labelLayer, poiTargetLayer, hoverLabelLayer, entranceLayer, poiLayer, eventFocusLayer, undergroundLayer, undergroundSketchLayer, streetViewCurrentLayer]
   for (const layer of fullMapLayers) layer.addTo(map)
   if (state.showRoads) toggleRoads(true)
   drawBuildings()
@@ -819,7 +817,6 @@ function restoreFullMapAfterStreetView() {
   drawPois()
   drawEntrances()
   drawEvents()
-  drawCrowd()
   drawUnderground()
   drawUndergroundSketch()
   // 容器恢复全尺寸之后再适配整条路线；期间若又进入街景则放弃。
@@ -830,24 +827,6 @@ function restoreFullMapAfterStreetView() {
     const path = state.route.result?.segments.flatMap((x) => x.path) || []
     if (path.length) fit(path, 19)
   })
-}
-
-function drawCrowd() {
-  crowdLayer.clearLayers()
-  const hm = clockText(nowTick.value)
-  if (!((hm >= '11:00' && hm < '13:30') || (hm >= '16:30' && hm < '19:00'))) return
-  const styles = [
-    { color: '#2a9d62', radius: 32, opacity: 0.14 },
-    { color: '#d28b29', radius: 45, opacity: 0.18 },
-    { color: '#c64e4e', radius: 58, opacity: 0.22 },
-  ] as const
-  for (const canteen of discovery.canteens) {
-    const crowd = crowdAt(canteen.id, nowTick.value)
-    const style = styles[crowd.level]
-    L.circle(toLatLng(canteen.pos), { radius: style.radius, color: style.color, weight: 1.5, fillColor: style.color, fillOpacity: style.opacity, bubblingMouseEvents: false })
-      .bindTooltip(`${canteen.zh} · ${CROWD_LABELS[crowd.level]} · 约 ${crowd.waitMin} 分钟${crowd.source === 'live' ? ' · 实时反馈' : ' · 估算'}`)
-      .addTo(crowdLayer)
-  }
 }
 
 /** 统一蓝色展示地面栅格的实际八邻接连接，不区分来源和遮挡属性。 */
@@ -900,13 +879,6 @@ function drawUndergroundSketch() {
   }
   if (state.route.network === 'underground') undergroundSketchLayer.addTo(map)
   else undergroundSketchLayer.remove()
-}
-
-function drawConstruction(layer: L.LayerGroup) {
-  for (const c of state.campus?.construction ?? [])
-    L.polygon(outlineLatLngs(c), constructionOutline)
-      .bindTooltip(`🚧 ${escapeHtml(c.name.zh)}`, { sticky: true })
-      .addTo(layer)
 }
 
 // ---------- 相机：避开侧栏 / 顶栏 / 底部面板，范围限制在手绘图里（同 skdmap） ----------
@@ -995,7 +967,7 @@ onMounted(() => {
   limitZoomOut()
   keepInside = limitPan(map, clampCenter)
   L.control.attribution({ prefix: false, position: 'bottomright' }).addAttribution('底图 © 上海科技大学校园地图 · 部分道路 © OpenStreetMap contributors').addTo(map)
-  opacityLayer = createMapOpacity(map, [...state.buildings, ...(state.campus?.construction ?? []).map((c, i) => ({ ...c, id: `construction-${i}` }))])
+  opacityLayer = createMapOpacity(map, state.buildings)
   for (const [name, z] of [['poi-hit-pane', 450], ['label-hover-pane', 610], ['event-label-pane', 630], ['streetview-current-pane', 900]] as const) {
     const pane = map.createPane(name)
     pane.style.zIndex = String(z)
@@ -1003,9 +975,7 @@ onMounted(() => {
   }
   labelInteraction = createLabelInteraction(el.value!, () => hover(null))
   updateOpacity()
-  const extras = L.layerGroup().addTo(map)
-  drawConstruction(extras)
-  ;[buildingLayer, poiTargetLayer, labelLayer, hoverLabelLayer, entranceLayer, routeLayer, poiLayer, eventFocusLayer, crowdLayer, undergroundLayer, undergroundSketchLayer, streetViewLayer, streetViewCurrentLayer].forEach((l) => l.addTo(map))
+  ;[buildingLayer, poiTargetLayer, labelLayer, hoverLabelLayer, entranceLayer, routeLayer, poiLayer, eventFocusLayer, undergroundLayer, undergroundSketchLayer, streetViewLayer, streetViewCurrentLayer].forEach((l) => l.addTo(map))
   drawBuildings()
   drawPoiTargets()
   home(false)
@@ -1014,7 +984,6 @@ onMounted(() => {
   drawLabels()
   drawPois()
   drawEvents()
-  drawCrowd()
   drawUnderground()
   drawUndergroundSketch()
   mapApi.fit = fit
@@ -1112,7 +1081,6 @@ watch(() => state.route.streetView.open, (open) => {
 })
 watch(() => [state.entranceBuilding, state.route.open, state.route.result, state.route.from, state.route.to], () => { drawEntrances(); drawLabels(); drawPois() })
 watch(() => [state.panel, state.eventId, state.radar.range, state.radar.cat, state.radar.place, state.route.open, discovery.events, nowTick.value, tm.open], drawEvents)
-watch(() => [state.panel, state.route.open, nowTick.value, crowdRevision.value, discovery.canteens, tm.open], drawCrowd)
 // 时光机全屏：侧栏和底部面板让开后重新计算缩放范围；打开和退出时回到全校，界面尺寸变化不打断镜头跟随
 watch(() => [tm.open, ui.overlay?.t, ui.overlay?.r, ui.overlay?.b], ([open], [wasOpen]) => {
   limitZoomOut()

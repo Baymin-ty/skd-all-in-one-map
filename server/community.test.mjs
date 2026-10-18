@@ -11,6 +11,8 @@ const root = resolve('.')
 const events = JSON.parse(readFileSync(join(root, 'public/data/events.json'), 'utf8'))
 const dining = JSON.parse(readFileSync(join(root, 'public/data/canteens.json'), 'utf8'))
 const c = dining.canteens[0], o = c.outlets[0], s = o.stalls[0]
+const d = o.dishes[0]
+const dishPath = `/dishes/${encodeURIComponent(`${c.id}:${o.id}:${d.id}`)}/rating`
 const eventPath = `/topics/event/${events[0].id}`
 const stallPath = `/topics/stall/${encodeURIComponent(`${c.id}:${o.id}:${s.id}`)}`
 let db, server, base, folder, fetchAI, cookie
@@ -21,7 +23,7 @@ async function start() {
   installCommunity(app, db, root, { fetchAI })
   installAccount(app, db, { demoMode: false, sendCode: async () => {} })
   app.use((err, _req, res, _next) => res.status(err.type === 'entity.too.large' ? 413 : 500).json({ error: 'request failed' }))
-  await new Promise(resolve => { server = app.listen(0, '127.0.0.1', resolve) })
+  await new Promise(resolve => { server = app.listen(0, '127.0.0.1'); server.once('listening', resolve) })
   base = `http://127.0.0.1:${server.address().port}/api/community`
 }
 async function stop() { await new Promise(resolve => server.close(resolve)); db.close() }
@@ -46,6 +48,20 @@ beforeEach(async () => {
 afterEach(async () => { await stop(); rmSync(folder, { recursive: true, force: true }); vi.unstubAllEnvs() })
 
 describe('community data, ownership, and persistence', () => {
+  test('supports one editable 1-5 star rating per dish and aggregates it', async () => {
+    expect(await (await call(dishPath + '')).json()).toEqual({ average: null, count: 0, mine: null })
+    expect((await call(dishPath, 'PUT', { rating: 0 })).status).toBe(400)
+    expect((await call(dishPath, 'PUT', { rating: 6 })).status).toBe(400)
+    expect((await call(dishPath, 'PUT', { rating: 2.5 })).status).toBe(400)
+    let response = await call(dishPath, 'PUT', { rating: 5 })
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({ average: 5, count: 1, mine: 5 })
+    const other = await newUser()
+    response = await call(dishPath, 'PUT', { rating: 3 }, other.cookie)
+    expect(await response.json()).toEqual({ average: 4, count: 2, mine: 3 })
+    response = await call(dishPath, 'PUT', { rating: 4 })
+    expect(await response.json()).toEqual({ average: 3.5, count: 2, mine: 4 })
+  })
   test('place topics are created on demand for existing buildings and POIs, and follow place edits', async () => {
     const placePath = '/topics/place/lib-1'
     expect((await call(placePath + '/posts')).status).toBe(404)

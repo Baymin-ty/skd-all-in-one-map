@@ -16,6 +16,7 @@ export interface CommunitySummary {
 export const community = reactive({ target: null as CommunityTarget | null })
 export function openCommunity(target: CommunityTarget) { community.target = target }
 export function stallCommunity(canteen: string, outlet: string, stall: string) { return `${canteen}:${outlet}:${stall}` }
+export function dishCommunity(canteen: string, outlet: string, dish: string) { return `${canteen}:${outlet}:${dish}` }
 export function topicPath(target: CommunityTarget) { return `/topics/${target.type}/${encodeURIComponent(target.id)}` }
 export async function communityApi<T>(path: string, method = 'GET', body?: unknown): Promise<T> {
   const response = await fetch(`/api/community${path}`, {

@@ -1,4 +1,5 @@
 import { account } from './account'
+import { isDemoAccount } from './demoData'
 
 export type UserDataKey = 'today' | 'map' | 'prefs'
 type Envelope = { data: unknown; rev: number; updatedAt: number }
@@ -39,7 +40,7 @@ export function mergeByUpdatedAt<T extends { id: string; updatedAt?: number; del
 }
 
 async function put(key: UserDataKey, envelope: Envelope) {
-  if (!account.me) return
+  if (!account.me || isDemoAccount(account.me)) return
   const response = await fetch(`/api/me/data/${key}`, { method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json', 'X-Community-Request': '1' }, body: JSON.stringify({ data: envelope.data, rev: envelope.rev }) })
   const body = await response.json().catch(() => null)
   if (response.status === 409 && body?.data) {

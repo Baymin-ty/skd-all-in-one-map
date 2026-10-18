@@ -86,7 +86,7 @@ const STATUS_TEXT = { now: '进行中', upnext: '下一项', later: '', past: ''
     </div>
 
     <!-- 手机没有左侧导航栏，快递站放这里 -->
-    <button v-if="!ui.desktop" type="button" class="act small parcel-action" @click="openParcelStationMap"><Ico name="parcel" />快递站地图</button>
+    <button v-if="!ui.desktop" type="button" class="act small parcel-action" @click="openParcelStationMap()"><Ico name="parcel" />快递站地图</button>
   </div>
 </template>
 

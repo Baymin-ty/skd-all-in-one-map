@@ -1,4 +1,5 @@
 import { reactive } from 'vue'
+import { isDemoAccount } from './demoData'
 
 export interface AccountUser {
   id: string
@@ -9,16 +10,30 @@ export interface AccountUser {
   /** 新账号还没起过昵称时为 false */
   nameSet: boolean
   createdAt: number
+  /** 固定演示账号：预置内容从本机开始，可继续编辑 */
+  demo?: boolean
 }
 
 export const ROLE_LABELS: Record<AccountUser['role'], string> = { student: '同学', organizer: '活动主办方', admin: '管理员' }
+
+export const CAMPUS_EMAIL_DOMAIN = '@shanghaitech.edu.cn'
+
+export function campusEmailFromPrefix(value: string) {
+  const prefix = value.trim().toLowerCase()
+  return /^[^\s@]+$/.test(prefix) ? `${prefix}${CAMPUS_EMAIL_DOMAIN}` : null
+}
+
+export function demoEntryVisible(step: 'email' | 'code' | 'name') {
+  return step !== 'name'
+}
 
 export const account = reactive({
   me: null as AccountUser | null,
   open: false,
   /** email → code 登录；name 是首次登录（或从其他入口）起昵称 */
   step: 'email' as 'email' | 'code' | 'name',
-  email: 'name@shanghaitech.edu.cn',
+  emailPrefix: 'name',
+  email: '',
   code: '',
   name: '',
   busy: false,
@@ -55,14 +70,16 @@ export function closeAccount() {
   if (!account.busy) account.open = false
 }
 
-export async function requestLoginCode(email = account.email) {
-  account.email = email.trim().toLowerCase()
+export async function requestLoginCode(prefix = account.emailPrefix) {
+  const email = campusEmailFromPrefix(prefix)
+  account.emailPrefix = prefix.trim().toLowerCase()
   account.error = ''
   account.message = ''
-  if (!/^[^\s@]+@[a-z0-9.-]+\.[a-z]{2,}$/i.test(account.email)) {
-    account.error = '请输入有效的邮箱地址'
+  if (!email) {
+    account.error = '请输入有效的邮箱前缀'
     return false
   }
+  account.email = email
   account.busy = true
   try {
     const result = await request<{ message?: string }>('/api/account/code', { method: 'POST', headers, body: JSON.stringify({ email: account.email }) })
@@ -105,6 +122,27 @@ export async function verifyLoginCode(code = account.code) {
   } finally { account.busy = false }
 }
 
+/** Directly open the curated, read-only showcase account. */
+export async function loginDemoAccount() {
+  account.error = ''
+  account.busy = true
+  try {
+    account.me = await request<AccountUser>('/api/account/demo', { method: 'POST', headers, body: '{}' })
+    const { loadUserData } = await import('./userData')
+    await loadUserData()
+    const { initDemoPlan } = await import('./demoSession')
+    initDemoPlan()
+    const { showPanel } = await import('./store')
+    showPanel('today')
+    account.open = false
+    account.step = 'email'
+    return true
+  } catch (error) {
+    account.error = error instanceof Error ? error.message : '演示账号登录失败'
+    return false
+  } finally { account.busy = false }
+}
+
 // TEMP DEMO(temp-account): 演示站一键创建临时账号，替代邮箱验证码登录
 export async function createTempAccount(name = account.name) {
   account.error = ''
@@ -131,6 +169,14 @@ export async function createTempAccount(name = account.name) {
 
 /** 修改昵称：成功后返回最新的账号资料，失败抛出带中文提示的错误。 */
 export async function updateNickname(name: string) {
+  if (isDemoAccount(account.me)) {
+    const clean = name.trim()
+    if (clean.length < 2 || clean.length > 16) throw new Error('昵称需要 2–16 个字')
+    const me = account.me
+    if (!me) throw new Error('请先登录')
+    account.me = { ...me, name: clean, nameSet: true }
+    return account.me
+  }
   const me = await request<AccountUser>('/api/account/profile', { method: 'PATCH', headers, body: JSON.stringify({ name }) })
   account.me = me
   return me

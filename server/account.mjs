@@ -116,7 +116,7 @@ function profileJson(db, userId) {
   const account = accountFor(db, userId)
   if (!account) return null
   const user = db.prepare('SELECT name FROM community_users WHERE id=?').get(userId)
-  return { id: userId, name: user?.name ?? '', email: maskEmail(account.email), role: account.role, nameSet: account.nicknameAt != null, createdAt: account.createdAt }
+  return { id: userId, name: user?.name ?? '', email: maskEmail(account.email), role: account.role, nameSet: account.nicknameAt != null, createdAt: account.createdAt, demo: userId === 'demo-showcase' }
 }
 
 function makeName() { return `科大同学 ${randomBytes(2).toString('hex').toUpperCase()}` }
@@ -242,6 +242,20 @@ export function installAccount(app, db, options = {}) {
     if (old.count >= IP_LIMIT) fail(429, '请求有点频繁，请稍后再试')
     old.count++
   }
+
+  accountRouter.post('/demo', (req, res, next) => {
+    try {
+      const demoId = 'demo-showcase', current = now(), token = requestToken(req)
+      db.exec('BEGIN IMMEDIATE')
+      try {
+        db.prepare('INSERT OR IGNORE INTO community_users (id,name,created_at) VALUES (?,?,?)').run(demoId, '一图通演示账号', current)
+        db.prepare('INSERT OR IGNORE INTO accounts (user_id,email,role,created_at,nickname_at) VALUES (?,?,?,?,?)').run(demoId, 'demo@demo.local', 'student', current, current)
+        db.exec('COMMIT')
+      } catch (error) { db.exec('ROLLBACK'); throw error }
+      issueSession(req, res, db, demoId, now, token)
+      res.json(profileJson(db, demoId))
+    } catch (error) { next(error) }
+  })
 
   accountRouter.post('/code', async (req, res, next) => {
     try {

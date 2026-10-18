@@ -54,6 +54,10 @@
 .has-ev .ev { display: flex; align-items: center; gap: 6px; min-width: 0; }
 /* 时间用浅底彩字，只有进行中用实色，地图上不再一片紫红 */
 .has-ev .ev b { flex: none; display: inline-flex; align-items: center; gap: 4px; padding: 0 5px; border-radius: 5px; background: color-mix(in srgb, var(--ev) 13%, #fff); color: var(--ev); font-size: 10.5px; font-weight: 700; line-height: 17px; font-variant-numeric: tabular-nums; }
+.has-ev .ev-techathon { --ev: #e63a48; padding: 3px 4px; border-radius: 6px; background: linear-gradient(105deg, #1a090c, #350e15); color: #fff; box-shadow: 0 0 0 1px #e63a4866, 0 3px 10px #e63a4822; }
+.has-ev .ev-techathon::before { content: '⚡'; flex: none; color: #ff5965; font-size: 12px; text-shadow: 0 0 7px #ff3344; }
+.has-ev .ev-techathon b { background: #e63a48; color: #fff; }
+.has-ev .ev-techathon .ev-t { color: #fff; }
 .has-ev .ev.ev-live b { background: var(--ev); color: #fff; }
 .has-ev .ev.ev-live b::before { content: ''; width: 5px; height: 5px; border-radius: 50%; background: #fff; animation: ev-blink 1.6s ease-in-out infinite; }
 @keyframes ev-blink { 50% { opacity: .3; } }

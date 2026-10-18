@@ -17,6 +17,16 @@ describe('快递站找货架', () => {
     expect(parcel.poi).toBe(PARCEL_POI)
   })
 
+  it('打开快递站前允许关闭互斥的导航状态', () => {
+    parcel.open = false
+    let closed = false
+
+    openParcelStationMap(() => { closed = true })
+
+    expect(closed).toBe(true)
+    expect(parcel.open).toBe(true)
+  })
+
   it('取件码按「货架-层-编号」理解，全角、空格、点都能当分隔', () => {
     for (const q of ['15-3-2045', '１５－３－２０４５', '15 3 2045', '15.3.2045', '取件码：15-3-2045', '015-03-2045']) {
       const r = findParcel(q)

@@ -4,7 +4,6 @@ import type { IconName } from '../lib/icons'
 import Ico from '../components/Ico.vue'
 import PlaceWorkspace from './PlaceWorkspace.vue'
 import UndergroundWorkspace from './UndergroundWorkspace.vue'
-import RainNetworkWorkspace from './RainNetworkWorkspace.vue'
 import TimeMachineLauncher from './TimeMachineLauncher.vue'
 import EventWorkspace from './EventWorkspace.vue'
 import DishWorkspace from './DishWorkspace.vue'
@@ -21,7 +20,6 @@ import {
 const nav: { view: View; views: View[]; label: string; icon: IconName; description: string }[] = [
   { view: 'overview', views: ['overview'], label: '地点管理', icon: 'pin', description: '查找地点，在地图上定位，随时修改信息与位置。' },
   { view: 'underground', views: ['underground'], label: '地下标注', icon: 'road', description: '标记地下道路（紫色）和出入口（红色），拖动调整，右键删除。' },
-  { view: 'rain', views: ['rain'], label: '避雨路网', icon: 'road', description: '编辑独立的雨天可走地面栅格版本。' },
   { view: 'events', views: ['events'], label: '活动管理', icon: 'calendar', description: '整理官网与邮件抓取来的活动：修改、置顶、隐藏、审核，并管理同学讨论。' },
   { view: 'dishes', views: ['dishes'], label: '菜品管理', icon: 'dining', description: '按食堂维护菜单：菜名、价格规格、供应餐次、标签和售罄状态。' },
   { view: 'data', views: ['data'], label: '数据与备份', icon: 'chart', description: '服务运行状态、各类数据规模与关键配置，导出 JSON 副本。' },
@@ -102,7 +100,6 @@ onBeforeUnmount(() => {
       <template v-else>
         <PlaceWorkspace v-if="admin.view === 'overview'" @create="createDialog?.showModal()" @refresh="refresh" />
         <UndergroundWorkspace v-else-if="admin.view === 'underground'" />
-        <RainNetworkWorkspace v-else-if="admin.view === 'rain'" />
         <EventWorkspace v-else-if="admin.view === 'events'" />
         <DishWorkspace v-else-if="admin.view === 'dishes'" />
         <SystemPanel v-else ref="system" />

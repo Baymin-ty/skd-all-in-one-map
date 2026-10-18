@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { openRoute, showPanel, state } from '../lib/store'
+import { closeRoute, openRoute, showPanel, state } from '../lib/store'
 import { closeParcelPlan, openParcelStationMap, parcel } from '../lib/parcelStation'
 import { eventsIn } from '../lib/discoveryData'
 import { account } from '../lib/account'
@@ -30,6 +30,10 @@ function go(tab: Tab) {
   if (tab === 'events') state.radar.place = ''
   showPanel(tab)
 }
+
+function openParcelFromNav() {
+  openParcelStationMap(closeRoute)
+}
 </script>
 
 <template>
@@ -41,7 +45,7 @@ function go(tab: Tab) {
     <template v-if="vertical">
       <hr class="nav-sep" />
       <button type="button" :class="{ on: routing }" :aria-pressed="routing" @click="closeParcelPlan(); openRoute()"><span class="nav-icon"><Ico name="walk" /></span><span class="nav-label">导航</span></button>
-      <button type="button" :class="{ on: parcel.open }" :aria-pressed="parcel.open" @click="parcel.open ? closeParcelPlan() : openParcelStationMap()"><span class="nav-icon"><Ico name="parcel" /></span><span class="nav-label">快递站</span></button>
+      <button type="button" :class="{ on: parcel.open }" :aria-pressed="parcel.open" @click="parcel.open ? closeParcelPlan() : openParcelFromNav()"><span class="nav-icon"><Ico name="parcel" /></span><span class="nav-label">快递站</span></button>
     </template>
   </nav>
 </template>

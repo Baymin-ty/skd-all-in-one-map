@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { account } from '../lib/account'
+import { isDemoAccount, demoPlanFor } from '../lib/demoData'
 import { importItems, isWeeklyClass, plan, type PlanItem } from '../lib/today'
 import { ACADEMIC_TERMS, formatWeekRanges, parseWeeks, termForDate, type AcademicTermKey } from '../lib/academicCalendar'
 import { dateKey } from '../lib/campusTime'
@@ -44,7 +46,13 @@ async function parse(image: string) {
     if (!response.ok) throw new Error(body.error || '课表识别失败')
     classes.value = (body.classes || []).map((item: Parsed) => ({ ...item, weeksText: item.weeks?.length ? formatWeekRanges(item.weeks) : '' })); warnings.value = body.warnings || []
   }
-  catch (e) { error.value = e instanceof Error ? e.message : '课表识别失败' }
+  catch (e) {
+    if (isDemoAccount(account.me)) {
+      classes.value = demoPlanFor(dateKey()).filter(isWeeklyClass).map((item) => ({ title: item.title, weekday: item.weekdays![0], start: item.start, end: item.end || item.start, room: item.room || '', weeks: item.weeks, weeksText: item.weeks?.length ? formatWeekRanges(item.weeks) : '', teacher: '' }))
+      warnings.value = ['演示账号已载入准备好的课表，可直接核对并导入。']
+      error.value = ''
+    } else error.value = e instanceof Error ? e.message : '课表识别失败'
+  }
   finally { loading.value = false }
 }
 function confirm() {

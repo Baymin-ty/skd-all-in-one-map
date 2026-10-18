@@ -5,7 +5,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { clampToOutline, fillZoom, fromLatLng, limitPan, PAINTED_OUTLINE, toLatLng } from '../lib/geo'
 import { createCampusMap } from '../lib/campusMap'
 import { createMapOpacity } from '../lib/mapOpacity'
-import { buildingOutline, constructionOutline } from '../lib/buildingOutline'
+import { buildingOutline } from '../lib/buildingOutline'
 import { groupBuildings } from '../lib/groups'
 import { buildingLabelCategory, mapLabelColor, poiLabelCategory } from '../lib/mapLabelCategories'
 import { labelFits, labelsOverlap, type LabelRect } from '../lib/mapLabels'
@@ -41,7 +41,7 @@ function syncGeometry() {
   if (!opacity) return
   const buildings = admin.places.buildings.filter((b) => !(admin.draft?.kind === 'building' && admin.draft.data.id === b.id))
   if (admin.draft?.kind === 'building') buildings.push({ ...admin.draft.data as Building, id: admin.draft.data.id || '__draft__' })
-  opacity.setBuildings([...buildings, ...(admin.campus?.construction ?? []).map((c, i) => ({ ...c, id: `construction-${i}` }))])
+  opacity.setBuildings(buildings)
   updateOpacity()
 }
 function hover(id: string) {
@@ -205,7 +205,6 @@ onMounted(() => {
     return clampToOutline(center, PAINTED_OUTLINE.map((p) => map.project(toLatLng(p), z)), size.x / 2, size.y / 2)
   })
   L.control.attribution({ prefix: false }).addAttribution('底图 © 上海科技大学校园地图').addTo(map)
-  for (const c of admin.campus?.construction ?? []) L.polygon(outlineLatLngs(c), { ...constructionOutline, interactive: false }).addTo(map)
   objects.addTo(map); drafts.addTo(map)
   home()
   opacity = createMapOpacity(map, admin.places.buildings)
