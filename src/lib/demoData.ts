@@ -1,6 +1,5 @@
 import type { AccountUser } from './account'
 import type { PlanItem } from './today'
-import type { CampusEvent } from './discoveryTypes'
 
 export const DEMO_ACCOUNT_ID = 'demo-showcase'
 
@@ -16,15 +15,11 @@ const course = (id: string, title: string, weekdays: number[], start: string, en
   id, kind: 'class', title, weekdays, start, end, place, room, source: 'manual', note,
 })
 
-export function demoEventsFor(date: string): CampusEvent[] {
-  return [
-    { id: 'm-52f81fe654', title: '科道书院 · 新生分享会', start: `${date}T14:30:00+08:00`, end: `${date}T15:30:00+08:00`, allDay: false, venueRaw: '科道书院一楼公共空间', place: 'a747029d', room: '科道书院一楼', floor: 1, organizer: '上科大一图通', category: 'student', source: 'organizer' },
-    { id: 'demo-event-walk', title: '校园夜行地图打卡', start: `${date}T19:55:00+08:00`, end: `${date}T20:35:00+08:00`, allDay: false, venueRaw: '体育馆南门', place: 'df290f76', room: '体育馆南门', floor: 1, organizer: '上科大一图通', category: 'campus', source: 'organizer' },
-  ]
-}
+/** IDs previously used by fabricated showcase activities, including a legacy entry. */
+export const obsoleteDemoEventIds = new Set(['m-52f81fe654', 'demo-event-walk', 'demo-event-library'])
 
-/** A stable showcase schedule based on the timetable screenshot, with two open-slot activities. */
-export function demoPlanFor(date: string): PlanItem[] {
+/** A stable showcase timetable based on the timetable screenshot. */
+export function demoPlanFor(_date: string): PlanItem[] {
   return [
     course('demo-cs181-mon', '人工智能', [1, 3, 6], '08:15', '09:55', '82807efc', '1D-106'),
     course('demo-si252', '强化学习', [2, 4], '08:15', '09:55', 'edb12f3d', '教学中心103'),
@@ -35,7 +30,5 @@ export function demoPlanFor(date: string): PlanItem[] {
     course('demo-ai-practice', '技术的应用与反思：在 AI 时代探寻真实智力的定义', [1], '15:55', '17:35', 'edb12f3d', '教学中心403'),
     course('demo-mt1022', '毛泽东思想和中国特色社会主义理论体系概论', [4], '15:55', '17:35', 'edb12f3d', '教学中心202'),
     course('demo-geha', '宋词导读', [1], '18:00', '19:40', '16b2b62d', '创管学院106'),
-    { id: 'm-52f81fe654', kind: 'event', title: '科道书院 · 新生分享会', date, start: '14:30', end: '15:30', place: 'a747029d', room: '科道书院一楼', eventId: 'm-52f81fe654', source: 'event', note: '演示活动 · 科道书院分享会' },
-    { id: 'demo-event-walk', kind: 'event', title: '校园夜行地图打卡', date, start: '19:55', end: '20:35', place: 'df290f76', room: '体育馆南门', eventId: 'demo-event-walk', source: 'event', note: '演示活动 · 可导航到场' },
   ]
 }
