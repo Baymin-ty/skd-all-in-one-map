@@ -26,6 +26,7 @@ export const admin = reactive({
   mode: '' as '' | 'position' | 'polygon' | 'vertices' | 'entrance', showBuildings: true, showPois: true, labels: true,
   loginOpen: false, notice: '', noticeTone: 'ok' as 'ok' | 'error', saving: false, savedAt: '',
   draftBaseline: '', draftVersion: 0, editError: '', positionSet: true, selectedVertex: null as number | null, outlinePart: 0,
+  selectedEntrance: null as number | null, entranceTarget: null as number | null,
   geometryPast: [] as Geometry[], geometryFuture: [] as Geometry[],
   /** 地图显示是固定配置（public/data/map-settings.json），后台只读 */
   mapSettings: { ...DEFAULT_MAP_SETTINGS }, mapSettingsDraft: { ...DEFAULT_MAP_SETTINGS },
@@ -80,11 +81,13 @@ function beginDraft(asset: Asset, positionSet = true) {
   admin.draft = d; admin.draftBaseline = JSON.stringify(d); admin.positionSet = positionSet
   admin.draftVersion++
   admin.outlinePart = 0
-  admin.editError = ''; admin.selectedVertex = null; admin.geometryPast = []; admin.geometryFuture = []
+  admin.editError = ''; admin.selectedVertex = null; admin.selectedEntrance = null; admin.entranceTarget = null
+  admin.geometryPast = []; admin.geometryFuture = []
 }
 function closeDraft() {
   admin.draft = null; admin.mode = ''; admin.draftBaseline = ''; admin.editError = ''
   admin.geometryPast = []; admin.geometryFuture = []; admin.selectedVertex = null
+  admin.selectedEntrance = null; admin.entranceTarget = null
 }
 function editorAuthorized(action: () => void) {
   if (admin.offline) { notify('数据服务未连接，暂时无法编辑'); return false }
@@ -114,7 +117,7 @@ export const categoryOptions = computed(() => {
 })
 export const entrances = computed(() => admin.places.buildings.reduce((n, b) => n + (b.entrances?.length || 0), 0))
 export const missingEntrances = computed(() => admin.places.buildings.filter((b) => b.cat !== 'gate' && !b.entrances?.length))
-export const mapControl = { focus: (_a: Asset) => {}, home: () => {} }
+export const mapControl = { focus: (_a: Asset) => {}, home: () => {}, focusEntrance: (_pos: LngLat) => {} }
 let timer = 0
 /** 请求失败原因：调用方（如 saveRain）需要区分「可重试的超时/断网/503」与「重试也没用的 4xx」 */
 export class ApiError extends Error {
@@ -573,6 +576,9 @@ function restoreGeometry(g: Geometry) {
   else Object.assign(d.data, { center: value.center, poly: value.poly, parts: value.parts, entrances: value.entrances })
   if (admin.outlinePart > ((d.data as Building).parts?.length ?? 0)) admin.outlinePart = 0
   admin.selectedVertex = null; admin.editError = ''
+  admin.entranceTarget = null
+  const count = d.kind === 'building' ? ((d.data as Building).entrances?.length ?? 0) : 0
+  if (admin.selectedEntrance !== null && admin.selectedEntrance >= count) admin.selectedEntrance = count ? count - 1 : null
 }
 export function changeGeometry(change: () => void) {
   if (!admin.draft || admin.saving) return
@@ -596,6 +602,7 @@ export function setMode(mode: typeof admin.mode) {
   if (admin.saving) return
   admin.mode = admin.mode === mode ? '' : mode
   admin.selectedVertex = null; admin.editError = ''
+  if (admin.mode !== 'entrance') admin.entranceTarget = null
 }
 export function redrawOutline() {
   if (admin.draft?.kind !== 'building') return
@@ -619,6 +626,70 @@ export function deleteVertex() {
   if (d?.kind !== 'building' || i === null) return
   if (draftOutline.value.length <= 3) { admin.editError = '轮廓至少需要 3 个点'; return }
   changeGeometry(() => draftOutline.value.splice(i, 1)); admin.selectedVertex = null
+}
+const COMPASS = ['东', '东北', '北', '西北', '西', '西南', '南', '东南']
+function compass(b: Building, pos: LngLat) {
+  const angle = Math.atan2(pos[1] - b.center[1], pos[0] - b.center[0]) * 180 / Math.PI
+  return COMPASS[(Math.round(angle / 45) + 8) % 8]
+}
+/** 入口相对建筑中心的方位，列表里用来快速分辨南北门 */
+export function entranceDirection(b: Building, pos: LngLat) { return `${compass(b, pos)}侧` }
+function entranceName(b: Building, pos: LngLat) {
+  const base = `${compass(b, pos)}门`
+  const taken = new Set((b.entrances ?? []).map((e) => e.zh?.trim()).filter(Boolean))
+  let name = base
+  for (let n = 2; taken.has(name); n++) name = `${base} ${n}`
+  return name
+}
+const sameSpot = (a: LngLat, b: LngLat) => Math.abs(a[0] - b[0]) < 8e-6 && Math.abs(a[1] - b[1]) < 8e-6
+/** 「标注出入口」按钮：连续添加与结束之间切换；重新定位时先回到添加 */
+export function toggleEntranceMode() {
+  if (admin.saving || admin.draft?.kind !== 'building') return
+  admin.selectedVertex = null; admin.editError = ''
+  if (admin.mode === 'entrance' && admin.entranceTarget === null) { admin.mode = ''; return }
+  admin.mode = 'entrance'; admin.entranceTarget = null
+}
+export function addEntrance(pos: LngLat) {
+  const b = admin.draft?.kind === 'building' ? admin.draft.data as Building : null
+  if (!b || admin.saving) return
+  const list = (b.entrances ??= [])
+  if (list.some((e) => sameSpot(e.pos, pos))) { notify('这个位置已经有入口了，拖动已有编号可以微调', 'error'); return }
+  const entry: Entrance = { pos, zh: entranceName(b, pos), en: '' }
+  changeGeometry(() => list.push(entry))
+  admin.selectedEntrance = list.length - 1
+}
+const AUTO_ENTRANCE_NAME = /^(东|南|西|北|东北|东南|西北|西南)门( \d+)?$/
+export function moveEntrance(index: number, pos: LngLat) {
+  const b = admin.draft?.kind === 'building' ? admin.draft.data as Building : null
+  if (!b?.entrances?.[index] || admin.saving) return
+  changeGeometry(() => {
+    const entrance = b.entrances![index]
+    // 自动生成的「西门」随位置更新；手改过的名称保持不动
+    if (AUTO_ENTRANCE_NAME.test(entrance.zh?.trim() ?? '')) entrance.zh = entranceName({ ...b, entrances: b.entrances!.filter((_, i) => i !== index) } as Building, pos)
+    entrance.pos = pos
+  })
+  admin.selectedEntrance = index
+}
+export function locateEntrance(index: number) {
+  if (admin.saving || admin.draft?.kind !== 'building') return
+  admin.mode = 'entrance'; admin.entranceTarget = index; admin.selectedEntrance = index
+  admin.selectedVertex = null; admin.editError = ''
+}
+export function removeEntrance(index: number) {
+  const b = admin.draft?.kind === 'building' ? admin.draft.data as Building : null
+  if (!b?.entrances?.[index] || admin.saving) return
+  const name = b.entrances[index].zh || `入口 ${index + 1}`
+  changeGeometry(() => b.entrances!.splice(index, 1))
+  const count = b.entrances!.length
+  if (admin.selectedEntrance !== null) {
+    if (admin.selectedEntrance === index) admin.selectedEntrance = count ? Math.min(index, count - 1) : null
+    else if (admin.selectedEntrance > index) admin.selectedEntrance--
+  }
+  if (admin.entranceTarget !== null) {
+    if (admin.entranceTarget === index) { admin.entranceTarget = null; admin.mode = '' }
+    else if (admin.entranceTarget > index) admin.entranceTarget--
+  }
+  notify(`已删除「${name}」，可在地图左下角撤销恢复`)
 }
 export function setPosition(pos: LngLat) {
   const d = admin.draft
@@ -644,8 +715,11 @@ export function mapPick(pos: LngLat) {
       if (!admin.outlinePart) b.center = [+(b.poly.reduce((s, p) => s + p[0], 0) / b.poly.length).toFixed(6), +(b.poly.reduce((s, p) => s + p[1], 0) / b.poly.length).toFixed(6)]
     })
   } else if (admin.mode === 'entrance' && d.kind === 'building') {
-    const b = d.data as Building
-    changeGeometry(() => (b.entrances ??= []).push({ pos, zh: `入口 ${b.entrances!.length + 1}`, en: '' }))
-    admin.mode = ''
+    if (admin.entranceTarget !== null) {
+      const target = admin.entranceTarget
+      moveEntrance(target, pos)
+      admin.entranceTarget = null
+      admin.mode = ''
+    } else addEntrance(pos)
   }
 }

@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
-import { addOutlinePart, admin, changeGeometry, draftOutline, mapControl, redrawOutline, removeOutlinePart, setMode, setPosition } from './store'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { addOutlinePart, admin, draftOutline, entranceDirection, locateEntrance, mapControl, redrawOutline, removeEntrance, removeOutlinePart, setMode, setPosition, toggleEntranceMode } from './store'
 import { POI_CATS, POI_KINDS } from '../lib/catalog'
 import type { Building, LngLat, Poi } from '../lib/types'
 import Ico from '../components/Ico.vue'
@@ -37,6 +37,22 @@ function changeCoordinate(axis: 0 | 1, event: Event) {
   admin.mode = ''
 }
 function focus() { mapControl.focus(d.value) }
+const ENTRANCE_NAME_SUGGESTIONS = ['主入口', '次入口', '北门', '南门', '东门', '西门', '侧门', '货梯口']
+const entranceList = ref<HTMLElement>()
+const direction = (pos: LngLat) => b.value ? entranceDirection(b.value, pos) : ''
+function selectEntrance(index: number) { admin.selectedEntrance = index }
+function locate(index: number) {
+  const entrance = b.value?.entrances?.[index]
+  if (!entrance) return
+  admin.selectedEntrance = index
+  mapControl.focusEntrance(entrance.pos)
+}
+function relocate(index: number) { locate(index); locateEntrance(index) }
+// 在地图上点选入口时，把列表里对应的一行滚进视野
+watch(() => admin.selectedEntrance, (index) => {
+  if (index === null) return
+  void nextTick(() => (entranceList.value?.children[index] as HTMLElement | undefined)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }))
+})
 </script>
 
 <template>
@@ -84,19 +100,39 @@ function focus() { mapControl.focus(d.value) }
           </template>
         </section>
 
-        <section v-if="b" class="editor-section">
-          <div class="section-title"><h3><Ico name="entrance" /> 出入口 <span>{{ b.entrances?.length || '' }}</span></h3><button class="text-button" type="button" :class="{ active: admin.mode === 'entrance' }" @click="setMode('entrance')"><Ico name="plus" />{{ admin.mode === 'entrance' ? '取消添加' : '添加入口' }}</button></div>
-          <p v-if="admin.mode === 'entrance'" class="field-help entrance-help">点击地图上的楼门位置，即可添加入口。</p>
-          <div v-for="(e, i) in b.entrances" :key="i" class="entrance-row">
-            <span class="entrance-number">{{ i + 1 }}</span><input v-model="e.zh" placeholder="入口名称" maxlength="60" :aria-label="`入口 ${i + 1} 名称`" />
-            <button type="button" class="icon-button danger" :aria-label="`删除入口 ${i + 1}`" @click="changeGeometry(() => b!.entrances!.splice(i, 1))"><Ico name="close" /></button>
+        <section v-if="b" class="editor-section entrance-section">
+          <div class="section-title">
+            <h3 class="editor-section-title"><span>03</span><Ico name="entrance" />出入口<small v-if="b.entrances?.length">{{ b.entrances.length }} 个</small></h3>
+            <button class="button secondary entrance-add" :class="{ active: admin.mode === 'entrance' && admin.entranceTarget === null }" type="button" :disabled="admin.saving" @click="toggleEntranceMode"><Ico :name="admin.mode === 'entrance' && admin.entranceTarget === null ? 'check' : 'plus'" />{{ admin.mode === 'entrance' && admin.entranceTarget === null ? '完成标注' : b.entrances?.length ? '继续添加' : '标注出入口' }}</button>
           </div>
-          <p v-if="b.entrances?.length" class="field-help">可直接修改名称，拖动地图上的数字标记调整位置。</p>
-          <p v-if="!b.entrances?.length" class="field-help">添加入口后，导航可以带到楼门口。</p>
+          <p v-if="admin.mode === 'entrance'" class="field-help entrance-help">
+            <template v-if="admin.entranceTarget !== null">点击地图上的新位置，把第 {{ admin.entranceTarget + 1 }} 个入口移过去。按 Esc 取消。</template>
+            <template v-else>点击地图上的楼门即可添加，可以连续标注多个；靠近轮廓时会自动贴到墙边。按 Esc 或「完成标注」结束。</template>
+          </p>
+          <div v-if="!b.entrances?.length && admin.mode !== 'entrance'" class="entrance-empty">
+            <span class="entrance-empty-icon"><Ico name="entrance" /></span>
+            <p><b>还没有标注出入口</b><span>标好后，导航会把同学直接带到楼门口。</span></p>
+            <button class="button primary" type="button" :disabled="admin.saving" @click="toggleEntranceMode"><Ico name="plus" />开始标注</button>
+          </div>
+          <template v-else>
+            <ul ref="entranceList" class="entrance-list">
+              <li v-for="(e, i) in b.entrances" :key="i" class="entrance-row" :class="{ active: admin.selectedEntrance === i, targeting: admin.entranceTarget === i }" @click="selectEntrance(i)">
+                <button class="entrance-number" type="button" :title="`在地图上定位入口 ${i + 1}`" :aria-label="`在地图上定位入口 ${i + 1}`" @click.stop="locate(i)">{{ i + 1 }}</button>
+                <div class="entrance-main">
+                  <input v-model="e.zh" :disabled="admin.saving" list="entrance-name-options" maxlength="60" :placeholder="`入口名称，如${direction(e.pos)}入口`" :aria-label="`入口 ${i + 1} 名称`" @focus="selectEntrance(i)" />
+                  <span class="entrance-meta">{{ direction(e.pos) }}<template v-if="admin.entranceTarget === i"> · 等待在地图上点选新位置</template></span>
+                </div>
+                <button class="icon-button" type="button" :disabled="admin.saving" :title="`把入口 ${i + 1} 移到地图上的新位置`" :aria-label="`重新定位入口 ${i + 1}`" @click.stop="relocate(i)"><Ico name="target" /></button>
+                <button class="icon-button danger" type="button" :disabled="admin.saving" :aria-label="`删除入口 ${i + 1}`" @click.stop="removeEntrance(i)"><Ico name="close" /></button>
+              </li>
+            </ul>
+            <datalist id="entrance-name-options"><option v-for="name in ENTRANCE_NAME_SUGGESTIONS" :key="name" :value="name" /></datalist>
+            <p class="field-help">点编号可在地图上定位；拖动地图上的编号能微调位置；选中一行后按 ⌫ 删除。</p>
+          </template>
         </section>
 
         <section class="editor-section">
-          <h3 class="editor-section-title"><span>03</span>补充信息<small>选填</small></h3>
+          <h3 class="editor-section-title"><span>{{ b ? '04' : '03' }}</span>补充信息<small>选填</small></h3>
           <label>开放时间<input v-model="d.data.hours!.zh" maxlength="120" placeholder="例如 08:00–22:00，可不填" /></label>
           <label>介绍
             <textarea v-if="b" v-model="b.info!.zh" rows="3" maxlength="2000" placeholder="填写建筑用途、位置说明等" />

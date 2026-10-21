@@ -41,7 +41,34 @@ textarea { resize: vertical; }
 .midpoint { cursor: pointer; }
 .midpoint .vertex-dot { width: 8px; height: 8px; border: 1px solid #24503f; border-radius: 50%; opacity: .7; }
 .midpoint:hover .vertex-dot { width: 12px; height: 12px; opacity: 1; }
-.admin-entrance { display: grid; place-items: center; background: #24503f; color: #fff; border: 2px solid white; border-radius: 50%; font-size: 12px; font-weight: 600; }
+.admin-entrance { display: block; }
+.entrance-badge { position: absolute; left: -13px; top: -13px; display: grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; background: #24503f; color: #fff; border: 2px solid #fff; font-size: 11px; font-weight: 600; box-shadow: 0 1px 5px #0004; transition: transform .15s, box-shadow .15s; }
+.entrance-name { position: absolute; left: 17px; top: -10px; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 2px 7px; border-radius: 99px; background: #fff; border: 1px solid #d9e4d2; color: #3f5833; font-size: 11px; line-height: 16px; box-shadow: 0 1px 4px #0002; }
+.admin-entrance:hover .entrance-badge { transform: scale(1.08); }
+.admin-entrance.active .entrance-badge { background: #b28a45; box-shadow: 0 0 0 4px #b9976133; }
+.admin-entrance.active .entrance-name { border-color: #b99761; color: #7a5a26; font-weight: 600; }
+.admin-entrance.targeting .entrance-badge { background: #b64e48; }
+.entrance-snap { display: block; }
+.entrance-snap span { display: block; width: 18px; height: 18px; margin: -9px; border-radius: 50%; border: 2px dashed #24503f; background: #ffffffcc; }
+.entrance-snap.snapped span { border-style: solid; background: #24503f; box-shadow: 0 0 0 5px #24503f2e; }
+.entrance-add { min-height: 32px; padding: 6px 11px; font-size: 12px; }
+.entrance-empty { display: flex; align-items: center; gap: 10px; padding: 12px; margin-top: 13px; border: 1px dashed #cfdcc2; border-radius: 8px; background: #f7faf4; }
+.entrance-empty-icon { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 50%; background: #eaf2e4; color: #4b6e3a; font-size: 18px; flex: none; }
+.entrance-empty p { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; font-size: 11px; line-height: 1.6; color: #7b8c70; }
+.entrance-empty b { font-size: 12px; color: #4a6438; }
+.entrance-empty .button { min-height: 32px; padding: 6px 11px; font-size: 12px; flex: none; }
+.entrance-list { list-style: none; margin: 13px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.entrance-row { display: flex; gap: 8px; align-items: center; margin: 0; padding: 7px 8px; border: 1px solid #e5ecdd; border-radius: 8px; background: #fff; cursor: pointer; transition: border-color .15s, background .15s, box-shadow .15s; }
+.entrance-row:hover { border-color: #cbd9c0; }
+.entrance-row.active { border-color: #c8a76b; background: #fbf7ee; box-shadow: 0 0 0 2px #b9976122; }
+.entrance-row.targeting { border-color: #24503f; background: #f1f7ec; }
+.entrance-number { display: grid; place-items: center; background: #eaf2e4; color: #4b6e3a; font-size: 11px; border-radius: 50%; width: 24px; height: 24px; flex: none; border: 0; cursor: pointer; }
+.entrance-row.active .entrance-number { background: #b99761; color: #fff; }
+.entrance-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.entrance-main input { margin: 0!important; padding: 6px 8px!important; font-size: 12px!important; }
+.entrance-meta { font-size: 10px; color: #93a288; padding-left: 2px; }
+.entrance-row .icon-button { width: 28px; height: 28px; flex: none; }
+.entrance-help { background: #f1f7ec; padding: 8px 10px; border-radius: 5px; color: #63844d; }
 .map-instruction { position: absolute; z-index: 600; top: 15px; left: 15px; right: 15px; display: flex; align-items: center; gap: 8px; background: #fff; border: 1px solid #d9e4d2; border-radius: 7px; padding: 8px 10px 8px 13px; box-shadow: 0 2px 12px #223c2514; font-size: 13px; color: #4c6b3a; }
 .map-instruction > span { flex: 1; }
 .map-instruction button { padding: 6px 10px; border-radius: 5px; background: #eaf2e3; color: #315729; white-space: nowrap; font-size: 12px; }

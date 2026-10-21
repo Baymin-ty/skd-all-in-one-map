@@ -4,6 +4,7 @@ import type { Building, Campus, Poi, UndergroundMap } from '../lib/types'
 vi.stubGlobal('location', { hash: '' })
 const store = await import('./store')
 const { admin, edit, create, discard, draftDirty, draftIssue, setPosition, mapPick, changeGeometry, undoGeometry, redoGeometry, canRedo, deleteVertex, save, login, closeLogin,
+  addEntrance, moveEntrance, removeEntrance, toggleEntranceMode,
   setUndergroundTool, drawUndergroundAt, drawUndergroundToNode, drawUndergroundOnEdge, finishUndergroundRoad, addUndergroundEntrance, moveUndergroundNode,
   addUndergroundStreetViewPoint, interpolateUndergroundStreetViewPathWithImages, deleteUnderground, undoUnderground, saveUnderground, undergroundDirty, drawUndergroundToEntrance, moveUndergroundEntrance, bindUndergroundEntrances } = store
 const building = (): Building => ({
@@ -117,6 +118,51 @@ describe('编辑器草稿', () => {
   })
 })
 
+
+describe('出入口标注', () => {
+  const start = () => {
+    edit({ kind: 'building', data: admin.places.buildings[0] })
+    toggleEntranceMode()
+    return admin.draft!.data as Building
+  }
+
+  it('连续添加时按方位自动命名，同一位置不会重复添加', () => {
+    const draft = start()
+    addEntrance([121.6009, 31.18])
+    addEntrance([121.6, 31.1809])
+    expect(admin.mode).toBe('entrance')
+    expect(draft.entrances!.map((e) => e.zh)).toEqual(['东门', '北门'])
+    expect(admin.selectedEntrance).toBe(1)
+    addEntrance([121.6009, 31.18])
+    expect(draft.entrances).toHaveLength(2)
+  })
+
+  it('移动入口时自动名称跟着更新，手改过的名称保持不动', () => {
+    const draft = start()
+    addEntrance([121.6009, 31.18])
+    addEntrance([121.6, 31.1809])
+    moveEntrance(0, [121.6, 31.1809])
+    expect(draft.entrances![0].zh).toBe('北门 2')
+    expect(draft.entrances![0].pos).toEqual([121.6, 31.1809])
+    draft.entrances![0].zh = '正门'
+    moveEntrance(0, [121.6009, 31.18])
+    expect(draft.entrances![0].zh).toBe('正门')
+  })
+
+  it('删除入口后选中项顺延，撤销可以恢复', () => {
+    const draft = start()
+    addEntrance([121.6009, 31.18])
+    addEntrance([121.6, 31.1809])
+    admin.selectedEntrance = 0
+    removeEntrance(0)
+    expect(draft.entrances).toHaveLength(1)
+    expect(draft.entrances![0].zh).toBe('北门')
+    expect(admin.selectedEntrance).toBe(0)
+    undoGeometry()
+    expect(draft.entrances!.map((e) => e.zh)).toEqual(['东门', '北门'])
+    expect(admin.mode).toBe('entrance')
+  })
+})
 
 describe('统一地点工作台', () => {
   it('查看地点不要求登录；切换地点时保留尚未保存的修改', () => {

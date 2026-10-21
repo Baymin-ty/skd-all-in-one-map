@@ -11,7 +11,7 @@ import { buildingLabelCategory, mapLabelColor, poiLabelCategory } from '../lib/m
 import { labelFits, labelsOverlap, type LabelRect } from '../lib/mapLabels'
 import { ICONS } from '../lib/icons'
 import type { Building, LngLat, Poi } from '../lib/types'
-import { admin, assets, canRedo, canUndo, category, changeGeometry, deleteVertex, draftOutline, filtered, mapControl, mapPick, redoGeometry, selectAsset, setPosition, undoGeometry, type Asset } from './store'
+import { admin, assets, canRedo, canUndo, category, changeGeometry, deleteVertex, draftOutline, filtered, mapControl, mapPick, moveEntrance, redoGeometry, removeEntrance, selectAsset, setPosition, undoGeometry, type Asset } from './store'
 import { outlineLatLngs, outlinePoints, outlineRings } from '../lib/outlineGeometry'
 import Ico from '../components/Ico.vue'
 
@@ -19,6 +19,9 @@ const el = ref<HTMLDivElement>()
 const zoom = ref(17), minZoom = ref(15)
 const editing = computed(() => !!admin.draft)
 const drawing = computed(() => ['position', 'polygon', 'entrance'].includes(admin.mode))
+const draftEntrances = computed(() => admin.draft?.kind === 'building' ? ((admin.draft.data as Building).entrances ?? []) : [])
+const SNAP_DISTANCE = 26
+const snapLayer = L.layerGroup()
 const objects = L.layerGroup(), drafts = L.layerGroup()
 let map: L.Map, resize: ResizeObserver, opacity: ReturnType<typeof createMapOpacity>
 let keepInside = () => {}, hovered = '', layoutFrame = 0
@@ -81,6 +84,45 @@ function limitZoomOut() {
 }
 const escape = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!))
 const valid = (p: LngLat) => p.every(Number.isFinite)
+function projectOnSegment(p: L.Point, a: L.Point, b: L.Point) {
+  const dx = b.x - a.x, dy = b.y - a.y
+  const length = dx * dx + dy * dy
+  const t = length ? Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / length)) : 0
+  return L.point(a.x + t * dx, a.y + t * dy)
+}
+/** 标注入口时，把点吸到建筑轮廓的最近的边上，门就正好落在墙上 */
+function snapEntrance(latlng: L.LatLng) {
+  const b = admin.draft?.kind === 'building' ? admin.draft.data as Building : null
+  if (!b || !map) return { pos: fromLatLng(latlng), snapped: false }
+  const point = map.latLngToContainerPoint(latlng)
+  let best: { point: L.Point; distance: number } | null = null
+  for (const ring of outlineRings(b)) {
+    for (let i = 0; i < ring.length; i++) {
+      const a = map.latLngToContainerPoint(toLatLng(ring[i]))
+      const b2 = map.latLngToContainerPoint(toLatLng(ring[(i + 1) % ring.length]))
+      const projected = projectOnSegment(point, a, b2)
+      const distance = point.distanceTo(projected)
+      if (!best || distance < best.distance) best = { point: projected, distance }
+    }
+  }
+  if (!best || best.distance > SNAP_DISTANCE) return { pos: fromLatLng(latlng), snapped: false }
+  return { pos: fromLatLng(map.containerPointToLatLng(best.point)), snapped: true }
+}
+let snapMarker: L.Marker | null = null
+function drawSnapPreview(latlng: L.LatLng | null) {
+  if (!latlng || !map || admin.mode !== 'entrance' || admin.saving) {
+    snapMarker?.remove(); snapMarker = null
+    return
+  }
+  const { pos, snapped } = snapEntrance(latlng)
+  if (!snapMarker) {
+    snapMarker = L.marker(toLatLng(pos), {
+      interactive: false, keyboard: false, zIndexOffset: 1200,
+      icon: L.divIcon({ className: 'entrance-snap', html: '<span></span>', iconSize: [0, 0] }),
+    }).addTo(snapLayer)
+  } else snapMarker.setLatLng(toLatLng(pos))
+  snapMarker.getElement()?.classList.toggle('snapped', snapped)
+}
 function focus(a: Asset) {
   if (!map) return
   map.stop(); map.invalidateSize({ pan: false })
@@ -134,9 +176,10 @@ function draw() {
   }
   if (!editing.value && admin.selected?.kind === 'building') {
     for (const [i, entrance] of ((admin.selected.data as Building).entrances ?? []).entries()) L.marker(toLatLng(entrance.pos), {
-      icon: L.divIcon({ className: 'admin-entrance', html: String(i + 1), iconSize: [28, 28], iconAnchor: [14, 14] }),
+      interactive: false,
+      icon: L.divIcon({ className: 'admin-entrance', html: `<span class="entrance-badge">${i + 1}</span><span class="entrance-name">${escape(entrance.zh || `入口 ${i + 1}`)}</span>`, iconSize: [0, 0] }),
       title: entrance.zh || `入口 ${i + 1}`,
-    }).bindTooltip(escape(entrance.zh || `入口 ${i + 1}`)).addTo(objects)
+    }).addTo(objects)
   }
   updateOpacity(); layoutLabels()
 }
@@ -182,11 +225,22 @@ function drawDraft() {
     })
   }
   for (const [i, entrance] of (b.entrances ?? []).entries()) {
+    const name = entrance.zh || `入口 ${i + 1}`
     const marker = L.marker(toLatLng(entrance.pos), {
-      title: entrance.zh || `入口 ${i + 1}`, draggable: !admin.saving,
-      icon: L.divIcon({ className: 'admin-entrance', html: String(i + 1), iconSize: [28, 28], iconAnchor: [14, 14] }),
-    }).bindTooltip(escape(entrance.zh || `入口 ${i + 1}`)).addTo(drafts)
-    marker.on('dragend', () => changeGeometry(() => entrance.pos = fromLatLng(marker.getLatLng())))
+      title: name,
+      draggable: !admin.saving && admin.mode !== 'entrance' && admin.mode !== 'polygon',
+      interactive: admin.mode !== 'entrance',
+      bubblingMouseEvents: false,
+      zIndexOffset: 1000,
+      icon: L.divIcon({
+        className: `admin-entrance${admin.selectedEntrance === i ? ' active' : ''}${admin.entranceTarget === i ? ' targeting' : ''}`,
+        html: `<span class="entrance-badge">${i + 1}</span><span class="entrance-name">${escape(name)}</span>`,
+        iconSize: [0, 0],
+      }),
+    }).addTo(drafts)
+    marker.on('click', () => { admin.selectedEntrance = i })
+    marker.on('dragstart', () => { admin.selectedEntrance = i })
+    marker.on('dragend', () => moveEntrance(i, fromLatLng(marker.getLatLng())))
   }
   if (valid(b.center)) L.marker(toLatLng(b.center), {
     icon: L.divIcon({ className: 'admin-label-host', html: `<span class="blabel sel" style="--c:${category(d).color}">${ICONS[category(d).icon]}<span>${escape(b.short.zh || b.name.zh || '新建筑')}</span></span>`, iconSize: [0, 0] }),
@@ -195,6 +249,7 @@ function drawDraft() {
 }
 function finish() {
   admin.selectedVertex = null
+  admin.entranceTarget = null
   admin.mode = admin.mode === 'polygon' ? 'vertices' : ''
 }
 onMounted(() => {
@@ -205,7 +260,7 @@ onMounted(() => {
     return clampToOutline(center, PAINTED_OUTLINE.map((p) => map.project(toLatLng(p), z)), size.x / 2, size.y / 2)
   })
   L.control.attribution({ prefix: false }).addAttribution('底图 © 上海科技大学校园地图').addTo(map)
-  objects.addTo(map); drafts.addTo(map)
+  objects.addTo(map); drafts.addTo(map); snapLayer.addTo(map)
   home()
   opacity = createMapOpacity(map, admin.places.buildings)
   syncGeometry()
@@ -213,33 +268,47 @@ onMounted(() => {
   else if (admin.selected) focus(admin.selected)
   zoom.value = map.getZoom(); draw(); drawDraft()
   if (drawing.value) map.doubleClickZoom.disable()
-  map.on('click', (e: L.LeafletMouseEvent) => { mapPick(fromLatLng(e.latlng)); if (admin.mode === 'vertices') admin.selectedVertex = null })
+  map.on('click', (e: L.LeafletMouseEvent) => {
+    const picked = admin.mode === 'entrance' ? snapEntrance(e.latlng).pos : fromLatLng(e.latlng)
+    mapPick(picked)
+    if (admin.mode === 'vertices') admin.selectedVertex = null
+    drawSnapPreview(e.latlng)
+  })
+  map.on('mousemove', (e: L.LeafletMouseEvent) => drawSnapPreview(e.latlng))
+  map.on('mouseout', () => drawSnapPreview(null))
   map.on('zoomend', () => { zoom.value = map.getZoom(); draw() })
   map.on('moveend', layoutLabels)
   map.on('movestart', () => hover(''))
   mapControl.focus = focus; mapControl.home = home
+  mapControl.focusEntrance = (pos) => map.flyTo(toLatLng(pos), Math.max(map.getZoom(), 19), { duration: 0.45 })
   resize = new ResizeObserver(() => { map.invalidateSize({ pan: false }); limitZoomOut(); keepInside(); layoutLabels() }); resize.observe(el.value!)
 })
 watch(() => [filtered.value, admin.showBuildings, admin.showPois, admin.labels, admin.selected, editing.value], draw, { deep: true })
-watch(() => [admin.draft, admin.saving, admin.mode, admin.selectedVertex, admin.positionSet, admin.outlinePart], drawDraft, { deep: true })
+watch(() => [admin.draft, admin.saving, admin.mode, admin.selectedVertex, admin.positionSet, admin.outlinePart, admin.selectedEntrance, admin.entranceTarget], drawDraft, { deep: true })
 watch(() => [admin.places.buildings, admin.draft, admin.campus], syncGeometry, { deep: true })
 watch(() => admin.mapSettings, () => { updateOpacity(); draw() }, { deep: true })
 watch(drawing, (on) => { if (map) on ? map.doubleClickZoom.disable() : map.doubleClickZoom.enable() })
+watch(() => admin.mode, (mode) => { if (mode !== 'entrance') drawSnapPreview(null) })
 watch(() => admin.draftVersion, () => { if (map && admin.draft?.data.id) focus(admin.draft) })
-onBeforeUnmount(() => { cancelAnimationFrame(layoutFrame); resize?.disconnect(); mapControl.focus = () => {}; mapControl.home = () => {}; map?.remove() })
+onBeforeUnmount(() => { cancelAnimationFrame(layoutFrame); resize?.disconnect(); mapControl.focus = () => {}; mapControl.home = () => {}; mapControl.focusEntrance = () => {}; snapMarker = null; map?.remove() })
 </script>
 
 <template>
   <div class="admin-map-wrap" :class="{ picking: drawing }">
     <div ref="el" class="admin-map campus-map" aria-label="校园资产管理地图" />
     <div v-if="!editing" class="map-context"><Ico name="pin" /><span>{{ admin.selected ? '已定位到所选地点 · 右侧查看详情' : '点击地图或左侧目录，选择要编辑的地点' }}</span></div>
-    <div v-else-if="!admin.mode" class="map-context"><Ico name="edit" /><span>{{ admin.draft?.kind === 'poi' ? '拖动标记调整位置，完成后点击保存' : '在右侧选择调整轮廓或添加出入口' }}</span></div>
+    <div v-else-if="!admin.mode" class="map-context"><Ico name="edit" /><span>{{ admin.draft?.kind === 'poi' ? '拖动标记调整位置，完成后点击保存' : '在右侧调整轮廓，或标注出入口（可连续点击添加）' }}</span></div>
     <div v-if="admin.mode" class="map-instruction" role="status">
       <span v-if="admin.mode === 'polygon'">点击地图画轮廓 · {{ draftOutline.length }} 个点</span>
       <span v-else-if="admin.mode === 'vertices'">{{ admin.selectedVertex !== null ? `已选中第 ${admin.selectedVertex + 1} 个点` : '拖动白点调整轮廓' }}</span>
-      <span v-else>{{ admin.mode === 'entrance' ? '点击地图添加入口' : '点击地图选择位置' }}</span>
+      <span v-else-if="admin.mode === 'entrance'">
+        <template v-if="admin.entranceTarget !== null">点击新位置，移动第 {{ admin.entranceTarget + 1 }} 个入口</template>
+        <template v-else>点击楼门位置连续添加 · 已有 {{ draftEntrances.length }} 个</template>
+      </span>
+      <span v-else>点击地图选择位置</span>
       <button v-if="admin.mode === 'vertices' && admin.selectedVertex !== null" class="delete-point" :disabled="admin.saving || draftOutline.length <= 3" @click="deleteVertex">删除顶点</button>
-      <button :disabled="admin.saving || (admin.mode === 'polygon' && draftOutline.length < 3)" @click="finish">{{ admin.mode === 'polygon' ? '完成绘制' : admin.mode === 'vertices' ? '完成调整' : '取消' }}</button>
+      <button v-if="admin.mode === 'entrance' && admin.entranceTarget === null && draftEntrances.length" class="delete-point" :disabled="admin.saving" title="删除上一个入口（可撤销）" @click="removeEntrance(draftEntrances.length - 1)">撤销上一个</button>
+      <button :disabled="admin.saving || (admin.mode === 'polygon' && draftOutline.length < 3)" @click="finish">{{ admin.mode === 'polygon' ? '完成绘制' : admin.mode === 'vertices' ? '完成调整' : admin.mode === 'entrance' ? '完成标注' : '取消' }}</button>
     </div>
     <div v-if="editing" class="map-history" aria-label="地图操作历史"><button :disabled="!canUndo" title="撤销地图操作（⌘ / Ctrl Z）" @click="undoGeometry"><Ico name="undo" />撤销</button><button :disabled="!canRedo" title="重做地图操作（⌘ / Ctrl Shift Z）" @click="redoGeometry"><Ico name="redo" />重做</button></div>
     <div class="admin-map-tools">

@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import Ico from '../components/Ico.vue'
 import AssetEditor from './AssetEditor.vue'
 import type { Building } from '../lib/types'
-import { admin, deleteVertex, discard, draftDirty, draftIssue, redoGeometry, remove, save, undoGeometry } from './store'
+import { admin, deleteVertex, discard, draftDirty, draftIssue, redoGeometry, remove, removeEntrance, save, undoGeometry } from './store'
 
 const root = ref<HTMLElement>()
 const isNew = computed(() => !admin.draft!.data.id)
@@ -24,8 +24,12 @@ function keydown(event: KeyboardEvent) {
     event.preventDefault(); event.shiftKey ? redoGeometry() : undoGeometry()
   } else if (!typing && (event.key === 'Delete' || event.key === 'Backspace') && admin.selectedVertex !== null) {
     event.preventDefault(); deleteVertex()
+  } else if (!typing && (event.key === 'Delete' || event.key === 'Backspace') && admin.selectedEntrance !== null) {
+    event.preventDefault(); removeEntrance(admin.selectedEntrance)
   } else if (event.key === 'Escape') {
-    admin.mode = ''; admin.selectedVertex = null
+    admin.mode = ''; admin.selectedVertex = null; admin.entranceTarget = null
+  } else if (!typing && event.key === 'Enter' && admin.mode === 'entrance') {
+    event.preventDefault(); admin.mode = ''; admin.entranceTarget = null
   } else if (!typing && event.key === 'Enter' && admin.mode === 'polygon') {
     event.preventDefault()
     const b = admin.draft?.data as Building
